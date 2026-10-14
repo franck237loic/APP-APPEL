@@ -33,3 +33,6 @@ test_group_call.js
 # Fichiers temporaires
 *.tmp
 *.temp
+
+# Mais NE PAS ignorer serveur.js à la racine (c'est pour Render)
+!serveur.js
