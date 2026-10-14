@@ -1,0 +1,35 @@
+# Dépendances
+node_modules/
+app_appel/node_modules/
+
+# Fichiers de configuration sensibles
+serviceAccountKey.json
+servicesAccountKey.json
+google-services.json
+
+# Fichiers de build
+platforms/
+plugins/
+.app_appel/
+
+# Fichiers de log
+*.log
+npm-debug.log*
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Fichiers de test
+test_group_call.js
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Fichiers temporaires
+*.tmp
+*.temp

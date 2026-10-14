@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Application d'Appel WebRTC</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="css/index.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+  <div class="container">
+    <h2>Appel Audio P2P</h2>
+    <audio id="remoteAudio" autoplay playsinline></audio>
+
+    <!-- Mon ID généré -->
+    <div class="card">
+      <span class="label">Votre ID d'installation :</span>
+      <div id="my-id-display" class="id-box">Génération...</div>
+      <button id="btn-copy" onclick="copyMyId()">Copier mon ID</button>
+    </div>
+
+    <!-- Zone pour composer un ID -->
+    <div class="card">
+      <label for="target-id-input">ID du destinataire :</label>
+      <input type="text" id="target-id-input" placeholder="Ex: ID-482910" />
+
+      <div class="actions">
+        <button id="btn-call" class="btn-green" onclick="makeCall()">
+          📞 Appeler
+        </button>
+        <button id="btn-video-call" class="btn-green" onclick="makeVideoCall()">
+          📞 Appeler en vidéo
+        </button>
+        <button class="btn-green" onclick="disconnectWebSocket()">
+          Couper le serveur
+        </button>
+        <button id="btn-hangup" class="btn-red" onclick="hangUp(true)" disabled>
+          🚫 Raccrocher
+        </button>
+      </div>
+    </div>
+
+    <!-- Interface appel en cour emetteur -->
+    <!-- ===== INTERFACE 1 : APPEL EN COURS (CLASSIQUE) ===== -->
+    <div id="interface-1" class="view-container">
+      <div class="app-container">
+        <div class="header">
+          <button class="icon-btn-top" onclick="closeInterface()">
+            <i class="fa-solid fa-arrow-left"></i>
+          </button>
+          <div class="contact-info">
+            <span class="contact-name">Junior</span>
+            <div id="status" class="status-bar">Hors ligne</div>
+          </div>
+          <button class="icon-btn-top">
+            <i class="fa-solid fa-user-plus"></i>
+          </button>
+        </div>
+        <div class="center" id="timer">00:00:00</div>
+        <div class="center-avatar">
+          <div class="avatar-container">
+            <span style="font-size: 80px; color: #8696a0; font-weight: 600">J</span>
+          </div>
+        </div>
+        <!-- Indicateur de statut -->
+        <!-- <div id="status" class="status-bar">Hors ligne</div> -->
+
+        <div class="control-panel">
+          <div class="btn-wrapper" style="position: relative">
+            <button class="control-btn" onclick="toggleAudioRouteMenu()">
+              <i class="fa-brands fa-bluetooth-b" id="audio-route-icon"></i>
+            </button>
+            <span class="btn-label">Audio</span>
+            <div id="audio-route-menu" class="audio-route-menu"></div>
+          </div>
+          <div class="btn-wrapper">
+            <button class="control-btn" onclick="upgradeToVideo()">
+              <i class="fa-solid fa-video"></i>
+            </button>
+            <span class="btn-label">Vidéo</span>
+          </div>
+          <div class="btn-wrapper">
+            <button class="control-btn" id="btn-toggle-mic" onclick="toggleMicrophone()">
+              <i class="fa-solid fa-microphone" id="mic-icon"></i>
+            </button>
+            <span class="btn-label" id="mic-label">Désactiver le micro</span>
+          </div>
+          <div class="btn-wrapper">
+            <button class="control-btn">
+              <i class="fa-solid fa-ellipsis"></i>
+            </button>
+            <span class="btn-label">Plus</span>
+          </div>
+          <div class="btn-wrapper">
+            <button class="control-btn">
+              <i class="fa-solid fa-arrow-up-from-bracket"></i>
+            </button>
+            <span class="btn-label">Partager</span>
+          </div>
+          <div class="btn-wrapper">
+            <button class="control-btn hangup" onclick="hangUp()">
+              <i class="fa-solid fa-phone-slash"></i>
+            </button>
+            <span class="btn-label">Terminer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- New interface receive call -->
+    <!-- ===== INTERFACE 2 : APPEL ENTRANT ===== -->
+    <div id="interface-2" class="view-container">
+      <div class="app-container">
+        <div class="header" style="justify-content: center">
+          <div class="contact-info">
+            <span class="contact-name">Junior</span>
+            <div id="status" class="status-bar">Hors ligne</div>
+          </div>
+        </div>
+        <div class="center-avatar">
+          <div class="avatar-container">
+            <span style="font-size: 80px; color: #8696a0; font-weight: 600">J</span>
+          </div>
+        </div>
+        <div class="incoming-actions">
+          <div class="incoming-btn-wrapper">
+            <button class="incoming-btn refuse" onclick="rejectCall()">
+              <i class="fa-solid fa-phone-slash"></i>
+            </button>
+            <span class="incoming-label">Refuser</span>
+          </div>
+          <div class="incoming-btn-wrapper">
+            <!-- <button class="incoming-btn accept" onclick="acceptCall()">
+                <i class="fa-solid fa-phone"></i>
+              </button> -->
+            <div class="swipe-arrows">
+              <i class="fa-solid fa-chevron-up"></i>
+              <i class="fa-solid fa-chevron-up"></i>
+              <i class="fa-solid fa-chevron-up"></i>
+            </div>
+
+            <!-- C'est ici qu'il faut insérer l'id -->
+            <button class="incoming-btn accept" id="swipeAcceptBtn">
+              <i class="fa-solid fa-phone"></i>
+            </button>
+            <span class="incoming-label">Balayer vers le haut pour accepter</span>
+          </div>
+          <div class="incoming-btn-wrapper">
+            <button class="incoming-btn message">
+              <i class="fa-solid fa-message"></i>
+            </button>
+            <span class="incoming-label">Message</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== INTERFACE 3 : APPEL VIDÉO EN COURS ===== -->
+    <div id="interface-3" class="view-container video-call-view">
+      <div class="video-call-container">
+        <!-- Video Distante -->
+        <video id="remote-video" class="remote-video" autoplay playsinline></video>
+
+        <!-- En-tête avec statut -->
+        <div class="video-header">
+          <div class="video-header-info">
+            <div class="video-header-name">Junior</div>
+            <div class="video-header-status status-bar">Connexion...</div>
+          </div>
+        </div>
+
+        <!-- Timer d'appel -->
+        <div class="video-call-info">
+          <span id="timer-video">00:00:00</span>
+        </div>
+
+        <!-- Ma Video (Miniature) -->
+        <div class="local-video-wrapper">
+          <video id="local-video" class="local-video" autoplay playsinline muted></video>
+        </div>
+
+        <!-- Panneau de contrôle -->
+        <div class="video-control-panel">
+          <div class="video-control-wrapper">
+            <button class="video-control-btn" id="btn-toggle-camera" onclick="toggleCamera()">
+              <i class="fa-solid fa-video" id="camera-icon"></i>
+            </button>
+            <span>Caméra</span>
+          </div>
+
+          <div class="btn-wrapper">
+            <button class="control-btn" id="btn-toggle-mic" onclick="toggleMicrophone()">
+              <i class="fa-solid fa-microphone" id="mic-icon"></i>
+            </button>
+            <span class="btn-label" id="mic-label">Désactiver le micro</span>
+          </div>
+
+          <!-- <div class="video-control-wrapper">
+            <button class="video-control-btn" id="btn-toggle-video-mic" onclick="toggleMicrophone()">
+              <i class="fa-solid fa-microphone" id="video-mic-icon"></i>
+            </button>
+            <span>Micro</span>
+          </div> -->
+
+          <div class="video-control-wrapper">
+            <button class="video-control-btn video-hangup" onclick="hangUp(true)">
+              <i class="fa-solid fa-phone-slash"></i>
+            </button>
+            <span>Terminer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Indicateur de statut -->
+    <div id="status" class="status-bar">Hors ligne</div>
+
+    <!-- Flux audio distant (masqué) -->
+    <audio id="remote-audio" autoplay></audio>
+  </div>
+
+  <script src="cordova.js"></script>
+  <script src="js/effet.js"></script>
+  <!-- <script src="js/socket.io.min.js"></script> -->
+  <!-- <script src="js/script.js"></script> -->
+  <script src="js/CallManager.js"></script>
+</body>
+
+</html>

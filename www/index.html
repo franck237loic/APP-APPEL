@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Application d'Appel WebRTC</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <link rel="stylesheet" href="css/index.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+  <!--
+      Écran d'accueil uniquement.
+      Les interfaces d'appel (audio / entrant / vidéo) sont injectées par CallManager.js
+      — ne pas les dupliquer ici, sinon CallManager refuse d'injecter son HTML complet
+      (bascule caméra, haut-parleur, badges, etc.).
+    -->
+  <div class="container">
+    <h2>Appel Audio P2P</h2>
+    <!-- Les éléments audio distants sont aussi créés par CallManager ; on garde
+           remoteAudio ici pour compatibilité si besoin. -->
+    <audio id="remoteAudio" autoplay playsinline></audio>
+
+    <!-- Mon ID généré -->
+    <div class="card">
+      <span class="label">Votre ID d'installation :</span>
+      <div id="my-id-display" class="id-box">Génération...</div>
+      <button id="btn-copy" type="button" onclick="copyMyId()">
+        Copier mon ID
+      </button>
+    </div>
+
+    <!-- Zone pour composer un ID -->
+    <div class="card">
+      <label for="target-id-input">ID du destinataire :</label>
+      <input type="text" id="target-id-input" placeholder="Ex: ID-482910" />
+
+      <div class="actions">
+        <button id="btn-call" class="btn-green" type="button" onclick="makeCall()">
+          📞 Appeler
+        </button>
+        <button id="btn-video-call" class="btn-green" type="button" onclick="makeVideoCall()">
+          📞 Appeler en vidéo
+        </button>
+        <button class="btn-green" type="button" onclick="disconnectWebSocket()">
+          Couper le serveur
+        </button>
+        <button id="btn-hangup" class="btn-red" type="button" onclick="hangUp(true)" disabled>
+          🚫 Raccrocher
+        </button>
+      </div>
+      <button onclick="window.callManager.showLocalStorageOnScreen()">Voir localStorage</button>
+    </div>
+
+    <!-- Indicateur de statut (CallManager met aussi à jour .status-bar) -->
+    <div id="status" class="status-bar">Hors ligne</div>
+  </div>
+
+  <script src="cordova.js"></script>
+  <script src="js/effet.js"></script>
+  <!-- CallManager remplace l'ancien index.js : HTML+CSS+WebRTC+UI complets -->
+  <script src="js/CallManager.js"></script>
+</body>
+
+</html>

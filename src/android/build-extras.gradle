@@ -1,0 +1,4 @@
+dependencies {
+    implementation 'androidx.core:core-telecom:1.0.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+}
