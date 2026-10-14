@@ -6,9 +6,22 @@ const { WebSocketServer, WebSocket } = require("ws");
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 
-const serviceAccount = require("./serviceAccountKey.json");
-
 // Initialisation de Firebase
+// Essayer de lire depuis une variable d'environnement (Render) ou depuis un fichier local
+let serviceAccount;
+if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+  // Pour Render : la clé est stockée dans une variable d'environnement
+  serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+} else {
+  // Pour le développement local : lire depuis un fichier
+  try {
+    serviceAccount = require("./serviceAccountKey.json");
+  } catch (error) {
+    console.error("❌ Erreur : Impossible de charger la clé Firebase. Veuillez définir la variable d'environnement FIREBASE_SERVICE_ACCOUNT ou placer un fichier serviceAccountKey.json");
+    process.exit(1);
+  }
+}
+
 initializeApp({
   credential: cert(serviceAccount),
 });
