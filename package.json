@@ -1,5 +1,5 @@
 {
-  "name": "com.furthermarket.terminal",
+  "name": "com.callapp.terminal",
   "displayName": "Terminal",
   "version": "1.0.0",
   "description": "A sample Apache Cordova application that responds to the deviceready event.",
@@ -20,12 +20,10 @@
   },
   "devDependencies": {
     "@havesource/cordova-plugin-push": "^7.0.0",
-    "audio-route-plugin": "file:plugins/audio-route-plugin",
     "cordova-android": "^15.1.0",
     "cordova-browser": "^7.0.0",
     "cordova-plugin-advanced-websocket": "^1.1.8",
     "cordova-plugin-android-permissions": "^1.1.5",
-    "cordova-plugin-audioroute": "file:plugins/cordova-plugin-audioroute",
     "cordova-plugin-device": "^3.0.0",
     "cordova-plugin-file": "^8.1.3",
     "cordova-plugin-media-capture": "^6.0.0"

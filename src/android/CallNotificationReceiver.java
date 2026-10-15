@@ -1,4 +1,4 @@
-package com.furthermarket.terminal;
+package com.callapp.terminal;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -13,8 +13,8 @@ import androidx.core.app.NotificationManagerCompat;
  */
 public class CallNotificationReceiver extends BroadcastReceiver
 {
-    public static final String ACTION_DECLINE_CALL = "com.furthermarket.terminal.ACTION_DECLINE_CALL";
-    public static final String ACTION_DISMISS_CALL = "com.furthermarket.terminal.ACTION_DISMISS_CALL";
+    public static final String ACTION_DECLINE_CALL = "com.callapp.terminal.ACTION_DECLINE_CALL";
+    public static final String ACTION_DISMISS_CALL = "com.callapp.terminal.ACTION_DISMISS_CALL";
 
     private static final String TAG = "CallNotifReceiver";
 

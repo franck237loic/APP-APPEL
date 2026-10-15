@@ -5,22 +5,21 @@
 class CallManager {
   // static SIGNALING_SERVER_URL = 'wss://api.furthermarket.com:8088';
   static SIGNALING_SERVER_URL = "wss://node-b44u.onrender.com";
-  static HTTP_SERVER_URL = "https://api.furthermarket.com";
+  static HTTP_SERVER_URL = "https://app-appel.onrender.com";
   static RECONNECT_DELAY = 5000;
 
   static RTC_CONFIG = {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
       {
         urls: [
-          "turn:socialstatus.furthermarket.com:80?transport=udp",
-          "turn:socialstatus.furthermarket.com:80?transport=tcp",
-          "turn:socialstatus.furthermarket.com:443?transport=tcp",
-          "turns:socialstatus.furthermarket.com:443?transport=tcp",
+          "turn:openrelay.metered.ca:80",
+          "turns:openrelay.metered.ca:443",
         ],
-        username: "fmturn57",
-        credential: "fmturn57",
+        username: "openrelayproject",
+        credential: "openrelayproject",
       },
     ],
   };
@@ -385,6 +384,141 @@ static ROUTE_ICONS = {
     max-width: 900px;
     background: #000;
     overflow: hidden;
+}
+
+/* =========================================================
+   ÉTATS DU CONTAINER D'APPEL VIDÉO
+========================================================= */
+
+/* État calling : selfie plein écran, vidéo distante masquée */
+.video-call-container.calling .remote-video {
+    display: none;
+}
+
+.video-call-container.calling .local-video-wrapper {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    top: auto;
+    right: auto;
+    left: auto;
+    bottom: auto;
+}
+
+.video-call-container.calling .local-video {
+    transform: scaleX(-1); /* effet miroir pour caméra frontale */
+}
+
+.video-call-container.calling .local-video-wrapper {
+    touch-action: none; /* pas de drag en état calling */
+}
+
+/* État incoming : boutons Accepter/Refuser et toggle caméra */
+.video-call-container.incoming .video-incoming-actions {
+    display: flex;
+}
+
+.video-call-container.incoming .video-incoming-camera-toggle {
+    display: block;
+}
+
+.video-call-container.incoming .video-control-panel {
+    display: none;
+}
+
+/* État controls-hidden : header et panel masqués en fondu */
+.video-call-container.controls-hidden .video-header {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.video-call-container.controls-hidden .video-control-panel {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.video-call-container:not(.controls-hidden) .video-header {
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 0.3s ease;
+}
+
+.video-call-container:not(.controls-hidden) .video-control-panel {
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 0.3s ease;
+}
+
+/* =========================================================
+   BOUTONS ACCEPTER/REFUSER (ÉTAT INCOMING)
+========================================================= */
+
+.video-incoming-actions {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    gap: 40px;
+    z-index: 40;
+}
+
+.video-incoming-btn {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    border: none;
+    color: white;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+}
+
+.video-incoming-btn.accept {
+    background: #00a884;
+}
+
+.video-incoming-btn.refuse {
+    background: #ea0038;
+}
+
+/* =========================================================
+   TOGGLE CAMÉRA (ÉTAT INCOMING)
+========================================================= */
+
+.video-incoming-camera-toggle {
+    position: absolute;
+    bottom: 130px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    z-index: 40;
+}
+
+.video-incoming-camera-toggle button {
+    background: rgba(17, 27, 33, 0.9);
+    border: none;
+    border-radius: 20px;
+    padding: 10px 20px;
+    color: white;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+}
+
+.video-incoming-camera-toggle button i {
+    font-size: 16px;
 }
 
 
@@ -918,6 +1052,226 @@ button, [role="button"] { cursor: pointer; }
 }
 /* PAS de fond vert sur l'item actif — uniquement la coche (comme WhatsApp) */
 .audio-route-item.active { background: transparent; }
+
+/* =========================================================
+   APPEL DE GROUPE — STYLES (interface-4)
+   Préfixe "group-" : aucun risque de conflit avec le 1-à-1.
+   Réutilise .video-control-btn / .video-control-wrapper existants.
+========================================================= */
+
+/* ----- Écran plein format (même niveau que l'appel vidéo) ----- */
+.group-call-view {
+    background: #0b141a;
+    padding: 0;
+    z-index: 2000;
+}
+
+.group-call-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    max-width: 900px;
+    display: flex;
+    flex-direction: column;
+    background: #0b141a;
+    overflow: hidden;
+}
+
+/* ----- Zone 1 : en-tête ----- */
+.group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px 8px;
+    color: #fff;
+}
+.group-title { font-size: 18px; font-weight: 600; }
+.group-header-sub { margin-top: 2px; font-size: 13px; color: #aebbc2; }
+.group-dot { margin: 0 4px; }
+.group-header-btn {
+    width: 42px; height: 42px;
+    border: none; border-radius: 50%;
+    background: #1f2c34; color: #fff;
+    font-size: 17px; cursor: pointer;
+}
+.group-header-btn:active { transform: scale(.92); }
+
+/* ----- Zone 2 : grille adaptative selon le nombre de tuiles -----
+   1 = plein écran | 2 = 2 lignes | 3-4 = 2x2 | 5-6 = 2 colonnes x 3 lignes */
+.group-grid {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    gap: 6px;
+    padding: 6px;
+    grid-template-columns: 1fr;
+    grid-auto-rows: 1fr;
+}
+.group-grid.count-2 { grid-template-rows: 1fr 1fr; }
+.group-grid.count-3,
+.group-grid.count-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.group-grid.count-5,
+.group-grid.count-6 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr 1fr; }
+/* Tuile impaire en dernière position : occupe toute la largeur */
+.group-grid.count-3 .group-tile:last-child,
+.group-grid.count-5 .group-tile:last-child { grid-column: span 2; }
+
+/* ----- Tuile d'un participant ----- */
+.group-tile {
+    position: relative;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: 14px;
+    background: #1f2c34;
+    border: 3px solid transparent;
+    transition: border-color .2s, opacity .3s;
+}
+.group-video {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: none;
+    background: #000;
+}
+.group-tile.has-video .group-video { display: block; }
+.group-tile.is-self .group-video { transform: scaleX(-1); } /* effet miroir pour soi */
+
+/* Avatar (initiale) quand il n'y a pas de vidéo */
+.group-avatar {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.group-avatar::before {
+    content: "";
+    position: absolute;
+    width: 84px; height: 84px;
+    border-radius: 50%;
+    background: #374248;
+}
+.group-initial {
+    position: relative;
+    font-size: 36px;
+    font-weight: 600;
+    color: #d8e0e4;
+}
+.group-tile.has-video .group-avatar { display: none; }
+
+/* Texte en bas à gauche : nom + statut */
+.group-tile-info {
+    position: absolute;
+    left: 8px; bottom: 8px; right: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0,0,0,.7);
+}
+.group-tile-name { font-size: 13px; font-weight: 600; }
+.group-tile-status { font-size: 11px; color: #d0d8dc; }
+
+/* Pastille "micro coupé" en haut à droite */
+.group-badge-mute {
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: rgba(17, 27, 33, 0.85);
+    color: #fff;
+    font-size: 12px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+.group-tile.is-muted .group-badge-mute { display: flex; }
+
+/* États d'un participant */
+.group-tile.is-ringing { opacity: .75; }
+.group-tile.is-ringing .group-avatar::before { animation: groupPulse 1.4s ease-in-out infinite; }
+.group-tile.is-away { opacity: .45; }
+.group-tile.is-speaking { border-color: #00a884; } /* orateur actif */
+
+@keyframes groupPulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.12); }
+}
+
+/* ----- Zone 3 : barre de contrôles ----- */
+.group-controls {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 10px 8px 22px;
+}
+/* Appel audio seulement : on cache les boutons caméra */
+.group-call-view[data-video="false"] .group-only-video { display: none; }
+
+/* ----- Zone 4 : feuille d'ajout de participants ----- */
+.group-sheet-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: flex-end;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 3000; /* au-dessus des écrans d'appel (999 / 2000) */
+}
+.group-sheet-overlay.show { display: flex; }
+.group-sheet {
+    width: 100%;
+    padding: 18px 16px 24px;
+    border-radius: 18px 18px 0 0;
+    background: #1f2c34;
+    color: #fff;
+}
+.group-sheet-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+.group-sheet-row { display: flex; gap: 8px; }
+.group-sheet-row input {
+    flex: 1;
+    min-width: 0;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    background: #2a3942;
+    color: #fff;
+    font-size: 15px;
+}
+.group-sheet-plus {
+    width: 46px;
+    border: none;
+    border-radius: 10px;
+    background: #00a884;
+    color: #fff;
+    font-size: 16px;
+}
+.group-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.group-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: #2a3942;
+    font-size: 13px;
+}
+.group-chip button { border: none; background: none; color: #aebbc2; font-size: 14px; }
+.group-sheet-hint { min-height: 18px; margin-top: 8px; font-size: 12px; color: #f2b84b; }
+.group-sheet-actions { display: flex; gap: 10px; margin-top: 8px; }
+.group-sheet-cancel,
+.group-sheet-confirm {
+    flex: 1;
+    padding: 12px;
+    border: none;
+    border-radius: 10px;
+    font-size: 15px;
+    font-weight: 600;
+}
+.group-sheet-cancel { background: #2a3942; color: #fff; }
+.group-sheet-confirm { background: #00a884; color: #fff; }
 `;
   }
 
@@ -937,20 +1291,20 @@ button, [role="button"] { cursor: pointer; }
           <i class="fa-solid fa-arrow-left"></i>
         </button>
         <div class="contact-info">
-          <span class="contact-name js-contact-name">Junior</span>
+          <span class="contact-name js-contact-name">GHOMSI</span>
           <div class="status-bar">Hors ligne</div>
           <div class="remote-status-badge js-remote-mute-badge">
             <i class="fa-solid fa-microphone-slash"></i> Micro coupé
           </div>
         </div>
-        <button class="icon-btn-top" type="button" aria-label="Ajouter">
+        <button class="icon-btn-top" type="button" onclick="openGroupAddSheet()" aria-label="Ajouter un participant">
           <i class="fa-solid fa-user-plus"></i>
         </button>
       </div>
       <div class="center" id="timer">00:00:00</div>
       <div class="center-avatar">
         <div class="avatar-container">
-          <span class="js-contact-initial" style="font-size: 80px; color: #8696a0; font-weight: 600">J</span>
+          <span class="js-contact-initial" style="font-size: 80px; color: #8696a0; font-weight: 600">G</span>
         </div>
       </div>
       <div class="control-panel">
@@ -999,13 +1353,13 @@ button, [role="button"] { cursor: pointer; }
     <div class="app-container">
       <div class="header" style="justify-content: center">
         <div class="contact-info">
-          <span class="contact-name js-contact-name">Junior</span>
+          <span class="contact-name js-contact-name">GHOMSI</span>
           <div class="status-bar">Hors ligne</div>
         </div>
       </div>
       <div class="center-avatar">
         <div class="avatar-container">
-          <span class="js-contact-initial" style="font-size: 80px; color: #8696a0; font-weight: 600">J</span>
+          <span class="js-contact-initial" style="font-size: 80px; color: #8696a0; font-weight: 600">G</span>
         </div>
       </div>
       <div class="incoming-actions">
@@ -1041,13 +1395,17 @@ button, [role="button"] { cursor: pointer; }
       <video id="remote-video" class="remote-video" autoplay playsinline webkit-playsinline muted disablePictureInPicture disableRemotePlayback controlsList="nofullscreen nodownload noremoteplayback noplaybackrate"></video>
       <div class="video-header">
         <div class="video-header-info">
-          <div class="video-header-name js-contact-name">Junior</div>
+          <div class="video-header-name js-contact-name">GHOMSI</div>
           <div class="video-header-status status-bar">Connexion...</div>
           <div class="remote-status-row">
             <span class="remote-status-badge js-remote-mute-badge"><i class="fa-solid fa-microphone-slash"></i> Micro coupé</span>
             <span class="remote-status-badge js-remote-camera-badge"><i class="fa-solid fa-video-slash"></i> Caméra coupée</span>
           </div>
         </div>
+        <!-- Ajouter un participant : transforme l'appel 1-à-1 en appel de groupe -->
+        <button class="video-header-btn" type="button" style="margin-left:auto" onclick="openGroupAddSheet()" aria-label="Ajouter un participant">
+          <i class="fa-solid fa-user-plus"></i>
+        </button>
       </div>
       <div class="video-call-info">
         <span id="timer-video">00:00:00</span>
@@ -1057,6 +1415,22 @@ button, [role="button"] { cursor: pointer; }
         <div id="local-video-placeholder" class="local-video-placeholder">
           <i class="fa-solid fa-video-slash"></i>
         </div>
+      </div>
+      <!-- Boutons Accepter/Refuser pour état incoming -->
+      <div class="video-incoming-actions">
+        <button class="video-incoming-btn refuse" type="button" onclick="rejectCall()">
+          <i class="fa-solid fa-phone-slash"></i>
+        </button>
+        <button class="video-incoming-btn accept" type="button" onclick="acceptCall()">
+          <i class="fa-solid fa-phone"></i>
+        </button>
+      </div>
+      <!-- Bouton toggle caméra pour état incoming -->
+      <div class="video-incoming-camera-toggle">
+        <button id="btn-incoming-camera-toggle" type="button" onclick="toggleIncomingCamera()">
+          <i class="fa-solid fa-video" id="incoming-camera-icon"></i>
+          <span id="incoming-camera-text">Désactiver votre vidéo</span>
+        </button>
       </div>
       <div class="video-control-panel">
         <div class="video-control-wrapper">
@@ -1089,6 +1463,98 @@ button, [role="button"] { cursor: pointer; }
           </button>
           <span>Terminer</span>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================
+       APPEL DE GROUPE — ÉCRAN PRINCIPAL (interface-4)
+       Style WhatsApp : en-tête, grille de tuiles, barre de contrôles.
+       - La grille #group-grid est remplie par renderGroupGrid() (JS).
+       - data-video="true|false" sert à masquer les boutons caméra
+         (classe .group-only-video) quand l'appel est audio seulement.
+       - Les ids/classes sont préfixés "group-" pour ne JAMAIS entrer en
+         conflit avec les écrans 1-à-1 (interface-1/2/3).
+       ========================================================= -->
+  <div id="interface-4" class="view-container group-call-view" data-video="false">
+    <div class="group-call-container">
+
+      <!-- ===== ZONE 1 : EN-TÊTE (titre, statut, chrono, bouton Ajouter) ===== -->
+      <div class="group-header">
+        <div class="group-header-info">
+          <div id="group-title" class="group-title">Appel de groupe</div>
+          <div class="group-header-sub">
+            <span id="group-status" class="group-status">Connexion...</span>
+            <span class="group-dot">·</span>
+            <span id="timer-group">00:00:00</span>
+          </div>
+        </div>
+        <!-- Ouvre la feuille "Ajouter des participants" -->
+        <button class="group-header-btn" type="button" onclick="openGroupAddSheet()" aria-label="Ajouter un participant">
+          <i class="fa-solid fa-user-plus"></i>
+        </button>
+      </div>
+
+      <!-- ===== ZONE 2 : GRILLE DES PARTICIPANTS (tuiles créées en JS) ===== -->
+      <div id="group-grid" class="group-grid count-1"></div>
+
+      <!-- Conteneur invisible : un <audio> par participant distant (le son
+           passe par ces éléments, les <video> des tuiles restent muets) -->
+      <div id="group-audio-container" style="display:none"></div>
+
+      <!-- ===== ZONE 3 : BARRE DE CONTRÔLES ===== -->
+      <div class="group-controls">
+        <div class="video-control-wrapper">
+          <button class="video-control-btn js-group-speaker-btn" type="button" onclick="toggleGroupSpeaker()" aria-label="Haut-parleur">
+            <i class="fa-solid fa-volume-high js-group-speaker-icon"></i>
+          </button>
+          <span>Haut-parleur</span>
+        </div>
+        <div class="video-control-wrapper group-only-video">
+          <button class="video-control-btn js-group-cam-btn" type="button" onclick="toggleGroupCamera()" aria-label="Caméra">
+            <i class="fa-solid fa-video js-group-cam-icon"></i>
+          </button>
+          <span>Caméra</span>
+        </div>
+        <div class="video-control-wrapper group-only-video">
+          <button class="video-control-btn" type="button" onclick="switchGroupCamera()" aria-label="Changer de caméra">
+            <i class="fa-solid fa-camera-rotate"></i>
+          </button>
+          <span>Retourner</span>
+        </div>
+        <div class="video-control-wrapper">
+          <button class="video-control-btn js-group-mic-btn" type="button" onclick="toggleGroupMic()" aria-label="Micro">
+            <i class="fa-solid fa-microphone js-group-mic-icon"></i>
+          </button>
+          <span>Micro</span>
+        </div>
+        <div class="video-control-wrapper">
+          <button class="video-control-btn video-hangup" type="button" onclick="leaveGroupCall()" aria-label="Quitter l'appel">
+            <i class="fa-solid fa-phone-slash"></i>
+          </button>
+          <span>Quitter</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== ZONE 4 : FEUILLE "AJOUTER DES PARTICIPANTS" =====
+       (n'est PAS un .view-container : showInterface() ne la masque pas) -->
+  <div id="group-add-sheet" class="group-sheet-overlay" onclick="if (event.target === this) closeGroupAddSheet()">
+    <div class="group-sheet">
+      <div class="group-sheet-title">Ajouter des participants</div>
+      <div class="group-sheet-row">
+        <input id="group-add-input" type="text" placeholder="ID du contact (ex: ID-482910)" autocomplete="off" autocapitalize="off" autocorrect="off" />
+        <button class="group-sheet-plus" type="button" onclick="addGroupInviteeFromInput()" aria-label="Ajouter à la liste">
+          <i class="fa-solid fa-plus"></i>
+        </button>
+      </div>
+      <div id="group-chips" class="group-chips"></div>
+      <div id="group-sheet-hint" class="group-sheet-hint"></div>
+      <div class="group-sheet-actions">
+        <button class="group-sheet-cancel" type="button" onclick="closeGroupAddSheet()">Annuler</button>
+        <button class="group-sheet-confirm" type="button" onclick="confirmGroupAdd()">Appeler</button>
       </div>
     </div>
   </div>
@@ -1234,7 +1700,7 @@ button, [role="button"] { cursor: pointer; }
   };
 
   setContactName = (name) => {
-    const label = name || "Junior";
+    const label = name || "GHOMSI";
     document.querySelectorAll(".js-contact-name").forEach((el) => {
       el.textContent = label;
     });
@@ -1599,6 +2065,12 @@ button, [role="button"] { cursor: pointer; }
         console.log("📞 ACCEPTER DEPUIS PUSH");
         const additionalData = data.additionalData || {};
 
+        // GROUPE : notification d'invitation de groupe
+        if (additionalData.type === "group-invite") {
+          await this.handleGroupPush(additionalData, "accept");
+          return;
+        }
+
         this.extractPushData(additionalData);
         this.autoAcceptOnOffer = true;
 
@@ -1611,6 +2083,11 @@ button, [role="button"] { cursor: pointer; }
         );
         this.updateStatus("Connexion à l'appel...");
 
+        if (this.isVideoCall) {
+          this.setCallingState(true);
+          this.startLocalPreview(true);
+        }
+
         await this.ensureConnectedAndFetchOffer();
       });
 
@@ -1618,6 +2095,12 @@ button, [role="button"] { cursor: pointer; }
       this.push.on("reject", async (data) => {
         console.log("📵 REFUSER APPEL");
         const additionalData = data.additionalData || {};
+
+        // GROUPE : refus d'une invitation de groupe depuis la notification
+        if (additionalData.type === "group-invite") {
+          await this.handleGroupPush(additionalData, "reject");
+          return;
+        }
 
         this.extractPushData(additionalData);
 
@@ -1636,15 +2119,25 @@ button, [role="button"] { cursor: pointer; }
         console.log("🔔 Notification cliquée :", JSON.stringify(data));
         const additionalData = data.additionalData || {};
 
-        if (additionalData.type === "incoming-call") {
+        if (additionalData.type === "group-invite") {
+          // GROUPE : clic sur la notification -> écran d'appel entrant de groupe
+          await this.handleGroupPush(additionalData, "open");
+        } else if (additionalData.type === "incoming-call") {
           this.extractPushData(additionalData);
           this.autoAcceptOnOffer = false;
 
-          this.showInterface(this.interfaceReceiver);
-          this.updateStatus(
-            this.isVideoCall ? "Appel vidéo entrant..." : "Appel entrant...",
-          );
-          this.startVibration();
+          if (this.isVideoCall) {
+            this.showInterface(this.interfaceVideo);
+            this.setCallingState(true);
+            this.setIncomingVideoState(true);
+            this.startLocalPreview(true);
+            this.updateStatus("Appel vidéo entrant...");
+            this.startVibration();
+          } else {
+            this.showInterface(this.interfaceReceiver);
+            this.updateStatus("Appel entrant...");
+            this.startVibration();
+          }
 
           await this.ensureConnectedAndFetchOffer();
         }
@@ -2038,6 +2531,7 @@ button, [role="button"] { cursor: pointer; }
     switch (action) {
       case "registered":
         this.handleRegistered(data);
+        this.onGroupSocketRegistered(); // GROUPE : re-jonction éventuelle de la salle
         break;
 
       case "incoming-call":
@@ -2079,7 +2573,22 @@ button, [role="button"] { cursor: pointer; }
 
       case "call-refused":
       case "call-end":
+        // GROUPE : un message 1-à-1 ne doit jamais fermer un appel de groupe
+        if (this.groupRoomId || this.groupCreating || this.groupPendingInvite) break;
         this.hangUp(false);
+        break;
+
+      // ===== APPEL DE GROUPE : tous les messages "group-*" du serveur =====
+      case "group-created":
+      case "group-invite":
+      case "group-info":
+      case "group-joined":
+      case "group-roster":
+      case "group-signal":
+      case "group-ended":
+      case "group-error":
+      case "group-busy":
+        this.handleGroupMessage(action, data);
         break;
 
       case "video-upgrade-offer":
@@ -2157,6 +2666,17 @@ button, [role="button"] { cursor: pointer; }
     const input = document.getElementById("target-id-input");
     const targetId = input ? input.value.trim() : "";
 
+    // GROUPE : déjà dans un appel de groupe ?
+    if (this.groupRoomId || this.groupPendingInvite || this.groupCreating) {
+      alert("Un appel de groupe est déjà en cours.");
+      return;
+    }
+    // GROUPE : plusieurs IDs saisis (séparés par virgule/espace) -> appel de groupe
+    const groupIds = this.parseGroupIds(targetId);
+    if (groupIds.length > 1) {
+      return this.startGroupCall(groupIds, video);
+    }
+
     if (!targetId || targetId === this.myId) {
       alert("Veuillez saisir un ID valide.");
       return;
@@ -2187,6 +2707,10 @@ button, [role="button"] { cursor: pointer; }
       this.showInterface(
         this.isVideoCall ? this.interfaceVideo : this.interfaceSender,
       );
+
+      if (this.isVideoCall) {
+        this.setCallingState(true);
+      }
     } catch (error) {
       console.error("❌ Erreur lancement appel :", error);
       this.hangUp(false);
@@ -2428,6 +2952,12 @@ button, [role="button"] { cursor: pointer; }
   handleIncomingCall = (data) => {
     console.log("📞 Appel entrant reçu de :", data.from);
 
+    // GROUPE : déjà dans un appel de groupe -> on refuse l'appel 1-à-1
+    if (this.groupRoomId || this.groupCreating || this.groupPendingInvite) {
+      this.sendSignal({ type: "call-refused", targetId: data.from });
+      return;
+    }
+
     this.cleanCallState();
     this.targetUserId = data.from;
     this.pendingOffer = data.offer;
@@ -2441,8 +2971,17 @@ button, [role="button"] { cursor: pointer; }
     this.updateStatus(
       this.isVideoCall ? "Appel vidéo entrant..." : "Appel entrant...",
     );
-    this.showInterface(this.interfaceReceiver);
-    this.startVibration();
+
+    if (this.isVideoCall) {
+      this.showInterface(this.interfaceVideo);
+      this.setCallingState(true);
+      this.setIncomingVideoState(true);
+      this.startLocalPreview(true);
+      this.startVibration();
+    } else {
+      this.showInterface(this.interfaceReceiver);
+      this.startVibration();
+    }
   };
 
   handleCallOfferDetails = async (data) => {
@@ -2459,6 +2998,9 @@ button, [role="button"] { cursor: pointer; }
   };
 
   acceptCall = async () => {
+    // GROUPE : invitation de groupe en attente -> on rejoint la salle
+    if (this.groupPendingInvite) return this.acceptGroupInvite();
+
     // Anti double-décroche (swipe + click synthétique WebView, ou 2 taps rapides)
     if (this.peerConnection) {
       console.warn("⚠️ acceptCall() ignoré — appel déjà en cours de traitement");
@@ -2494,7 +3036,13 @@ button, [role="button"] { cursor: pointer; }
 
     try {
       this.updateStatus("Connexion à l'appel...");
-      await this.initMediaAndPeer();
+
+      // Pour les appels vidéo, réutiliser localStream s'il existe déjà (créé par startLocalPreview)
+      if (this.isVideoCall && this.localStream) {
+        await this.initMediaAndPeer(false); // false: ne pas recréer localStream
+      } else {
+        await this.initMediaAndPeer();
+      }
 
       const SessionDescription = this.activeRTC
         ? this.activeRTC.SessionDescription
@@ -2520,6 +3068,12 @@ button, [role="button"] { cursor: pointer; }
         this.isVideoCall ? this.interfaceVideo : this.interfaceSender,
       );
       this.updateStatus("Appel connecté");
+
+      // Pour les appels vidéo, on reste en état calling jusqu'à l'arrivée de la vidéo distante
+      if (this.isVideoCall) {
+        this.setIncomingVideoState(false);
+        // calling state est déjà true, on le garde
+      }
     } catch (error) {
       console.error("❌ Erreur acceptation appel :", error);
       this.hangUp(false);
@@ -2569,10 +3123,23 @@ button, [role="button"] { cursor: pointer; }
         });
       }
 
-      await this.initMediaAndPeer(false); // false: attacher pistes après setRemoteDescription
+      // Pour les appels vidéo, réutiliser localStream s'il existe déjà (créé par startLocalPreview)
+      if (this.isVideoCall && this.localStream) {
+        // localStream existe déjà, créer peerConnection sans recréer le stream
+        this.activeRTC = {
+          getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
+          PeerConnection: window.RTCPeerConnection,
+          SessionDescription: window.RTCSessionDescription,
+          IceCandidate: window.RTCIceCandidate,
+        };
+        this.peerConnection = new this.activeRTC.PeerConnection(CallManager.RTC_CONFIG);
+      } else {
+        await this.initMediaAndPeer(false); // false: attacher pistes après setRemoteDescription
+      }
 
       if (this.isVideoCall) {
         this.showInterface(this.interfaceVideo);
+        this.setCallingState(true);
       }
 
       const SessionDescription = this.activeRTC
@@ -2602,6 +3169,11 @@ button, [role="button"] { cursor: pointer; }
         this.isVideoCall ? this.interfaceVideo : this.interfaceSender,
       );
       this.updateStatus("Appel connecté");
+
+      // Pour les appels vidéo, on reste en état calling jusqu'à l'arrivée de la vidéo distante
+      if (this.isVideoCall) {
+        // calling state est déjà true, on le garde
+      }
     } catch (error) {
       console.error("❌ [iOS] Erreur acceptation appel :", error);
       this.hangUp(false);
@@ -2609,6 +3181,9 @@ button, [role="button"] { cursor: pointer; }
   };
 
   rejectCall = () => {
+    // GROUPE : invitation de groupe en attente -> refus de groupe
+    if (this.groupPendingInvite) return this.declineGroupInvite();
+
     // iOS: Terminer appel CallKit
     if (this.isIOS() && cordova.plugins && cordova.plugins.CordovaCall) {
       try {
@@ -2675,14 +3250,17 @@ button, [role="button"] { cursor: pointer; }
         await this.ensureMediaAuthorizedIOS();
       }
 
-      this.localStream = await this.activeRTC.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-        video: this.isVideoCall ? { facingMode: "user" } : false,
-      });
+      // Réutiliser localStream s'il existe déjà (créé par startLocalPreview)
+      if (!this.localStream) {
+        this.localStream = await this.activeRTC.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: this.isVideoCall ? { facingMode: "user" } : false,
+        });
+      }
 
       if (this.isVideoCall) {
         const localVideo = document.getElementById("local-video");
@@ -2781,6 +3359,17 @@ button, [role="button"] { cursor: pointer; }
             } catch (e) {
               console.error("❌ Erreur play remote-video :", e);
             }
+
+            // Sortir de l'état calling quand la vidéo distante arrive
+            this.setCallingState(false);
+            this.setIncomingVideoState(false);
+            this.placePipAtBottomRight();
+            this.startControlsAutoHide();
+            this.resetIncomingCameraToggleUI();
+
+            // Masquer le placeholder de la vidéo distante
+            const placeholder = document.querySelector(".remote-video-placeholder");
+            if (placeholder) placeholder.classList.add("hidden");
           }
           if (stream.getAudioTracks().length > 0) {
             playRemoteAudio(stream);
@@ -3162,6 +3751,18 @@ showLocalStorageOnScreen = () => {
     document
       .querySelectorAll(".js-remote-camera-badge")
       .forEach((badge) => badge.classList.remove("show"));
+
+    // Reset video call states
+    this.setCallingState(false);
+    this.setIncomingVideoState(false);
+    this.resetControlsVisibility();
+    this.resetPipPosition();
+    this.resetIncomingCameraToggleUI();
+    this.cancelControlsAutoHide();
+
+    // Réafficher le placeholder de la vidéo distante
+    const placeholder = document.querySelector(".remote-video-placeholder");
+    if (placeholder) placeholder.classList.remove("hidden");
     this.hideCallToast();
     this.isFrontCamera = true;
     this.isSwitchingCamera = false;
@@ -3592,6 +4193,9 @@ showLocalStorageOnScreen = () => {
         localWrap.style.zIndex = "9999";
         localWrap.style.touchAction = "none";
       }
+
+      // Initialiser le toggle des contrôles pour l'appel vidéo
+      this.initControlsToggle();
     } else {
       document.body.classList.remove("video-call-active");
       // Repart d'un style propre si jamais on quitte l'écran vidéo sans
@@ -3870,6 +4474,276 @@ showLocalStorageOnScreen = () => {
   };
 
   /* =========================================================
+   GESTION DES ÉTATS D'APPEL VIDÉO
+========================================================= */
+
+  static CONTROLS_AUTO_HIDE_DELAY = 5000;
+
+  setCallingState = (isCalling) => {
+    const container = document.querySelector(".video-call-container");
+    if (container) {
+      container.classList.toggle("calling", isCalling);
+    }
+  };
+
+  setIncomingVideoState = (isIncoming) => {
+    const container = document.querySelector(".video-call-container");
+    if (container) {
+      container.classList.toggle("incoming", isIncoming);
+    }
+  };
+
+  startLocalPreview = async (withVideo) => {
+    try {
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: withVideo ? { facingMode: "user" } : false,
+      });
+
+      const localVideo = document.getElementById("local-video");
+      if (localVideo && withVideo) {
+        localVideo.srcObject = this.localStream;
+        localVideo.play().catch(() => {});
+      }
+
+      this.isCameraOff = !withVideo;
+      this.updateCameraIcon();
+      this.showLocalVideoPlaceholder(!withVideo);
+    } catch (error) {
+      console.error("❌ Erreur startLocalPreview :", error);
+      throw error;
+    }
+  };
+
+  setLocalCameraEnabled = (enabled) => {
+    if (!this.localStream) return;
+
+    const videoTrack = this.localStream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = enabled;
+      this.isCameraOff = !enabled;
+      this.updateCameraIcon();
+      this.showLocalVideoPlaceholder(!enabled);
+
+      const localVideo = document.getElementById("local-video");
+      if (localVideo) {
+        if (!enabled) {
+          localVideo.srcObject = null;
+        } else {
+          localVideo.srcObject = this.localStream;
+          localVideo.play().catch(() => {});
+        }
+      }
+    }
+  };
+
+  toggleIncomingCamera = () => {
+    if (!this.localStream) return;
+
+    const videoTrack = this.localStream.getVideoTracks()[0];
+    if (videoTrack) {
+      const newState = !videoTrack.enabled;
+      this.setLocalCameraEnabled(newState);
+      this.updateIncomingCameraToggleUI(newState);
+    }
+  };
+
+  updateIncomingCameraToggleUI = (isEnabled) => {
+    const icon = document.getElementById("incoming-camera-icon");
+    const text = document.getElementById("incoming-camera-text");
+
+    if (icon) {
+      icon.className = isEnabled ? "fa-solid fa-video" : "fa-solid fa-video-slash";
+    }
+    if (text) {
+      text.textContent = isEnabled ? "Désactiver votre vidéo" : "Activer votre vidéo";
+    }
+  };
+
+  resetIncomingCameraToggleUI = () => {
+    const icon = document.getElementById("incoming-camera-icon");
+    const text = document.getElementById("incoming-camera-text");
+
+    if (icon) icon.className = "fa-solid fa-video";
+    if (text) text.textContent = "Désactiver votre vidéo";
+  };
+
+  /* =========================================================
+   GESTION DE LA VISIBILITÉ DES CONTRÔLES
+========================================================= */
+
+  initControlsToggle = () => {
+    const container = document.querySelector(".video-call-container");
+    if (!container) return;
+
+    // Tap sur le fond (hors boutons, panel, local-video-wrapper) = toggle contrôles
+    container.addEventListener("click", (e) => {
+      if (this.isControlsHiddenLocked) return;
+
+      const isCalling = container.classList.contains("calling");
+      const isIncoming = container.classList.contains("incoming");
+
+      if (isCalling || isIncoming) return;
+
+      const isButton = e.target.closest("button") || e.target.closest(".video-control-btn");
+      const isPanel = e.target.closest(".video-control-panel");
+      const isLocalWrapper = e.target.closest(".local-video-wrapper");
+
+      if (!isButton && !isPanel && !isLocalWrapper) {
+        this.toggleControls();
+      }
+    });
+
+    // Tout pointerdown sur un bouton réaffiche + relance le timer
+    const buttons = container.querySelectorAll("button");
+    buttons.forEach((btn) => {
+      btn.addEventListener("pointerdown", () => {
+        this.showControls();
+        this.startControlsAutoHide();
+      });
+    });
+  };
+
+  showControls = () => {
+    const container = document.querySelector(".video-call-container");
+    if (container) {
+      container.classList.remove("controls-hidden");
+      this.snapPipToNearestCorner();
+    }
+  };
+
+  hideControls = () => {
+    const container = document.querySelector(".video-call-container");
+    if (container) {
+      container.classList.add("controls-hidden");
+      this.snapPipToNearestCorner();
+    }
+  };
+
+  toggleControls = () => {
+    const container = document.querySelector(".video-call-container");
+    if (container) {
+      if (container.classList.contains("controls-hidden")) {
+        this.showControls();
+        this.startControlsAutoHide();
+      } else {
+        this.hideControls();
+        this.cancelControlsAutoHide();
+      }
+    }
+  };
+
+  startControlsAutoHide = () => {
+    this.cancelControlsAutoHide();
+    this.controlsAutoHideTimer = setTimeout(() => {
+      this.hideControls();
+    }, CallManager.CONTROLS_AUTO_HIDE_DELAY);
+  };
+
+  cancelControlsAutoHide = () => {
+    if (this.controlsAutoHideTimer) {
+      clearTimeout(this.controlsAutoHideTimer);
+      this.controlsAutoHideTimer = null;
+    }
+  };
+
+  resetControlsVisibility = () => {
+    this.cancelControlsAutoHide();
+    this.showControls();
+    this.isControlsHiddenLocked = false;
+  };
+
+  /* =========================================================
+   POSITIONNEMENT PIP (PICTURE-IN-PICTURE)
+========================================================= */
+
+  placePipAtBottomRight = () => {
+    const wrapper = document.querySelector(".local-video-wrapper");
+    const panel = document.querySelector(".video-control-panel");
+    if (!wrapper) return;
+
+    const panelHeight = panel ? panel.offsetHeight : 0;
+    const clearance = 20 + panelHeight + 12;
+    const margin = 12;
+
+    wrapper.style.transition = "left 0.3s ease, top 0.3s ease";
+    wrapper.style.left = "auto";
+    wrapper.style.top = "auto";
+    wrapper.style.right = margin + "px";
+    wrapper.style.bottom = clearance + "px";
+
+    // iOS: refresh native video after positioning
+    if (this.isIOS() && window.cordova && cordova.plugins && cordova.plugins.iosrtc) {
+      setTimeout(() => cordova.plugins.iosrtc.refreshVideos(), 350);
+    }
+  };
+
+  resetPipPosition = () => {
+    const wrapper = document.querySelector(".local-video-wrapper");
+    if (!wrapper) return;
+
+    wrapper.style.left = "";
+    wrapper.style.top = "";
+    wrapper.style.right = "";
+    wrapper.style.bottom = "";
+    wrapper.style.transition = "";
+  };
+
+  snapPipToNearestCorner = () => {
+    const wrapper = document.querySelector(".local-video-wrapper");
+    if (!wrapper) return;
+
+    const container = document.querySelector(".video-call-container");
+    const isControlsHidden = container && container.classList.contains("controls-hidden");
+
+    const header = document.querySelector(".video-header");
+    const panel = document.querySelector(".video-control-panel");
+
+    const headerHeight = header ? header.offsetHeight : 0;
+    const panelHeight = panel ? panel.offsetHeight : 0;
+
+    const margin = 12;
+    const headerClearance = isControlsHidden ? margin : headerHeight + margin;
+    const panelClearance = isControlsHidden ? margin : panelHeight + margin;
+
+    const rect = wrapper.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+
+    const snapLeft = centerX < window.innerWidth / 2;
+    const snapTop = centerY < window.innerHeight / 2;
+
+    wrapper.style.transition = "left 0.3s ease, top 0.3s ease";
+
+    if (snapLeft && snapTop) {
+      wrapper.style.left = margin + "px";
+      wrapper.style.top = headerClearance + "px";
+      wrapper.style.right = "auto";
+      wrapper.style.bottom = "auto";
+    } else if (!snapLeft && snapTop) {
+      wrapper.style.left = "auto";
+      wrapper.style.top = headerClearance + "px";
+      wrapper.style.right = margin + "px";
+      wrapper.style.bottom = "auto";
+    } else if (snapLeft && !snapTop) {
+      wrapper.style.left = margin + "px";
+      wrapper.style.top = "auto";
+      wrapper.style.right = "auto";
+      wrapper.style.bottom = panelClearance + "px";
+    } else {
+      wrapper.style.left = "auto";
+      wrapper.style.top = "auto";
+      wrapper.style.right = margin + "px";
+      wrapper.style.bottom = panelClearance + "px";
+    }
+
+    // iOS: refresh native video after positioning
+    if (this.isIOS() && window.cordova && cordova.plugins && cordova.plugins.iosrtc) {
+      setTimeout(() => cordova.plugins.iosrtc.refreshVideos(), 350);
+    }
+  };
+
+  /* =========================================================
    APPEL ENTRANT DÉCLENCHÉ NATIVEMENT
 ========================================================= */
 
@@ -3915,12 +4789,23 @@ showLocalStorageOnScreen = () => {
         this.isVideoCall ? this.interfaceVideo : this.interfaceSender,
       );
       this.updateStatus("Connexion à l'appel...");
+      if (this.isVideoCall) {
+        this.setCallingState(true);
+        this.startLocalPreview(true);
+      }
     } else {
-      this.showInterface(this.interfaceReceiver);
-      this.updateStatus(
-        this.isVideoCall ? "Appel vidéo entrant..." : "Appel entrant...",
-      );
-      this.startVibration();
+      if (this.isVideoCall) {
+        this.showInterface(this.interfaceVideo);
+        this.setCallingState(true);
+        this.setIncomingVideoState(true);
+        this.startLocalPreview(true);
+        this.updateStatus("Appel vidéo entrant...");
+        this.startVibration();
+      } else {
+        this.showInterface(this.interfaceReceiver);
+        this.updateStatus("Appel entrant...");
+        this.startVibration();
+      }
     }
 
     this.ensureConnectedAndFetchOffer();
@@ -4048,12 +4933,52 @@ showLocalStorageOnScreen = () => {
         return;
       }
 
+      const container = document.querySelector(".video-call-container");
+      const isControlsHidden = container && container.classList.contains("controls-hidden");
+
+      const header = document.querySelector(".video-header");
+      const panel = document.querySelector(".video-control-panel");
+
+      const headerHeight = header ? header.offsetHeight : 0;
+      const panelHeight = panel ? panel.offsetHeight : 0;
+
+      const margin = 12;
+      const headerClearance = isControlsHidden ? margin : headerHeight + margin;
+      const panelClearance = isControlsHidden ? margin : panelHeight + margin;
+
       const rect = wrapper.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+
       const snapLeft = centerX < window.innerWidth / 2;
-      wrapper.style.left = snapLeft
-        ? "10px"
-        : window.innerWidth - rect.width - 10 + "px";
+      const snapTop = centerY < window.innerHeight / 2;
+
+      // Snap au coin le plus proche (4 coins)
+      if (snapLeft && snapTop) {
+        // Coin haut-gauche
+        wrapper.style.left = margin + "px";
+        wrapper.style.top = headerClearance + "px";
+        wrapper.style.right = "auto";
+        wrapper.style.bottom = "auto";
+      } else if (!snapLeft && snapTop) {
+        // Coin haut-droite
+        wrapper.style.left = "auto";
+        wrapper.style.top = headerClearance + "px";
+        wrapper.style.right = margin + "px";
+        wrapper.style.bottom = "auto";
+      } else if (snapLeft && !snapTop) {
+        // Coin bas-gauche
+        wrapper.style.left = margin + "px";
+        wrapper.style.top = "auto";
+        wrapper.style.right = "auto";
+        wrapper.style.bottom = panelClearance + "px";
+      } else {
+        // Coin bas-droite
+        wrapper.style.left = "auto";
+        wrapper.style.top = "auto";
+        wrapper.style.right = margin + "px";
+        wrapper.style.bottom = panelClearance + "px";
+      }
 
       // Le snap est animé (transition CSS) : la vidéo native doit suivre à l'arrivée, pas au
       // point de départ. transitionend est le signal fiable ; le setTimeout couvre le cas où il
@@ -4100,6 +5025,1550 @@ showLocalStorageOnScreen = () => {
       isDragging = false;
     });
   };
+
+  /* #########################################################################
+     #                                                                       #
+     #   APPEL DE GROUPE (style WhatsApp, maillage WebRTC)                   #
+     #                                                                       #
+     #   Principe :                                                          #
+     #   - Pas d'hôte : l'appel vit tant qu'une personne est dedans.         #
+     #   - Tous les invités sonnent en même temps (états du serveur :        #
+     #     RINGING / JOINED / DECLINED / MISSED / LEFT).                     #
+     #   - Maillage : chaque participant a UNE connexion WebRTC directe      #
+     #     avec chacun des autres (max 6 personnes, vous inclus).            #
+     #   - Toute la signalisation WebRTC passe par le message serveur        #
+     #     "group-signal" { roomId, targetId, payload } dont le payload      #
+     #     contient : offer | answer | candidate | state (micro/caméra).     #
+     #   - Aucun code du 1-à-1 n'est modifié, hormis quelques "gardes"       #
+     #     d'une ligne (acceptCall, rejectCall, makeCall, handleIncomingCall,#
+     #     handleSignalMessage, notifications push).                         #
+     #                                                                       #
+     ######################################################################## */
+
+  /* =========================================================
+     GROUPE — SECTION 1 : CONSTANTES
+  ========================================================= */
+
+  static GROUP_MAX_PARTICIPANTS = 6; // vous inclus (limite du maillage)
+  static GROUP_INVITE_TIMEOUT_MS = 45000; // identique au serveur
+  static GROUP_ALONE_GRACE_MS = 6000; // délai avant de quitter un appel où l'on est seul
+  static GROUP_REQUEST_TIMEOUT_MS = 12000; // délai max pour créer / rejoindre une salle
+
+  // Libellés affichés sous le nom, selon l'état du participant
+  static GROUP_STATE_LABELS = {
+    RINGING: "Sonne…",
+    DECLINED: "A refusé",
+    MISSED: "Sans réponse",
+    LEFT: "A quitté",
+    JOINED: "",
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 2 : ÉTAT (propriétés de classe)
+     Tout l'état de groupe est séparé de l'état 1-à-1
+     (peerConnection / localStream / targetUserId ne sont jamais utilisés ici).
+  ========================================================= */
+
+  groupRoomId = null; // identifiant de la salle en cours (null = pas en groupe)
+  groupIsVideo = false; // appel de groupe vidéo ou audio
+  groupRoster = []; // [{ userId, state }] : liste officielle envoyée par le serveur
+  groupPeers = new Map(); // userId -> { pc, stream, pendingCandidates, remoteSet, connState, audioEl, isInitiator }
+  groupPeerStates = new Map(); // userId -> { micMuted, camOff } (états annoncés par les autres)
+  groupRetryCount = new Map(); // userId -> nombre de relances de connexion
+  groupTiles = new Map(); // userId -> élément DOM de la tuile
+  groupLocalStream = null; // MON flux micro/caméra (partagé avec tous les pairs)
+  groupPendingInvite = null; // invitation reçue en attente de réponse { roomId, from, isVideo, roster }
+  groupSelectedIds = []; // IDs choisis dans la feuille "Ajouter"
+  groupIsMuted = false;
+  groupIsCamOff = false;
+  groupIsFrontCamera = true;
+  groupSpeakerOn = false;
+  groupActiveSpeakerId = null; // participant qui parle en ce moment
+  groupCreating = false; // true entre l'envoi de group-create et group-created
+  groupRejoining = false; // true pendant une reconnexion à la salle (voir onGroupSocketRegistered)
+  groupEverHadPeer = false; // quelqu'un d'autre a-t-il déjà rejoint ?
+  groupAcceptInProgress = false; // anti double-clic sur "Accepter"
+  groupJoinPending = false; // true entre l'envoi de group-join et sa confirmation
+  groupMigratingIds = new Set(); // personnes déjà en ligne avec nous avant la transformation 1-à-1 -> groupe
+  groupMigrateTimer = null; // fin de l'affichage "Connexion…" de ces personnes
+  groupIsLeaving = false; // true quand l'utilisateur est en train de quitter
+
+  // Minuteries (toutes nettoyées dans cleanGroupState)
+  groupTimerInterval = null; // chrono de l'appel
+  groupAloneTimer = null; // quitte l'appel si on reste seul
+  groupInviteTimer = null; // expiration d'une invitation reçue
+  groupRequestTimer = null; // surveille la création / l'arrivée dans la salle
+  groupSpeakerTimer = null; // détection de l'orateur actif
+  groupAudioCtx = null; // AudioContext pour mesurer le volume
+  groupAnalysers = new Map(); // userId -> { analyser, stream, buffer }
+
+  // Raccourci vers l'écran de groupe (interface-4)
+  get interfaceGroup() {
+    return document.getElementById("interface-4");
+  }
+
+  /* =========================================================
+     GROUPE — SECTION 3 : OUTILS
+  ========================================================= */
+
+  // Découpe un texte "ID-1, ID-2 ID-3" en tableau d'IDs uniques.
+  parseGroupIds = (text) => {
+    const ids = String(text || "")
+      .split(/[\s,;]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return Array.from(new Set(ids));
+  };
+
+  // Règle anti-collision : pour chaque paire, SEUL l'ID le plus petit envoie l'offre.
+  // Les deux téléphones appliquent la même règle -> jamais deux offres croisées.
+  isGroupInitiator = (peerId) => String(this.myId) < String(peerId);
+
+  // Nombre de personnes "actives" (qui sont dans l'appel ou qui sonnent).
+  countActiveGroupMembers = () =>
+    this.groupRoster.filter((r) => r.state === "JOINED" || r.state === "RINGING").length;
+
+  // Envoie un message de signalisation WebRTC à UN participant de la salle.
+  sendGroupSignal = (targetId, payload) => {
+    if (!this.groupRoomId) return;
+    this.sendSignal({
+      type: "group-signal",
+      roomId: this.groupRoomId,
+      targetId,
+      payload,
+    });
+  };
+
+  // Envoie à tous les participants déjà dans l'appel (JOINED).
+  sendGroupSignalToAll = (payload) => {
+    this.groupRoster.forEach((r) => {
+      if (r.userId !== this.myId && r.state === "JOINED") {
+        this.sendGroupSignal(r.userId, payload);
+      }
+    });
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 4 : MÉDIA LOCAL (micro / caméra / audio)
+  ========================================================= */
+
+  // Ouvre le micro (et la caméra si appel vidéo). Résolution volontairement
+  // modeste (640x480, 24 fps) : en maillage, chaque flux est envoyé N-1 fois.
+  acquireGroupMedia = async (video) => {
+    if (this.isIOS()) {
+      await this.ensureMediaAuthorizedIOS();
+    }
+
+    this.groupLocalStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: video
+        ? {
+            facingMode: "user",
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            frameRate: { ideal: 24 },
+          }
+        : false,
+    });
+
+    this.groupIsMuted = false;
+    this.groupIsCamOff = false;
+    this.groupIsFrontCamera = true;
+
+    // Route audio par défaut : haut-parleur en vidéo, écouteur en audio.
+    if (this.isAndroid()) {
+      await this.setAudioRoute(video ? "speaker" : "earpiece");
+      this.groupSpeakerOn = this.currentAudioRoute === "speaker";
+    } else {
+      this.groupSpeakerOn = !!video;
+      if (this.isIOS() && typeof activerAudioSessionIOS === "function") {
+        activerAudioSessionIOS(this.groupSpeakerOn ? "speaker" : "receiver");
+      }
+    }
+  };
+
+  // Coupe / réactive MON micro et prévient les autres.
+  toggleGroupMic = () => {
+    if (!this.groupLocalStream) return;
+    const track = this.groupLocalStream.getAudioTracks()[0];
+    if (!track) return;
+
+    this.groupIsMuted = !this.groupIsMuted;
+    track.enabled = !this.groupIsMuted;
+    this.updateGroupMicUI();
+    this.updateGroupTile(this.myId);
+    if (this.groupIsMuted) this.showCallToast("Micro coupé");
+    this.sendGroupSignalToAll({
+      kind: "state",
+      micMuted: this.groupIsMuted,
+      camOff: this.groupIsCamOff,
+    });
+  };
+
+  // Coupe / réactive MA caméra et prévient les autres.
+  toggleGroupCamera = () => {
+    if (!this.groupIsVideo || !this.groupLocalStream) return;
+    const track = this.groupLocalStream.getVideoTracks()[0];
+    if (!track) return;
+
+    this.groupIsCamOff = !this.groupIsCamOff;
+    track.enabled = !this.groupIsCamOff;
+    this.updateGroupCamUI();
+    this.updateGroupTile(this.myId);
+    this.sendGroupSignalToAll({
+      kind: "state",
+      micMuted: this.groupIsMuted,
+      camOff: this.groupIsCamOff,
+    });
+  };
+
+  // Bascule caméra avant / arrière : la nouvelle piste remplace l'ancienne
+  // dans CHAQUE connexion (replaceTrack), sans renégociation.
+  switchGroupCamera = async () => {
+    if (!this.groupIsVideo || !this.groupLocalStream || this._groupSwitching) return;
+    this._groupSwitching = true;
+
+    const oldTrack = this.groupLocalStream.getVideoTracks()[0];
+    const nextFacing = this.groupIsFrontCamera ? "environment" : "user";
+
+    try {
+      // Android : il faut libérer l'ancienne caméra avant d'ouvrir l'autre.
+      if (oldTrack) oldTrack.stop();
+
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: nextFacing },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 24 },
+        },
+      });
+      const newTrack = newStream.getVideoTracks()[0];
+      newTrack.enabled = !this.groupIsCamOff;
+
+      for (const peer of this.groupPeers.values()) {
+        const sender = peer.pc.getSenders().find((s) => s.track && s.track.kind === "video");
+        if (sender) await sender.replaceTrack(newTrack);
+      }
+
+      if (oldTrack) this.groupLocalStream.removeTrack(oldTrack);
+      this.groupLocalStream.addTrack(newTrack);
+      this.groupIsFrontCamera = !this.groupIsFrontCamera;
+      this.updateGroupTile(this.myId);
+    } catch (e) {
+      console.error("❌ [GROUPE] switchGroupCamera :", e);
+      this.showCallToast("Impossible de changer de caméra");
+    } finally {
+      this._groupSwitching = false;
+    }
+  };
+
+  // Haut-parleur <-> écouteur.
+  toggleGroupSpeaker = async () => {
+    this.groupSpeakerOn = !this.groupSpeakerOn;
+    if (this.isAndroid()) {
+      await this.setAudioRoute(this.groupSpeakerOn ? "speaker" : "earpiece");
+      this.groupSpeakerOn = this.currentAudioRoute === "speaker";
+    } else if (this.isIOS() && typeof activerAudioSessionIOS === "function") {
+      activerAudioSessionIOS(this.groupSpeakerOn ? "speaker" : "receiver");
+    }
+    this.updateGroupSpeakerUI();
+  };
+
+  // --- Mises à jour visuelles des boutons de la barre de contrôles ---
+  updateGroupMicUI = () => {
+    document
+      .querySelectorAll(".js-group-mic-btn")
+      .forEach((b) => b.classList.toggle("active-mute", this.groupIsMuted));
+    document.querySelectorAll(".js-group-mic-icon").forEach((i) => {
+      i.className = this.groupIsMuted
+        ? "fa-solid fa-microphone-slash js-group-mic-icon"
+        : "fa-solid fa-microphone js-group-mic-icon";
+    });
+  };
+
+  updateGroupCamUI = () => {
+    document
+      .querySelectorAll(".js-group-cam-btn")
+      .forEach((b) => b.classList.toggle("active-mute", this.groupIsCamOff));
+    document.querySelectorAll(".js-group-cam-icon").forEach((i) => {
+      i.className = this.groupIsCamOff
+        ? "fa-solid fa-video-slash js-group-cam-icon"
+        : "fa-solid fa-video js-group-cam-icon";
+    });
+  };
+
+  updateGroupSpeakerUI = () => {
+    document
+      .querySelectorAll(".js-group-speaker-btn")
+      .forEach((b) => b.classList.toggle("active", this.groupSpeakerOn));
+    document.querySelectorAll(".js-group-speaker-icon").forEach((i) => {
+      i.className = this.groupSpeakerOn
+        ? "fa-solid fa-volume-high js-group-speaker-icon"
+        : "fa-solid fa-phone-volume js-group-speaker-icon";
+    });
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 5 : LANCER UN APPEL DE GROUPE
+     Déclenché depuis l'accueil quand le champ ID contient
+     plusieurs identifiants (voir makeCall).
+  ========================================================= */
+
+  startGroupCall = async (ids, video = false) => {
+    if (this.wsReadyState !== WebSocket.OPEN) {
+      alert("Vous n'êtes pas connecté au serveur.");
+      return;
+    }
+    if (this.peerConnection || this.groupRoomId || this.groupPendingInvite || this.groupCreating) {
+      alert("Un appel est déjà en cours.");
+      return;
+    }
+
+    const invitees = (ids || []).filter((id) => id && id !== this.myId);
+    if (invitees.length < 1) {
+      alert("Veuillez saisir au moins un ID valide.");
+      return;
+    }
+    if (invitees.length + 1 > CallManager.GROUP_MAX_PARTICIPANTS) {
+      alert(`Maximum ${CallManager.GROUP_MAX_PARTICIPANTS} participants (vous inclus).`);
+      return;
+    }
+
+    this.groupIsVideo = !!video;
+    this.groupCreating = true;
+    this.groupIsLeaving = false;
+    this.updateStatus("Initialisation média...");
+
+    try {
+      // 1) Média prêt AVANT d'annoncer quoi que ce soit au serveur :
+      //    ainsi une offre WebRTC reçue très tôt trouve déjà mon flux.
+      await this.acquireGroupMedia(this.groupIsVideo);
+
+      // 2) Écran de groupe + création de la salle (voir sendGroupCreate).
+      this.sendGroupCreate(invitees);
+    } catch (error) {
+      console.error("❌ [GROUPE] startGroupCall :", error);
+      alert("Impossible de démarrer l'appel de groupe (micro/caméra ?).");
+      this.finishGroupCall();
+    }
+  };
+
+  // Partie commune "créer la salle" : utilisée par startGroupCall (nouvel appel)
+  // ET par convertCallToGroup (transformation d'un appel 1-à-1).
+  // Prérequis : groupLocalStream et groupIsVideo sont déjà renseignés.
+  //   invitees       : IDs à faire sonner / à rappeler dans la salle
+  //   elapsedSeconds : temps déjà écoulé (on garde le chrono d'un appel 1-à-1)
+  sendGroupCreate = (invitees, elapsedSeconds = 0) => {
+    this.groupCreating = true;
+
+    // Liste provisoire (le vrai roster arrive du serveur juste après).
+    this.groupRoster = [
+      { userId: this.myId, state: "JOINED" },
+      ...invitees.map((id) => ({ userId: id, state: "RINGING" })),
+    ];
+    this.showGroupScreen(elapsedSeconds);
+
+    // Création de la salle : le serveur fait sonner tout le monde.
+    this.sendSignal({
+      type: "group-create",
+      isVideo: this.groupIsVideo,
+      invitedIds: invitees,
+    });
+
+    // Garde-fou : si le serveur ne répond pas, on annule proprement.
+    clearTimeout(this.groupRequestTimer);
+    this.groupRequestTimer = setTimeout(() => {
+      if (this.groupCreating) {
+        this.finishGroupCall("Impossible de créer l'appel de groupe");
+      }
+    }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 6 : APPEL ENTRANT DE GROUPE
+     (réutilise l'écran interface-2 ; acceptCall / rejectCall
+      redirigent ici quand groupPendingInvite existe)
+  ========================================================= */
+
+  // Le serveur nous invite : on affiche l'écran d'appel entrant.
+  handleGroupInvite = (data) => {
+    // 1-à-1 -> groupe : la personne avec qui JE SUIS EN APPEL m'ajoute à sa salle.
+    // Pas de sonnerie : on bascule automatiquement (voir joinGroupFromCall).
+    if (this.isOneToOneConnected() && this.targetUserId === data.from) {
+      this.joinGroupFromCall(data);
+      return;
+    }
+
+    // Déjà occupé (appel 1-à-1 ou autre salle) -> refus automatique.
+    if (this.peerConnection || (this.groupRoomId && this.groupRoomId !== data.roomId)) {
+      this.sendSignal({ type: "group-decline", roomId: data.roomId });
+      return;
+    }
+    if (this.groupRoomId === data.roomId) return; // déjà dedans
+
+    this.groupPendingInvite = {
+      roomId: data.roomId,
+      from: data.from,
+      isVideo: data.isVideo === true || data.isVideo === "true",
+      roster: Array.isArray(data.roster) ? data.roster : [],
+    };
+    this.showGroupIncoming();
+
+    // Si personne ne répond, l'invitation disparaît (le serveur la marque MISSED).
+    clearTimeout(this.groupInviteTimer);
+    this.groupInviteTimer = setTimeout(
+      () => this.dismissGroupInvite("Appel de groupe manqué"),
+      CallManager.GROUP_INVITE_TIMEOUT_MS + 2000,
+    );
+  };
+
+  // Affiche "X vous appelle avec Y, Z" sur l'écran d'appel entrant.
+  showGroupIncoming = () => {
+    const inv = this.groupPendingInvite;
+    if (!inv) return;
+
+    const others = inv.roster
+      .map((r) => r.userId)
+      .filter((id) => id !== this.myId && id !== inv.from);
+    const type = inv.isVideo ? "vidéo" : "audio";
+    const suffix = others.length ? ` avec ${others.join(", ")}` : "";
+
+    this.setContactName(inv.from);
+    this.updateStatus(`Appel de groupe ${type}${suffix}`);
+    this.showInterface(this.interfaceReceiver);
+    this.startVibration();
+  };
+
+  // L'utilisateur accepte (bouton vert ou notification) : on rejoint la salle.
+  acceptGroupInvite = async () => {
+    const inv = this.groupPendingInvite;
+    if (!inv || this.groupAcceptInProgress) return;
+    this.groupAcceptInProgress = true;
+
+    this.stopVibration();
+    clearTimeout(this.groupInviteTimer);
+
+    try {
+      this.updateStatus("Connexion à l'appel...");
+      this.groupRoomId = inv.roomId;
+      this.groupIsVideo = inv.isVideo;
+      this.groupIsLeaving = false;
+
+      // Média prêt AVANT de rejoindre (voir startGroupCall).
+      await this.acquireGroupMedia(this.groupIsVideo);
+
+      // Liste provisoire : moi + ce que l'invitation contenait.
+      const known = inv.roster.filter((r) => r.userId !== this.myId);
+      if (!known.some((r) => r.userId === inv.from)) {
+        known.unshift({ userId: inv.from, state: "JOINED" });
+      }
+      this.groupRoster = [{ userId: this.myId, state: "JOINED" }, ...known];
+      this.groupPendingInvite = null;
+
+      this.showGroupScreen();
+      this.sendSignal({ type: "group-join", roomId: inv.roomId });
+
+      // Garde-fou : si le serveur ne confirme pas, on abandonne.
+      this.groupJoinPending = true;
+      clearTimeout(this.groupRequestTimer);
+      this.groupRequestTimer = setTimeout(() => {
+        if (this.groupJoinPending) {
+          this.finishGroupCall("Impossible de rejoindre l'appel");
+        }
+      }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
+    } catch (error) {
+      console.error("❌ [GROUPE] acceptGroupInvite :", error);
+      this.sendSignal({ type: "group-decline", roomId: inv.roomId });
+      this.groupPendingInvite = null;
+      this.finishGroupCall("Impossible de rejoindre l'appel");
+    } finally {
+      this.groupAcceptInProgress = false;
+    }
+  };
+
+  // L'utilisateur refuse : le serveur passe son état à DECLINED.
+  declineGroupInvite = () => {
+    const inv = this.groupPendingInvite;
+    if (inv) this.sendSignal({ type: "group-decline", roomId: inv.roomId });
+    this.dismissGroupInvite();
+  };
+
+  // Ferme l'écran d'appel entrant de groupe (refus, expiration, salle fermée).
+  dismissGroupInvite = (message) => {
+    clearTimeout(this.groupInviteTimer);
+    this.groupPendingInvite = null;
+    this.stopVibration();
+    this.closeInterfaces();
+    this.updateStatus("En ligne");
+    this.closeNativeIncomingCallScreenIfNeeded();
+    if (message) this.showCallToast(message);
+  };
+
+  // Notification push (application fermée / en arrière-plan).
+  // action : "accept" | "reject" | "open" (clic sur la notification).
+  handleGroupPush = async (data, action) => {
+    const roomId = data.roomId;
+    if (!roomId) return;
+
+    if (action === "reject") {
+      await this.ensureSocketReady();
+      this.sendSignal({ type: "group-decline", roomId });
+      return;
+    }
+    if (this.groupRoomId || this.peerConnection) return;
+
+    this.groupPendingInvite = {
+      roomId,
+      from: data.from || data.callerId || "Inconnu",
+      isVideo: data.isVideo === true || data.isVideo === "true",
+      roster: [],
+    };
+    await this.ensureSocketReady();
+
+    if (action === "accept") {
+      await this.acceptGroupInvite();
+    } else {
+      this.showGroupIncoming();
+      // On vérifie que la salle existe encore (réponse : group-info / group-ended).
+      this.sendSignal({ type: "group-get-info", roomId });
+    }
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 7 : MESSAGES REÇUS DU SERVEUR
+     (aiguillés depuis handleSignalMessage)
+  ========================================================= */
+
+  handleGroupMessage = (action, data) => {
+    switch (action) {
+      // Le serveur confirme la création de la salle (nous = créateur).
+      case "group-created":
+        if (!this.groupCreating) {
+          // Annulé entre-temps : on quitte la salle fantôme.
+          this.sendSignal({ type: "group-leave", roomId: data.roomId });
+          return;
+        }
+        this.groupCreating = false;
+        this.groupRoomId = data.roomId;
+        clearTimeout(this.groupRequestTimer);
+        // On N'applique PAS son roster (créateur seul) : le roster complet
+        // avec les "RINGING" suit immédiatement via "group-roster".
+        break;
+
+      // On nous invite.
+      case "group-invite":
+        this.handleGroupInvite(data);
+        break;
+
+      // Réponse à group-get-info (ouverture via notification).
+      case "group-info":
+        if (this.groupPendingInvite && this.groupPendingInvite.roomId === data.roomId) {
+          this.groupPendingInvite.isVideo = data.isVideo === true || data.isVideo === "true";
+          this.groupPendingInvite.roster = data.roster || [];
+          this.showGroupIncoming();
+        }
+        break;
+
+      // Le serveur confirme que nous avons rejoint la salle.
+      case "group-joined":
+        if (data.roomId !== this.groupRoomId) return;
+        this.groupJoinPending = false;
+        clearTimeout(this.groupRequestTimer);
+        if (this.groupRejoining) {
+          // Reconnexion : on repart de connexions WebRTC neuves.
+          this.groupRejoining = false;
+          this.closeAllGroupPeers();
+        }
+        this.applyGroupRoster(data.roster, true);
+        break;
+
+      // Liste des participants mise à jour (diffusée à chaque changement).
+      case "group-roster":
+        if (data.roomId !== this.groupRoomId) return;
+        this.groupJoinPending = false;
+        clearTimeout(this.groupRequestTimer);
+        // Pendant une reconnexion on attend "group-joined" pour toucher aux pairs.
+        this.applyGroupRoster(data.roster, !this.groupRejoining);
+        break;
+
+      // Signalisation WebRTC d'un autre participant.
+      case "group-signal":
+        this.handleGroupSignal(data);
+        break;
+
+      // La salle est fermée (plus personne dedans).
+      case "group-ended":
+        if (this.groupPendingInvite && this.groupPendingInvite.roomId === data.roomId) {
+          this.dismissGroupInvite("Appel de groupe terminé");
+        } else if (data.roomId === this.groupRoomId) {
+          this.finishGroupCall("Appel de groupe terminé");
+        }
+        break;
+
+      // Erreur (salle pleine, introuvable, non autorisé...).
+      case "group-error":
+        console.warn("⚠️ [GROUPE] erreur serveur :", data.reason);
+        if (this.groupPendingInvite && this.groupPendingInvite.roomId === data.roomId) {
+          this.dismissGroupInvite(data.reason || "Appel de groupe indisponible");
+        } else if (data.roomId === this.groupRoomId && (this.groupJoinPending || this.groupCreating)) {
+          this.finishGroupCall(data.reason || "Impossible de rejoindre l'appel");
+        } else {
+          this.showCallToast(data.reason || "Erreur d'appel de groupe");
+        }
+        break;
+
+      // Un invité est déjà dans un autre appel.
+      case "group-busy":
+        this.showCallToast(`${data.userId} est déjà en appel`);
+        break;
+    }
+  };
+
+  // Après une (re)connexion WebSocket : si on est dans une salle, on la rejoint
+  // à nouveau (le serveur nous avait marqué LEFT à la coupure).
+  onGroupSocketRegistered = () => {
+    if (!this.groupRoomId || this.groupCreating || this.groupIsLeaving || !this.groupLocalStream) return;
+    console.log("🔄 [GROUPE] re-jonction de la salle après reconnexion");
+    this.groupRejoining = true;
+    this.sendSignal({ type: "group-join", roomId: this.groupRoomId });
+  };
+
+  // Applique la liste officielle du serveur : met à jour les pairs WebRTC et la grille.
+  // syncPeers = false : on met seulement l'affichage à jour (reconnexion en cours).
+  applyGroupRoster = (roster, syncPeers = true) => {
+    if (!Array.isArray(roster)) return;
+    this.groupRoster = roster;
+
+    // Dès que le serveur ne la voit plus "RINGING", la personne n'est plus "en migration".
+    this.groupMigratingIds.forEach((id) => {
+      const r = roster.find((x) => x.userId === id);
+      if (!r || r.state !== "RINGING") this.groupMigratingIds.delete(id);
+    });
+
+    const me = roster.find((r) => r.userId === this.myId);
+    if (syncPeers && me && me.state === "JOINED" && this.groupLocalStream) {
+      const joinedOthers = roster
+        .filter((r) => r.userId !== this.myId && r.state === "JOINED")
+        .map((r) => r.userId);
+
+      if (joinedOthers.length) this.groupEverHadPeer = true;
+
+      // 1) Ceux qui ne sont plus dans l'appel : on ferme leur connexion.
+      Array.from(this.groupPeers.keys()).forEach((id) => {
+        if (!joinedOthers.includes(id)) {
+          this.closeGroupPeer(id);
+          this.groupPeerStates.delete(id);
+          this.groupRetryCount.delete(id);
+        }
+      });
+
+      // 2) Nouveaux arrivants : SEUL l'initiateur (ID le plus petit) crée la
+      //    connexion et envoie l'offre ; l'autre attend l'offre (handleGroupOffer).
+      joinedOthers.forEach((id) => {
+        if (!this.groupPeers.has(id) && this.isGroupInitiator(id)) {
+          this.createGroupPeer(id);
+          this.sendGroupOffer(id);
+        }
+      });
+    }
+
+    this.renderGroupGrid();
+    this.checkGroupAlone();
+  };
+
+  // Si on est le dernier dans l'appel (plus personne ne sonne), on quitte
+  // après un court délai, comme WhatsApp.
+  checkGroupAlone = () => {
+    const others = this.groupRoster.filter(
+      (r) => r.userId !== this.myId && (r.state === "JOINED" || r.state === "RINGING"),
+    );
+    if (this.groupRoomId && this.groupRoster.length && others.length === 0) {
+      if (!this.groupAloneTimer) {
+        this.groupAloneTimer = setTimeout(() => {
+          this.groupAloneTimer = null;
+          this.leaveGroupCall(
+            this.groupEverHadPeer ? "Appel de groupe terminé" : "Personne n'a répondu",
+          );
+        }, CallManager.GROUP_ALONE_GRACE_MS);
+      }
+    } else if (this.groupAloneTimer) {
+      clearTimeout(this.groupAloneTimer);
+      this.groupAloneTimer = null;
+    }
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 8 : CONNEXIONS WEBRTC (UNE PAR PARTICIPANT)
+  ========================================================= */
+
+  // Crée la connexion WebRTC avec UN participant et y branche mes pistes.
+  createGroupPeer = (peerId) => {
+    const pc = new RTCPeerConnection(CallManager.RTC_CONFIG);
+    const peer = {
+      pc,
+      stream: null, // flux reçu de ce participant
+      pendingCandidates: [], // candidats ICE reçus avant setRemoteDescription
+      remoteSet: false,
+      connState: "new",
+      audioEl: null,
+      isInitiator: this.isGroupInitiator(peerId),
+    };
+    this.groupPeers.set(peerId, peer);
+
+    // Mes pistes (micro, caméra) vers ce participant.
+    this.groupLocalStream.getTracks().forEach((t) => pc.addTrack(t, this.groupLocalStream));
+
+    // Mes candidats ICE -> ce participant (via le serveur).
+    pc.onicecandidate = (event) => {
+      if (event.candidate && this.groupPeers.get(peerId) === peer) {
+        this.sendGroupSignal(peerId, { kind: "candidate", candidate: event.candidate });
+      }
+    };
+
+    // Flux reçu de ce participant.
+    pc.ontrack = (event) => this.handleGroupTrack(peerId, event);
+
+    // Suivi de l'état (iOS : iceConnectionState, comme le 1-à-1).
+    const stateEvent = this.isIOS() ? "oniceconnectionstatechange" : "onconnectionstatechange";
+    pc[stateEvent] = () => {
+      if (this.groupPeers.get(peerId) === peer) this.handleGroupPeerState(peerId, peer);
+    };
+
+    return peer;
+  };
+
+  // Initiateur : crée l'offre SDP et l'envoie au participant.
+  sendGroupOffer = async (peerId) => {
+    const peer = this.groupPeers.get(peerId);
+    if (!peer) return;
+    try {
+      const offer = await peer.pc.createOffer();
+      await peer.pc.setLocalDescription(offer);
+      this.sendGroupSignal(peerId, {
+        kind: "offer",
+        sdp: { type: offer.type, sdp: offer.sdp },
+      });
+      this.capGroupVideoBitrate(peer.pc);
+    } catch (error) {
+      console.error("❌ [GROUPE] sendGroupOffer :", peerId, error);
+    }
+  };
+
+  // Réception d'une offre : on repart TOUJOURS d'une connexion neuve, puis on répond.
+  handleGroupOffer = async (from, sdp) => {
+    if (!this.groupLocalStream) return; // pas encore prêt
+    if (this.groupPeers.has(from)) this.closeGroupPeer(from);
+
+    // Création synchrone : les candidats ICE qui suivent seront mis en file d'attente.
+    const peer = this.createGroupPeer(from);
+    try {
+      await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      peer.remoteSet = true;
+      await this.flushGroupCandidates(peer);
+
+      const answer = await peer.pc.createAnswer();
+      await peer.pc.setLocalDescription(answer);
+      this.sendGroupSignal(from, {
+        kind: "answer",
+        sdp: { type: answer.type, sdp: answer.sdp },
+      });
+      this.capGroupVideoBitrate(peer.pc);
+    } catch (error) {
+      console.error("❌ [GROUPE] handleGroupOffer :", from, error);
+      this.closeGroupPeer(from);
+    }
+  };
+
+  // Réception de la réponse SDP (nous = initiateur).
+  handleGroupAnswer = async (from, sdp) => {
+    const peer = this.groupPeers.get(from);
+    if (!peer || peer.pc.signalingState !== "have-local-offer") return;
+    try {
+      await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      peer.remoteSet = true;
+      await this.flushGroupCandidates(peer);
+    } catch (error) {
+      console.error("❌ [GROUPE] handleGroupAnswer :", from, error);
+    }
+  };
+
+  // Réception d'un candidat ICE : appliqué tout de suite, ou mis en attente.
+  handleGroupCandidate = async (from, candidate) => {
+    const peer = this.groupPeers.get(from);
+    if (!peer || !candidate) return;
+    if (!peer.remoteSet) {
+      peer.pendingCandidates.push(candidate);
+      return;
+    }
+    try {
+      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (e) {
+      /* candidat périmé : sans gravité */
+    }
+  };
+
+  // Applique les candidats arrivés avant la description distante.
+  flushGroupCandidates = async (peer) => {
+    const list = peer.pendingCandidates;
+    peer.pendingCandidates = [];
+    for (const c of list) {
+      try {
+        await peer.pc.addIceCandidate(new RTCIceCandidate(c));
+      } catch (e) {
+        /* ignoré */
+      }
+    }
+  };
+
+  // Aiguille un "group-signal" selon son type (offer / answer / candidate / state).
+  handleGroupSignal = (data) => {
+    if (data.roomId !== this.groupRoomId || !data.payload) return;
+    const from = data.from;
+    const p = data.payload;
+
+    switch (p.kind) {
+      case "offer":
+        this.handleGroupOffer(from, p.sdp);
+        break;
+      case "answer":
+        this.handleGroupAnswer(from, p.sdp);
+        break;
+      case "candidate":
+        this.handleGroupCandidate(from, p.candidate);
+        break;
+      case "state":
+        // Micro / caméra coupés chez l'autre : badge + avatar sur sa tuile.
+        this.groupPeerStates.set(from, { micMuted: !!p.micMuted, camOff: !!p.camOff });
+        this.updateGroupTile(from);
+        break;
+    }
+  };
+
+  // Un flux (audio ou vidéo) arrive d'un participant.
+  handleGroupTrack = (peerId, event) => {
+    const peer = this.groupPeers.get(peerId);
+    if (!peer) return;
+
+    // Un seul MediaStream par participant (audio + vidéo ensemble).
+    if (event.streams && event.streams[0]) {
+      peer.stream = event.streams[0];
+    } else {
+      if (!peer.stream) peer.stream = new MediaStream();
+      peer.stream.addTrack(event.track);
+    }
+
+    // Le son passe par un <audio> dédié ; l'image par le <video> (muet) de la tuile.
+    if (event.track.kind === "audio") this.attachGroupAudio(peerId, peer);
+    this.updateGroupTile(peerId);
+  };
+
+  // Branche le son d'un participant sur un élément <audio> caché.
+  attachGroupAudio = (peerId, peer) => {
+    const container = document.getElementById("group-audio-container");
+    if (!container || !peer.stream) return;
+
+    if (!peer.audioEl) {
+      peer.audioEl = document.createElement("audio");
+      peer.audioEl.autoplay = true;
+      peer.audioEl.setAttribute("playsinline", "");
+      container.appendChild(peer.audioEl);
+    }
+    peer.audioEl.muted = false;
+    peer.audioEl.volume = 1;
+    if (peer.audioEl.srcObject !== peer.stream) peer.audioEl.srcObject = peer.stream;
+
+    const tryPlay = (n) => {
+      peer.audioEl.play().catch((e) => {
+        console.warn("⚠️ [GROUPE] audio.play() tentative", n, e);
+        if (n < 3) setTimeout(() => tryPlay(n + 1), 400 * (n + 1));
+      });
+    };
+    tryPlay(0);
+  };
+
+  // Suivi de l'état de la connexion avec un participant.
+  handleGroupPeerState = (peerId, peer) => {
+    const raw = this.isIOS() ? peer.pc.iceConnectionState : peer.pc.connectionState;
+    peer.connState = raw === "completed" ? "connected" : raw;
+    console.log(`📡 [GROUPE] ${peerId} -> ${peer.connState}`);
+
+    if (peer.connState === "connected") {
+      this.groupRetryCount.set(peerId, 0);
+      // On annonce notre état micro/caméra au nouveau venu.
+      this.sendGroupSignal(peerId, {
+        kind: "state",
+        micMuted: this.groupIsMuted,
+        camOff: this.groupIsCamOff,
+      });
+      this.capGroupVideoBitrate(peer.pc);
+    } else if (peer.connState === "failed") {
+      this.retryGroupPeer(peerId);
+    }
+    this.updateGroupTile(peerId);
+  };
+
+  // Connexion en échec : l'initiateur recrée la connexion (2 essais max).
+  retryGroupPeer = (peerId) => {
+    const peer = this.groupPeers.get(peerId);
+    if (!peer || !peer.isInitiator) return; // l'autre côté attend notre nouvelle offre
+    const tries = this.groupRetryCount.get(peerId) || 0;
+    if (tries >= 2) {
+      console.warn("⚠️ [GROUPE] abandon de la connexion avec", peerId);
+      return;
+    }
+    this.groupRetryCount.set(peerId, tries + 1);
+    this.closeGroupPeer(peerId);
+    this.createGroupPeer(peerId);
+    this.sendGroupOffer(peerId);
+  };
+
+  // En maillage, la bande passante montante est partagée entre tous les pairs :
+  // on plafonne le débit vidéo envoyé à chacun (ex. 1 pair = 800 kb/s, 5 pairs = 240 kb/s).
+  capGroupVideoBitrate = (pc) => {
+    if (!this.groupIsVideo) return;
+    const bitrate = Math.min(800000, Math.floor(1200000 / Math.max(1, this.groupPeers.size)));
+    pc.getSenders().forEach((sender) => {
+      if (!sender.track || sender.track.kind !== "video") return;
+      try {
+        const params = sender.getParameters();
+        if (!params.encodings || !params.encodings.length) params.encodings = [{}];
+        params.encodings[0].maxBitrate = bitrate;
+        sender.setParameters(params).catch(() => {});
+      } catch (e) {
+        /* non supporté : sans gravité */
+      }
+    });
+  };
+
+  // Ferme la connexion avec UN participant et libère son son.
+  closeGroupPeer = (peerId) => {
+    const peer = this.groupPeers.get(peerId);
+    if (!peer) return;
+    this.groupPeers.delete(peerId);
+
+    peer.pc.onicecandidate = null;
+    peer.pc.ontrack = null;
+    peer.pc.onconnectionstatechange = null;
+    peer.pc.oniceconnectionstatechange = null;
+    try {
+      peer.pc.close();
+    } catch (e) {}
+
+    if (peer.audioEl) {
+      try {
+        peer.audioEl.pause();
+      } catch (e) {}
+      peer.audioEl.srcObject = null;
+      peer.audioEl.remove();
+    }
+    this.groupAnalysers.delete(peerId);
+    this.updateGroupTile(peerId);
+  };
+
+  // Ferme toutes les connexions (fin d'appel ou reconnexion).
+  closeAllGroupPeers = () => {
+    Array.from(this.groupPeers.keys()).forEach((id) => this.closeGroupPeer(id));
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 9 : INTERFACE (grille de tuiles)
+  ========================================================= */
+
+  // Affiche l'écran de groupe et démarre chrono + détection de l'orateur.
+  showGroupScreen = (elapsedSeconds = 0) => {
+    const ui = this.interfaceGroup;
+    if (!ui) return;
+    ui.dataset.video = String(this.groupIsVideo);
+    this.showInterface(ui);
+    this.updateGroupMicUI();
+    this.updateGroupCamUI();
+    this.updateGroupSpeakerUI();
+    this.renderGroupGrid();
+    this.startGroupTimer(elapsedSeconds);
+    this.startGroupSpeakerDetection();
+  };
+
+  // Liste des participants à afficher : moi d'abord, puis les autres
+  // (ceux qui ont quitté / refusé passent en fin de liste). Maximum 6 tuiles.
+  getGroupDisplayIds = () => {
+    const away = (state) => state === "DECLINED" || state === "MISSED" || state === "LEFT";
+    const others = this.groupRoster
+      .filter((r) => r.userId !== this.myId)
+      .sort((a, b) => Number(away(a.state)) - Number(away(b.state)))
+      .map((r) => r.userId);
+    return [this.myId, ...others].slice(0, CallManager.GROUP_MAX_PARTICIPANTS);
+  };
+
+  // (Re)construit la grille : crée les tuiles manquantes, retire les obsolètes,
+  // garde les <video> existantes pour ne pas couper un flux qui joue.
+  renderGroupGrid = () => {
+    const grid = document.getElementById("group-grid");
+    if (!grid) return;
+    const ids = this.getGroupDisplayIds();
+
+    // Tuiles qui ne doivent plus exister
+    Array.from(this.groupTiles.keys()).forEach((id) => {
+      if (!ids.includes(id)) {
+        const tile = this.groupTiles.get(id);
+        const v = tile.querySelector("video");
+        if (v) v.srcObject = null;
+        tile.remove();
+        this.groupTiles.delete(id);
+      }
+    });
+
+    // Création / ordre / mise à jour
+    ids.forEach((id, index) => {
+      let tile = this.groupTiles.get(id);
+      if (!tile) {
+        tile = this.createGroupTile(id);
+        this.groupTiles.set(id, tile);
+      }
+      if (grid.children[index] !== tile) {
+        grid.insertBefore(tile, grid.children[index] || null);
+      }
+      this.updateGroupTile(id);
+    });
+
+    grid.className = `group-grid count-${Math.max(1, Math.min(ids.length, 6))}`;
+    this.updateGroupHeader();
+  };
+
+  // Crée l'élément DOM d'une tuile (le contenu texte est posé par updateGroupTile).
+  createGroupTile = (userId) => {
+    const tile = document.createElement("div");
+    tile.className = "group-tile";
+    if (userId === this.myId) tile.classList.add("is-self");
+    tile.innerHTML = `
+      <video class="group-video" autoplay playsinline webkit-playsinline muted></video>
+      <div class="group-avatar"><span class="group-initial"></span></div>
+      <i class="fa-solid fa-microphone-slash group-badge-mute"></i>
+      <div class="group-tile-info">
+        <span class="group-tile-name"></span>
+        <span class="group-tile-status"></span>
+      </div>`;
+    return tile;
+  };
+
+  // Met à jour UNE tuile (nom, statut, vidéo/avatar, micro coupé, orateur).
+  updateGroupTile = (userId) => {
+    const tile = this.groupTiles.get(userId);
+    if (!tile) return;
+
+    const isSelf = userId === this.myId;
+    const entry = this.groupRoster.find((r) => r.userId === userId);
+    let state = isSelf ? "JOINED" : entry ? entry.state : "RINGING";
+    // Personne déjà en ligne avec nous avant la transformation 1-à-1 -> groupe :
+    // le serveur la voit "RINGING" environ 1 s, on affiche "Connexion…" (pas "Sonne…").
+    if (state === "RINGING" && this.groupMigratingIds.has(userId)) state = "JOINED";
+    const peer = this.groupPeers.get(userId);
+    const remoteState = this.groupPeerStates.get(userId) || {};
+
+    const stream = isSelf ? this.groupLocalStream : peer && peer.stream;
+    const micMuted = isSelf ? this.groupIsMuted : !!remoteState.micMuted;
+    const camOff = isSelf ? this.groupIsCamOff : !!remoteState.camOff;
+    const hasVideoTrack = !!stream && stream.getVideoTracks().length > 0;
+    const showVideo = this.groupIsVideo && state === "JOINED" && hasVideoTrack && !camOff;
+
+    // Textes (textContent : jamais d'HTML venant d'un autre utilisateur)
+    tile.querySelector(".group-tile-name").textContent = isSelf ? "Vous" : userId;
+    tile.querySelector(".group-initial").textContent = String(userId).charAt(0).toUpperCase();
+
+    let statusText = CallManager.GROUP_STATE_LABELS[state] || "";
+    if (state === "JOINED" && !isSelf && (!peer || peer.connState !== "connected")) {
+      statusText = "Connexion…";
+    }
+    tile.querySelector(".group-tile-status").textContent = statusText;
+
+    // Classes d'état
+    tile.classList.toggle("is-ringing", state === "RINGING");
+    tile.classList.toggle("is-away", state === "DECLINED" || state === "MISSED" || state === "LEFT");
+    tile.classList.toggle("is-muted", state === "JOINED" && micMuted);
+    tile.classList.toggle("is-speaking", this.groupActiveSpeakerId === userId);
+    tile.classList.toggle("has-video", showVideo);
+
+    // Vidéo (toujours muette : le son passe par les <audio>)
+    const video = tile.querySelector("video");
+    if (showVideo) {
+      video.muted = true;
+      if (video.srcObject !== stream) video.srcObject = stream;
+      const p = video.play();
+      if (p && p.catch) p.catch(() => {});
+    } else if (video.srcObject) {
+      video.srcObject = null;
+    }
+  };
+
+  // Titre + nombre de personnes dans l'en-tête.
+  updateGroupHeader = () => {
+    const title = document.getElementById("group-title");
+    const status = document.getElementById("group-status");
+    if (title) title.textContent = this.groupIsVideo ? "Appel de groupe vidéo" : "Appel de groupe";
+    if (!status) return;
+
+    const joined = this.groupRoster.filter((r) => r.state === "JOINED").length;
+    const ringing = this.groupRoster.filter((r) => r.state === "RINGING").length;
+    status.textContent =
+      ringing > 0 && joined <= 1
+        ? "Appel en cours…"
+        : `${joined} participant${joined > 1 ? "s" : ""}`;
+  };
+
+  // Surligne la tuile de celui qui parle.
+  setActiveSpeaker = (userId) => {
+    if (this.groupActiveSpeakerId === userId) return;
+    this.groupActiveSpeakerId = userId;
+    this.groupTiles.forEach((tile, id) => tile.classList.toggle("is-speaking", id === userId));
+  };
+
+  // Chrono de l'appel de groupe.
+  // initialSeconds : temps déjà écoulé (appel 1-à-1 transformé en groupe).
+  startGroupTimer = (initialSeconds = 0) => {
+    if (this.groupTimerInterval) return;
+    let seconds = Math.max(0, Math.floor(initialSeconds));
+    const render = () => {
+      const h = String(Math.floor(seconds / 3600)).padStart(2, "0");
+      const m = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
+      const s = String(seconds % 60).padStart(2, "0");
+      const el = document.getElementById("timer-group");
+      if (el) el.textContent = `${h}:${m}:${s}`;
+    };
+    render(); // affiche tout de suite le temps déjà écoulé
+    this.groupTimerInterval = setInterval(() => {
+      seconds++;
+      render();
+    }, 1000);
+  };
+
+  stopGroupTimer = () => {
+    clearInterval(this.groupTimerInterval);
+    this.groupTimerInterval = null;
+    const el = document.getElementById("timer-group");
+    if (el) el.textContent = "00:00:00";
+  };
+
+  // Détection de l'orateur actif : toutes les 400 ms on mesure le volume de
+  // chaque flux audio (AnalyserNode) et on surligne le plus fort.
+  startGroupSpeakerDetection = () => {
+    if (this.groupSpeakerTimer) return;
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.groupAudioCtx = this.groupAudioCtx || new AC();
+      if (this.groupAudioCtx.state === "suspended") this.groupAudioCtx.resume().catch(() => {});
+    } catch (e) {
+      return; // fonction décorative : on ignore si indisponible
+    }
+    this.groupSpeakerTimer = setInterval(this.pollGroupSpeaker, 400);
+  };
+
+  pollGroupSpeaker = () => {
+    const ctx = this.groupAudioCtx;
+    if (!ctx) return;
+
+    // Liste des flux à mesurer : le mien (si micro actif) + ceux des pairs.
+    const sources = [];
+    if (this.groupLocalStream && !this.groupIsMuted) sources.push([this.myId, this.groupLocalStream]);
+    this.groupPeers.forEach((peer, id) => {
+      if (peer.stream) sources.push([id, peer.stream]);
+    });
+
+    let loudestId = null;
+    let loudest = 0.03; // seuil de silence
+    sources.forEach(([id, stream]) => {
+      if (!stream.getAudioTracks().length) return;
+      let node = this.groupAnalysers.get(id);
+      if (!node || node.stream !== stream) {
+        try {
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          ctx.createMediaStreamSource(stream).connect(analyser); // pas relié aux haut-parleurs
+          node = { analyser, stream, buffer: new Uint8Array(analyser.fftSize) };
+          this.groupAnalysers.set(id, node);
+        } catch (e) {
+          return;
+        }
+      }
+      node.analyser.getByteTimeDomainData(node.buffer);
+      let sum = 0;
+      for (let i = 0; i < node.buffer.length; i++) {
+        const v = (node.buffer[i] - 128) / 128;
+        sum += v * v;
+      }
+      const rms = Math.sqrt(sum / node.buffer.length);
+      if (rms > loudest) {
+        loudest = rms;
+        loudestId = id;
+      }
+    });
+    this.setActiveSpeaker(loudestId);
+  };
+
+  stopGroupSpeakerDetection = () => {
+    clearInterval(this.groupSpeakerTimer);
+    this.groupSpeakerTimer = null;
+    this.groupAnalysers.clear();
+    if (this.groupAudioCtx) {
+      try {
+        this.groupAudioCtx.close();
+      } catch (e) {}
+      this.groupAudioCtx = null;
+    }
+    this.groupActiveSpeakerId = null;
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 10 : AJOUTER DES PARTICIPANTS PENDANT L'APPEL
+  ========================================================= */
+
+  openGroupAddSheet = () => {
+    // Autorisé : pendant un appel de groupe OU pendant un appel 1-à-1 connecté
+    // (dans ce second cas, l'appel sera transformé en groupe à la validation).
+    if (!this.groupRoomId && !this.isOneToOneConnected()) {
+      this.showCallToast("Attendez que l'appel soit connecté");
+      return;
+    }
+    this.groupSelectedIds = [];
+    this.renderGroupInviteeChips();
+    this.setGroupSheetHint("");
+    const sheet = document.getElementById("group-add-sheet");
+    if (sheet) sheet.classList.add("show");
+    setTimeout(() => {
+      const input = document.getElementById("group-add-input");
+      if (input) input.focus();
+    }, 150);
+  };
+
+  closeGroupAddSheet = () => {
+    const sheet = document.getElementById("group-add-sheet");
+    if (sheet) sheet.classList.remove("show");
+    const input = document.getElementById("group-add-input");
+    if (input) {
+      input.value = "";
+      input.blur();
+    }
+  };
+
+  setGroupSheetHint = (text) => {
+    const el = document.getElementById("group-sheet-hint");
+    if (el) el.textContent = text || "";
+  };
+
+  // Ajoute l'ID saisi (ou plusieurs IDs séparés par des virgules) à la liste.
+  addGroupInviteeFromInput = () => {
+    const input = document.getElementById("group-add-input");
+    if (!input) return;
+    const ids = this.parseGroupIds(input.value);
+    if (!ids.length) return;
+
+    let hint = "";
+    for (const id of ids) {
+      const inCall =
+        id === this.targetUserId || // mon interlocuteur 1-à-1 est déjà dans l'appel
+        this.groupRoster.some(
+          (r) => r.userId === id && (r.state === "JOINED" || r.state === "RINGING"),
+        );
+      if (id === this.myId) hint = "C'est votre propre ID.";
+      else if (inCall) hint = `${id} est déjà dans l'appel.`;
+      else if (this.groupSelectedIds.includes(id)) hint = `${id} est déjà dans la liste.`;
+      else if (this.getActiveMembersCount() + this.groupSelectedIds.length + 1 > CallManager.GROUP_MAX_PARTICIPANTS) {
+        hint = `Maximum ${CallManager.GROUP_MAX_PARTICIPANTS} participants.`;
+        break;
+      } else this.groupSelectedIds.push(id);
+    }
+    input.value = "";
+    this.setGroupSheetHint(hint);
+    this.renderGroupInviteeChips();
+  };
+
+  removeGroupInvitee = (userId) => {
+    this.groupSelectedIds = this.groupSelectedIds.filter((id) => id !== userId);
+    this.setGroupSheetHint("");
+    this.renderGroupInviteeChips();
+  };
+
+  // Dessine les pastilles (chips) des IDs choisis.
+  renderGroupInviteeChips = () => {
+    const box = document.getElementById("group-chips");
+    if (!box) return;
+    box.innerHTML = "";
+    this.groupSelectedIds.forEach((id) => {
+      const chip = document.createElement("span");
+      chip.className = "group-chip";
+      const label = document.createElement("span");
+      label.textContent = id; // textContent : pas d'injection HTML
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+      remove.addEventListener("click", () => this.removeGroupInvitee(id));
+      chip.appendChild(label);
+      chip.appendChild(remove);
+      box.appendChild(chip);
+    });
+  };
+
+  // Valide : le serveur fait sonner les nouveaux invités (message group-add).
+  confirmGroupAdd = () => {
+    // Prend aussi en compte un ID tapé mais pas encore ajouté avec "+"
+    this.addGroupInviteeFromInput();
+    if (!this.groupSelectedIds.length) {
+      this.setGroupSheetHint("Ajoutez au moins un ID.");
+      return;
+    }
+    // Appel 1-à-1 en cours (pas encore de salle) : on le transforme en groupe.
+    if (!this.groupRoomId) {
+      const ids = this.groupSelectedIds.slice();
+      this.groupSelectedIds = [];
+      this.closeGroupAddSheet();
+      this.convertCallToGroup(ids);
+      return;
+    }
+
+    this.sendSignal({
+      type: "group-add",
+      roomId: this.groupRoomId,
+      invitedIds: this.groupSelectedIds,
+    });
+    this.showCallToast("Invitation envoyée");
+    this.groupSelectedIds = [];
+    this.closeGroupAddSheet();
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 11 : QUITTER / NETTOYER
+  ========================================================= */
+
+  // Quitter l'appel : on sort, les autres continuent (comme WhatsApp).
+  leaveGroupCall = (message) => {
+    this.groupIsLeaving = true;
+    if (this.groupRoomId) {
+      this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
+    }
+    this.finishGroupCall(typeof message === "string" ? message : undefined);
+  };
+
+  // Fin d'appel côté écran : nettoie l'état, ferme les écrans, libère l'audio.
+  finishGroupCall = (message) => {
+    this.cleanGroupState();
+    this.closeInterfaces();
+    this.updateStatus("En ligne");
+
+    // Android : libère le périphérique audio de communication
+    if (this.isAndroid() && window.cordova && cordova.exec) {
+      cordova.exec(() => {}, () => {}, "AudioRoutePlugin", "clearRoute", []);
+    }
+    if (message) this.showCallToast(message);
+  };
+
+  // Remet à zéro TOUT l'état de groupe (aucune minuterie ne reste active).
+  cleanGroupState = () => {
+    [
+      "groupAloneTimer",
+      "groupInviteTimer",
+      "groupRequestTimer",
+      "groupMigrateTimer",
+    ].forEach((name) => {
+      clearTimeout(this[name]);
+      this[name] = null;
+    });
+    this.stopGroupTimer();
+    this.stopGroupSpeakerDetection();
+    this.closeAllGroupPeers();
+
+    if (this.groupLocalStream) {
+      this.groupLocalStream.getTracks().forEach((t) => t.stop());
+      this.groupLocalStream = null;
+    }
+
+    // Grille et tuiles
+    this.groupTiles.forEach((tile) => {
+      const v = tile.querySelector("video");
+      if (v) v.srcObject = null;
+      tile.remove();
+    });
+    this.groupTiles.clear();
+    const grid = document.getElementById("group-grid");
+    if (grid) grid.innerHTML = "";
+    const audioBox = document.getElementById("group-audio-container");
+    if (audioBox) audioBox.innerHTML = "";
+    this.closeGroupAddSheet();
+
+    this.groupRoomId = null;
+    this.groupIsVideo = false;
+    this.groupRoster = [];
+    this.groupPeerStates.clear();
+    this.groupMigratingIds.clear();
+    this.groupRetryCount.clear();
+    this.groupPendingInvite = null;
+    this.groupSelectedIds = [];
+    this.groupIsMuted = false;
+    this.groupIsCamOff = false;
+    this.groupIsFrontCamera = true;
+    this.groupSpeakerOn = false;
+    this.groupCreating = false;
+    this.groupJoinPending = false;
+    this.groupRejoining = false;
+    this.groupEverHadPeer = false;
+    this.groupAcceptInProgress = false;
+    this._groupSwitching = false;
+    this.stopVibration();
+  };
+
+  /* =========================================================
+     GROUPE — SECTION 12 : TRANSFORMER UN APPEL 1-À-1 EN APPEL DE GROUPE
+     Scénario (comme WhatsApp) : A est en appel avec B et appuie sur 👤+ pour
+     ajouter C.
+       A : convertCallToGroup([C])
+           -> récupère son micro/caméra (aucune réouverture, pas de coupure),
+              ferme la connexion 1-à-1 SANS envoyer "call-end",
+              crée la salle avec B et C ("group-create").
+       B : reçoit "group-invite" de A, alors qu'il est en appel avec A
+           -> handleGroupInvite détecte le cas et appelle joinGroupFromCall :
+              bascule AUTOMATIQUEMENT (aucune sonnerie) et rejoint la salle.
+       C : reçoit un appel entrant de groupe normal (il sonne).
+     Aucune modification du serveur n'est nécessaire.
+  ========================================================= */
+
+  // Vrai si un appel 1-à-1 est établi (connecté) en ce moment.
+  isOneToOneConnected = () => {
+    const pc = this.peerConnection;
+    if (!pc || !this.targetUserId || this.groupRoomId) return false;
+    const state = this.isIOS() ? pc.iceConnectionState : pc.connectionState || pc.iceConnectionState;
+    return state === "connected" || state === "completed";
+  };
+
+  // Nombre de personnes actuellement dans l'appel (moi inclus), 1-à-1 ou groupe.
+  getActiveMembersCount = () => {
+    if (this.groupRoomId) return this.countActiveGroupMembers();
+    return this.isOneToOneConnected() ? 2 : 0;
+  };
+
+  // Temps écoulé de l'appel 1-à-1 (lu sur le chrono affiché), pour le conserver.
+  getOneToOneElapsedSeconds = () => {
+    const read = (id) => {
+      const el = document.getElementById(id);
+      const m = el && /^(\d+):(\d+):(\d+)$/.exec((el.textContent || "").trim());
+      return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]) : 0;
+    };
+    return Math.max(read("timer"), read("timer-video"));
+  };
+
+  // Sort de l'appel 1-à-1 SANS le raccrocher côté interlocuteur :
+  //  - le flux micro/caméra est conservé (transmis au groupe),
+  //  - la connexion WebRTC 1-à-1 est fermée, aucun "call-end" n'est envoyé,
+  //  - tout l'état 1-à-1 est remis à zéro (cleanCallState).
+  // Retourne ce qu'il faut pour continuer en groupe.
+  handOverCallToGroup = () => {
+    const stream = this.localStream;
+    const carry = {
+      stream,
+      isVideo: this.isVideoCall && !!stream && stream.getVideoTracks().length > 0,
+      isMuted: this.isMuted,
+      isCameraOff: this.isCameraOff,
+      isFrontCamera: this.isFrontCamera,
+      speakerOn: this.currentAudioRoute === "speaker" || this.isSpeakerOn === true,
+      elapsed: this.getOneToOneElapsedSeconds(),
+    };
+
+    // 1) Le flux local passe au groupe : on le détache AVANT cleanCallState,
+    //    qui arrête normalement toutes les pistes du flux 1-à-1.
+    this.localStream = null;
+
+    // 2) Neutraliser la connexion 1-à-1 : plus aucun événement (ni redémarrage ICE).
+    const pc = this.peerConnection;
+    if (pc) {
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+    }
+
+    // 3) Nettoyage standard (ferme la connexion, remet le chrono à 0...). Aucun signal envoyé.
+    this.cleanCallState();
+    return carry;
+  };
+
+  // Le groupe reprend le micro / la caméra de l'appel 1-à-1.
+  adoptCarriedMedia = (carry) => {
+    this.groupLocalStream = carry.stream;
+    this.groupIsVideo = carry.isVideo;
+    this.groupIsMuted = carry.isMuted;
+    this.groupIsCamOff = carry.isCameraOff;
+    this.groupIsFrontCamera = carry.isFrontCamera;
+    this.groupSpeakerOn = carry.speakerOn;
+    this.groupIsLeaving = false;
+  };
+
+  // CÔTÉ QUI AJOUTE (A) : transforme l'appel 1-à-1 en groupe en invitant newIds.
+  // Retourne true si la transformation a démarré.
+  convertCallToGroup = (newIds) => {
+    if (!this.isOneToOneConnected()) {
+      this.showCallToast("Attendez que l'appel soit connecté");
+      return false;
+    }
+    const peerId = this.targetUserId;
+    const extra = (newIds || []).filter((id) => id && id !== this.myId && id !== peerId);
+    if (!extra.length) return false;
+    if (extra.length + 2 > CallManager.GROUP_MAX_PARTICIPANTS) {
+      this.showCallToast(`Maximum ${CallManager.GROUP_MAX_PARTICIPANTS} participants`);
+      return false;
+    }
+
+    console.log("🔀 [GROUPE] transformation de l'appel 1-à-1 avec", peerId, "en groupe, + ", extra.join(", "));
+    const carry = this.handOverCallToGroup();
+    this.adoptCarriedMedia(carry);
+
+    // Mon interlocuteur est déjà en ligne : il bascule tout seul (pas de sonnerie).
+    // En attendant sa jonction on affiche "Connexion…" au lieu de "Sonne…".
+    this.groupMigratingIds = new Set([peerId]);
+    clearTimeout(this.groupMigrateTimer);
+    this.groupMigrateTimer = setTimeout(() => {
+      this.groupMigratingIds.clear();
+      this.renderGroupGrid();
+    }, 8000);
+
+    // On invite l'interlocuteur ET les nouveaux : le serveur diffuse "group-invite".
+    this.sendGroupCreate([peerId, ...extra], carry.elapsed);
+    return true;
+  };
+
+  // CÔTÉ ADDITIONNÉ (B) : mon interlocuteur 1-à-1 (data.from) vient de créer une
+  // salle de groupe -> je quitte l'appel 1-à-1 et je rejoins la salle, sans sonnerie.
+  joinGroupFromCall = (data) => {
+    console.log("🔀 [GROUPE] bascule automatique de l'appel 1-à-1 vers la salle", data.roomId);
+    const from = data.from;
+    const carry = this.handOverCallToGroup();
+    this.adoptCarriedMedia(carry);
+
+    this.groupRoomId = data.roomId;
+    this.groupIsVideo = data.isVideo === true || data.isVideo === "true";
+
+    // Liste provisoire : moi + l'appelant (déjà dans l'appel) + ce que l'invitation contient.
+    const others = (Array.isArray(data.roster) ? data.roster : []).filter(
+      (r) => r.userId !== this.myId && r.userId !== from,
+    );
+    this.groupRoster = [
+      { userId: this.myId, state: "JOINED" },
+      { userId: from, state: "JOINED" },
+      ...others,
+    ];
+    this.showGroupScreen(carry.elapsed);
+    this.sendSignal({ type: "group-join", roomId: data.roomId });
+
+    // Garde-fou : si le serveur ne confirme pas, on abandonne.
+    this.groupJoinPending = true;
+    clearTimeout(this.groupRequestTimer);
+    this.groupRequestTimer = setTimeout(() => {
+      if (this.groupJoinPending) {
+        this.finishGroupCall("Impossible de rejoindre l'appel de groupe");
+      }
+    }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
+  };
 }
 
 /* =========================================================
@@ -4118,6 +6587,18 @@ window.closeInterfaces = callManager.closeInterface;
 window.connectWebSocket = callManager.connectWebSocket;
 window.toggleMicrophone = callManager.toggleMicrophone;
 window.makeVideoCall = callManager.makeVideoCall;
+
+// ===== APPEL DE GROUPE : fonctions appelées par les onclick du HTML =====
+window.startGroupCall = callManager.startGroupCall;
+window.leaveGroupCall = callManager.leaveGroupCall;
+window.toggleGroupMic = callManager.toggleGroupMic;
+window.toggleGroupCamera = callManager.toggleGroupCamera;
+window.switchGroupCamera = callManager.switchGroupCamera;
+window.toggleGroupSpeaker = callManager.toggleGroupSpeaker;
+window.openGroupAddSheet = callManager.openGroupAddSheet;
+window.closeGroupAddSheet = callManager.closeGroupAddSheet;
+window.addGroupInviteeFromInput = callManager.addGroupInviteeFromInput;
+window.confirmGroupAdd = callManager.confirmGroupAdd;
 window.toggleCamera = callManager.toggleCamera;
 window.switchCamera = callManager.switchCamera;
 window.onNativeIncomingCall = callManager.onNativeIncomingCall;
@@ -4127,6 +6608,7 @@ window.toggleSpeaker = callManager.toggleSpeaker;
 window.toggleScreenLog = callManager.toggleScreenLog;
 window.clearScreenLog = callManager.clearScreenLog;
 window.showLocalStorageOnScreen = callManager.showLocalStorageOnScreen;
+window.toggleIncomingCamera = callManager.toggleIncomingCamera;
 
 // Helpers écran d'accueil (index.html)
 window.copyMyId = () => {

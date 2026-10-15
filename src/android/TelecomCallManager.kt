@@ -1,4 +1,4 @@
-package com.furthermarket.terminal
+package com.callapp.terminal
 
 import android.content.Context
 import android.net.Uri

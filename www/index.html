@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Application d'Appel WebRTC</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <link rel="stylesheet" href="css/index.css" />
@@ -34,24 +34,25 @@
 
     <!-- Zone pour composer un ID -->
     <div class="card">
-      <label for="target-id-input">ID du destinataire :</label>
-      <input type="text" id="target-id-input" placeholder="Ex: ID-482910" />
+      <label for="target-id-input">ID du destinataire (plusieurs IDs séparés par une virgule = appel de groupe) :</label>
+      <input type="text" id="target-id-input" placeholder="Ex: ID-111 ou ID-111, ID-222" />
 
+      <!-- ===== BOUTONS D'APPEL ======================================
+           Uniquement 2 actions sur l'écran d'accueil :
+             - Appel audio  -> makeCall()      (CallManager.makeCall(false))
+             - Appel vidéo  -> makeVideoCall() (CallManager.makeCall(true))
+           Les autres boutons (Couper le serveur, Raccrocher, Voir localStorage)
+           ont été retirés : le raccrochage se fait depuis les écrans d'appel
+           (interface-1 / interface-3) injectés par CallManager.js.
+      ============================================================= -->
       <div class="actions">
         <button id="btn-call" class="btn-green" type="button" onclick="makeCall()">
-          📞 Appeler
+          📞 Appel audio
         </button>
         <button id="btn-video-call" class="btn-green" type="button" onclick="makeVideoCall()">
-          📞 Appeler en vidéo
-        </button>
-        <button class="btn-green" type="button" onclick="disconnectWebSocket()">
-          Couper le serveur
-        </button>
-        <button id="btn-hangup" class="btn-red" type="button" onclick="hangUp(true)" disabled>
-          🚫 Raccrocher
+          🎥 Appel vidéo
         </button>
       </div>
-      <button onclick="window.callManager.showLocalStorageOnScreen()">Voir localStorage</button>
     </div>
 
     <!-- Indicateur de statut (CallManager met aussi à jour .status-bar) -->

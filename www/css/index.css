@@ -5,6 +5,15 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* Conteneur principal */
+#call-manager-root {
+    width: 100%;
+    height: 100vh;
+    max-height: 100vh;
+    overflow: hidden;
+    position: relative;
+}
+
 /* Barre de sélection des interfaces */
 .switcher-bar {
     background-color: #111b21;
@@ -55,15 +64,17 @@
 /* Application Container */
 .app-container {
     width: 100%;
-    max-width: 480px;
+    max-width: min(480px, 100vw);
     height: 100%;
+    max-height: 100vh;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     align-items: center;
-    padding: max(20px, 4vh) 16px 20px 16px;
+    padding: max(15px, 3vh) clamp(12px, 3vw, 16px) clamp(15px, 3vh) clamp(12px, 3vw, 16px);
     background-color: #0b141a;
     color: #ffffff;
+    overflow: hidden;
 }
 
 /* En-têtes */
@@ -72,8 +83,9 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 5px;
+    padding: 0 clamp(5px, 1.5vw, 10px);
     z-index: 10;
+    flex-shrink: 0;
 }
 
 .icon-btn-top {
@@ -100,12 +112,13 @@
 }
 
 .encryption-status, .phone-number, .call-status {
-    font-size: clamp(11px, 3vw, 13px);
+    font-size: clamp(10px, 2.8vw, 13px);
     color: #8696a0;
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 4px;
     margin-top: 2px;
+    flex-shrink: 0;
 }
 
 /* Centre Avatar */
@@ -114,8 +127,19 @@
     justify-content: center;
     align-items: center;
     flex-grow: 1;
+    flex-shrink: 0;
     width: 100%;
-    padding: 20px 0;
+    padding: clamp(10px, 2vh, 20px) 0;
+    min-height: 0;
+}
+
+.center {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+    width: 100%;
+    padding: 5px 0;
 }
 
 .avatar-container {
@@ -134,14 +158,15 @@
 .control-panel {
     background-color: #111b21;
     width: 100%;
-    border-radius: 28px;
-    padding: clamp(20px, 4vh, 28px) 15px;
+    border-radius: clamp(20px, 5vw, 28px);
+    padding: clamp(12px, 2.5vh, 28px) clamp(10px, 2.5vw, 15px);
     display: grid;
     grid-template-columns: repeat(3, 1fr);
-    gap: clamp(12px, 3vh, 20px) 10px;
+    gap: clamp(8px, 2vh, 20px) clamp(6px, 1.5vw, 10px);
     justify-items: center;
     align-items: center;
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
+    flex-shrink: 0;
 }
 
 .btn-wrapper {
@@ -301,9 +326,144 @@
     position: relative;
     width: 100%;
     height: 100%;
-    max-width: 900px;
+    max-width: min(900px, 100vw);
     background: #000;
     overflow: hidden;
+}
+
+/* =========================================================
+   ÉTATS DU CONTAINER D'APPEL VIDÉO
+========================================================= */
+
+/* État calling : selfie plein écran, vidéo distante masquée */
+.video-call-container.calling .remote-video {
+    display: none;
+}
+
+.video-call-container.calling .local-video-wrapper {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+    top: auto;
+    right: auto;
+    left: auto;
+    bottom: auto;
+}
+
+.video-call-container.calling .local-video {
+    transform: scaleX(-1); /* effet miroir pour caméra frontale */
+}
+
+.video-call-container.calling .local-video-wrapper {
+    touch-action: none; /* pas de drag en état calling */
+}
+
+/* État incoming : boutons Accepter/Refuser et toggle caméra */
+.video-call-container.incoming .video-incoming-actions {
+    display: flex;
+}
+
+.video-call-container.incoming .video-incoming-camera-toggle {
+    display: block;
+}
+
+.video-call-container.incoming .video-control-panel {
+    display: none;
+}
+
+/* État controls-hidden : header et panel masqués en fondu */
+.video-call-container.controls-hidden .video-header {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.video-call-container.controls-hidden .video-control-panel {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+}
+
+.video-call-container:not(.controls-hidden) .video-header {
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 0.3s ease;
+}
+
+.video-call-container:not(.controls-hidden) .video-control-panel {
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity 0.3s ease;
+}
+
+/* =========================================================
+   BOUTONS ACCEPTER/REFUSER (ÉTAT INCOMING)
+========================================================= */
+
+.video-incoming-actions {
+    position: absolute;
+    bottom: 40px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    gap: 40px;
+    z-index: 40;
+}
+
+.video-incoming-btn {
+    width: 70px;
+    height: 70px;
+    border-radius: 50%;
+    border: none;
+    color: white;
+    font-size: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+}
+
+.video-incoming-btn.accept {
+    background: #00a884;
+}
+
+.video-incoming-btn.refuse {
+    background: #ea0038;
+}
+
+/* =========================================================
+   TOGGLE CAMÉRA (ÉTAT INCOMING)
+========================================================= */
+
+.video-incoming-camera-toggle {
+    position: absolute;
+    bottom: 130px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    z-index: 40;
+}
+
+.video-incoming-camera-toggle button {
+    background: rgba(17, 27, 33, 0.9);
+    border: none;
+    border-radius: 20px;
+    padding: 10px 20px;
+    color: white;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+}
+
+.video-incoming-camera-toggle button i {
+    font-size: 16px;
 }
 
 
@@ -733,5 +893,433 @@
 
     .video-avatar span {
         font-size: 48px;
+    }
+}
+
+/* =========================================================
+   TRES PETITS ECRANS (< 320px)
+========================================================= */
+
+@media (max-width: 320px) {
+    .app-container {
+        padding: 10px 8px;
+    }
+
+    .control-panel {
+        padding: 12px 8px;
+        gap: 8px 6px;
+    }
+
+    .control-btn {
+        width: clamp(40px, 12vw, 50px);
+        height: clamp(40px, 12vw, 50px);
+        font-size: clamp(14px, 4vw, 18px);
+    }
+
+    .btn-label {
+        font-size: 9px;
+    }
+
+    .avatar-container {
+        width: clamp(120px, 35vw, 160px);
+        height: clamp(120px, 35vw, 160px);
+    }
+
+    .contact-name {
+        font-size: 14px;
+    }
+
+    .local-video-wrapper {
+        width: 90px;
+        height: 130px;
+        top: 60px;
+        right: 8px;
+    }
+
+    .video-control-panel {
+        padding: 10px 5px;
+        gap: 8px 3px;
+    }
+
+    .video-control-btn {
+        width: 42px;
+        height: 42px;
+        font-size: 16px;
+    }
+
+    .video-avatar {
+        width: 90px;
+        height: 90px;
+    }
+
+    .video-avatar span {
+        font-size: 40px;
+    }
+
+    .video-contact-name {
+        font-size: 18px;
+    }
+
+    .incoming-btn {
+        width: 56px;
+        height: 56px;
+        font-size: 20px;
+    }
+}
+
+/* =========================================================
+   GRANDS ECRANS MOBILES (> 480px)
+========================================================= */
+
+@media (min-width: 481px) and (max-width: 768px) {
+    .app-container {
+        max-width: 480px;
+    }
+
+    .avatar-container {
+        width: 200px;
+        height: 200px;
+    }
+
+    .control-btn {
+        width: 60px;
+        height: 60px;
+    }
+}
+
+/* =========================================================
+   APPEL DE GROUPE
+========================================================= */
+
+.group-call-view {
+    background: #0b141a;
+}
+
+.group-call-container {
+    width: 100%;
+    height: 100%;
+    max-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: clamp(15px, 3vh, 20px) clamp(12px, 3vw, 16px);
+    background: linear-gradient(to bottom, rgba(11, 20, 26, 0.9), transparent);
+    z-index: 10;
+    flex-shrink: 0;
+}
+
+.group-header-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.group-title {
+    font-size: clamp(18px, 4.5vw, 22px);
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.group-header-sub {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: clamp(12px, 3vw, 14px);
+    color: #8696a0;
+}
+
+.group-dot {
+    color: #57646a;
+}
+
+.group-header-btn {
+    width: clamp(40px, 10vw, 48px);
+    height: clamp(40px, 10vw, 48px);
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
+    font-size: clamp(16px, 4vw, 20px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.group-grid {
+    flex-grow: 1;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: clamp(8px, 2vw, 12px);
+    padding: clamp(10px, 2vw, 16px);
+    overflow-y: auto;
+    align-content: start;
+}
+
+.group-grid.count-1 {
+    grid-template-columns: 1fr;
+}
+
+.group-grid.count-2 {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.group-grid.count-3,
+.group-grid.count-4 {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+.group-grid.count-5,
+.group-grid.count-6 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.group-grid.count-7,
+.group-grid.count-8,
+.group-grid.count-9 {
+    grid-template-columns: repeat(3, 1fr);
+}
+
+.group-tile {
+    background: #111b21;
+    border-radius: clamp(12px, 3vw, 16px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    aspect-ratio: 1;
+    position: relative;
+}
+
+.group-tile video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    background: #1a242a;
+}
+
+.group-tile-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(160deg, #2a3942, #1f2c33);
+    color: #d8e0e4;
+}
+
+.group-tile-avatar {
+    width: clamp(60px, 15vw, 80px);
+    height: clamp(60px, 15vw, 80px);
+    border-radius: 50%;
+    background: #26343d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(24px, 6vw, 32px);
+    font-weight: 600;
+}
+
+.group-tile-name {
+    margin-top: clamp(8px, 2vw, 12px);
+    font-size: clamp(14px, 3.5vw, 16px);
+    font-weight: 500;
+}
+
+.group-tile-info {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: clamp(8px, 2vw, 12px);
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.group-tile-badge {
+    font-size: clamp(10px, 2.5vw, 12px);
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.group-controls {
+    display: flex;
+    justify-content: center;
+    gap: clamp(8px, 2vw, 15px);
+    padding: clamp(12px, 3vh, 20px) clamp(12px, 3vw, 16px);
+    background: rgba(17, 27, 33, 0.95);
+    backdrop-filter: blur(12px);
+    flex-shrink: 0;
+}
+
+.group-only-video {
+    display: none;
+}
+
+.group-call-view[data-video="true"] .group-only-video {
+    display: flex;
+}
+
+/* Sheet Ajouter participants */
+.group-sheet-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.group-sheet-overlay.active {
+    display: flex;
+}
+
+.group-sheet {
+    width: 100%;
+    max-width: min(500px, 100vw);
+    background: #111b21;
+    border-radius: clamp(20px, 5vw, 28px) clamp(20px, 5vw, 28px) 0 0;
+    padding: clamp(20px, 4vw, 24px);
+    display: flex;
+    flex-direction: column;
+    gap: clamp(12px, 3vw, 16px);
+    animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(100%);
+    }
+    to {
+        transform: translateY(0);
+    }
+}
+
+.group-sheet-title {
+    font-size: clamp(18px, 4.5vw, 20px);
+    font-weight: 600;
+    color: #ffffff;
+    text-align: center;
+}
+
+.group-sheet-row {
+    display: flex;
+    gap: 10px;
+}
+
+.group-sheet-row input {
+    flex-grow: 1;
+    padding: clamp(12px, 3vw, 14px);
+    border: 1px solid #2a3942;
+    border-radius: clamp(8px, 2vw, 12px);
+    background: #1a242a;
+    color: #ffffff;
+    font-size: clamp(14px, 3.5vw, 16px);
+}
+
+.group-sheet-plus {
+    width: clamp(44px, 11vw, 52px);
+    height: clamp(44px, 11vw, 52px);
+    border: none;
+    border-radius: clamp(8px, 2vw, 12px);
+    background: #00a884;
+    color: #ffffff;
+    font-size: clamp(18px, 4.5vw, 20px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.group-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 40px;
+}
+
+.group-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: #26343d;
+    border-radius: 20px;
+    color: #ffffff;
+    font-size: clamp(13px, 3.2vw, 14px);
+}
+
+.group-chip-remove {
+    cursor: pointer;
+    color: #8696a0;
+}
+
+.group-chip-remove:hover {
+    color: #ea0038;
+}
+
+.group-sheet-hint {
+    font-size: clamp(12px, 3vw, 13px);
+    color: #8696a0;
+    text-align: center;
+    min-height: 20px;
+}
+
+.group-sheet-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.group-sheet-cancel,
+.group-sheet-confirm {
+    flex: 1;
+    padding: clamp(12px, 3vw, 14px);
+    border: none;
+    border-radius: clamp(8px, 2vw, 12px);
+    font-size: clamp(14px, 3.5vw, 16px);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.group-sheet-cancel {
+    background: #26343d;
+    color: #8696a0;
+}
+
+.group-sheet-confirm {
+    background: #00a884;
+    color: #ffffff;
+}
+
+@media (max-width: 380px) {
+    .group-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .group-grid.count-2,
+    .group-grid.count-3,
+    .group-grid.count-4 {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .group-grid.count-5,
+    .group-grid.count-6,
+    .group-grid.count-7,
+    .group-grid.count-8,
+    .group-grid.count-9 {
+        grid-template-columns: repeat(2, 1fr);
     }
 }

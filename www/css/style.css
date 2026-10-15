@@ -7,70 +7,78 @@
 
 body {
     background-color: #f4f6f9;
-    padding: 20px;
+    padding: clamp(10px, 3vw, 20px);
     display: flex;
     justify-content: center;
-} 
+    min-height: 100vh;
+    margin: 0;
+    overflow-x: hidden;
+    width: 100%;
+}
 
 .container {
-    width: 100%;
-    max-width: 400px;
+    width: 900%;
+    max-width: min(400px, 90vw);
     display: flex;
     flex-direction: column;
-    gap: 15px;
+    gap: clamp(12px, 3vw, 15px);
+    margin: 0 auto;
 }
 
 h2 {
     text-align: center;
     color: #333;
+    font-size: clamp(18px, 5vw, 24px);
+    margin-bottom: 5px;
 }
 
 .card {
     background: #ffffff;
-    padding: 15px;
-    border-radius: 12px;
+    padding: clamp(12px, 3vw, 15px);
+    border-radius: clamp(10px, 2.5vw, 12px);
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: clamp(8px, 2vw, 10px);
 }
 
 .label {
-    font-size: 13px;
+    font-size: clamp(12px, 3vw, 13px);
     color: #666;
 }
 
 .id-box {
-    font-size: 20px;
+    font-size: clamp(16px, 4vw, 20px);
     font-weight: bold;
     color: #2c3e50;
     background: #eef2f5;
-    padding: 10px;
-    border-radius: 8px;
+    padding: clamp(8px, 2vw, 10px);
+    border-radius: clamp(6px, 1.5vw, 8px);
     text-align: center;
     letter-spacing: 1px;
+    word-break: break-all;
 }
 
 input[type="text"] {
     width: 100%;
-    padding: 12px;
+    padding: clamp(10px, 2.5vw, 12px);
     border: 1px solid #ddd;
-    border-radius: 8px;
-    font-size: 16px;
+    border-radius: clamp(6px, 1.5vw, 8px);
+    font-size: clamp(14px, 3.5vw, 16px);
     text-align: center;
 }
 
 .actions {
     display: flex;
-    gap: 10px;
+    gap: clamp(8px, 2vw, 10px);
 }
 
 button {
     flex: 1;
-    padding: 12px;
+    padding: clamp(10px, 2.5vw, 12px);
     border: none;
-    border-radius: 8px;
-    font-size: 15px;
+    border-radius: clamp(6px, 1.5vw, 8px);
+    font-size: clamp(13px, 3.5vw, 15px);
     font-weight: bold;
     cursor: pointer;
     transition: opacity 0.2s;
@@ -158,3 +166,49 @@ button:disabled {
     }
     .audio-route-item:hover { background: rgba(255, 255, 255, 0.08); }
     .audio-route-item.active { color: #00a884; }
+
+/* Media queries pour différents écrans */
+@media (max-width: 360px) {
+    .container {
+        max-width: 95vw;
+    }
+
+    .card {
+        padding: 10px;
+    }
+
+    .id-box {
+        font-size: 14px;
+        padding: 8px;
+    }
+
+    input[type="text"] {
+        font-size: 14px;
+        padding: 10px;
+    }
+
+    button {
+        font-size: 13px;
+        padding: 10px;
+    }
+
+    h2 {
+        font-size: 18px;
+    }
+}
+
+@media (min-width: 768px) {
+    .container {
+        max-width: 400px;
+    }
+
+    body {
+        padding: 30px;
+    }
+}
+
+@media (min-width: 1024px) {
+    body {
+        padding: 40px;
+    }
+}
