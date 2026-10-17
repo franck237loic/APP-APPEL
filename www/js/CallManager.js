@@ -4,7 +4,7 @@
 
 class CallManager {
   // static SIGNALING_SERVER_URL = 'wss://api.furthermarket.com:8088';
-  static SIGNALING_SERVER_URL = "wss://node-b44u.onrender.com";
+  static SIGNALING_SERVER_URL = "wss://app-appel.onrender.com";
   static HTTP_SERVER_URL = "https://app-appel.onrender.com";
   static RECONNECT_DELAY = 5000;
 
@@ -5450,6 +5450,7 @@ showLocalStorageOnScreen = () => {
     this.groupRequestTimer = setTimeout(() => {
       if (this.groupCreating) {
         console.error("[GROUPE] TIMEOUT group-created non reçu — vérifier serveur / réseau / register-user");
+        console.error("[GROUPE] SIGNALING_SERVER_URL utilisé :", CallManager.SIGNALING_SERVER_URL);
         this.finishGroupCall("Impossible de créer l'appel de groupe");
       }
     }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
