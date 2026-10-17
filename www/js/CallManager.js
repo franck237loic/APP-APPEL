@@ -416,6 +416,17 @@ static ROUTE_ICONS = {
     touch-action: none; /* pas de drag en état calling */
 }
 
+/* État calling : header et panel visibles pour les contrôles */
+.video-call-container.calling .video-header {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.video-call-container.calling .video-control-panel {
+    opacity: 1;
+    pointer-events: auto;
+}
+
 /* État incoming : boutons Accepter/Refuser et toggle caméra */
 .video-call-container.incoming .video-incoming-actions {
     display: flex;
@@ -427,6 +438,12 @@ static ROUTE_ICONS = {
 
 .video-call-container.incoming .video-control-panel {
     display: none;
+}
+
+/* État incoming : header visible pour montrer le nom de l'appelant */
+.video-call-container.incoming .video-header {
+    opacity: 1;
+    pointer-events: auto;
 }
 
 /* État controls-hidden : header et panel masqués en fondu */
@@ -2744,6 +2761,8 @@ button, [role="button"] { cursor: pointer; }
 
       if (this.isVideoCall) {
         this.setCallingState(true);
+        // Afficher les contrôles dès le début de l'appel (pas seulement quand la vidéo distante arrive)
+        this.showControls();
       }
     } catch (error) {
       console.error("❌ Erreur lancement appel :", error);
@@ -3013,6 +3032,8 @@ button, [role="button"] { cursor: pointer; }
       this.setIncomingVideoState(true);
       this.startLocalPreview(true);
       this.startVibration();
+      // Afficher les contrôles pendant l'état incoming (boutons accepter/refuser)
+      this.showControls();
     } else {
       this.showInterface(this.interfaceReceiver);
       this.startVibration();
