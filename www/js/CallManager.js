@@ -390,50 +390,76 @@ static ROUTE_ICONS = {
    ÉTATS DU CONTAINER D'APPEL VIDÉO
 ========================================================= */
 
-/* État calling : selfie plein écran, vidéo distante masquée */
+/* État calling : selfie pas en plein écran, afficher avatar centré */
 .video-call-container.calling .remote-video {
     display: none;
 }
 
 .video-call-container.calling .local-video-wrapper {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    border-radius: 0;
-    border: none;
-    top: auto;
-    right: auto;
-    left: auto;
-    bottom: auto;
+    top: 75px;
+    right: 15px;
+    width: clamp(110px, 28vw, 180px);
+    height: clamp(150px, 35vw, 240px);
+    border-radius: 15px;
+    border: 2px solid rgba(255,255,255,.8);
+    z-index: 5;
+    touch-action: none; /* pas de drag en état calling */
 }
 
 .video-call-container.calling .local-video {
     transform: scaleX(-1); /* effet miroir pour caméra frontale */
 }
 
-.video-call-container.calling .local-video-wrapper {
-    touch-action: none; /* pas de drag en état calling */
+/* État calling : afficher le placeholder (avatar) */
+.video-call-container.calling .remote-video-placeholder {
+    display: flex;
+    z-index: 3;
 }
 
 /* État calling : header et panel visibles pour les contrôles */
 .video-call-container.calling .video-header {
     opacity: 1;
     pointer-events: auto;
+    z-index: 10; /* Au-dessus de la vidéo */
 }
 
 .video-call-container.calling .video-control-panel {
     opacity: 1;
     pointer-events: auto;
+    z-index: 10; /* Au-dessus de la vidéo */
+}
+
+/* État incoming : placeholder avatar centré (comme WhatsApp) */
+.video-call-container.incoming .local-video-wrapper {
+    position: absolute;
+    top: 75px;
+    right: 15px;
+    width: clamp(110px, 28vw, 180px);
+    height: clamp(150px, 35vw, 240px);
+    border-radius: 15px;
+    border: 2px solid rgba(255,255,255,.8);
+    z-index: 5;
+}
+
+.video-call-container.incoming .local-video {
+    transform: scaleX(-1);
+}
+
+.video-call-container.incoming .remote-video-placeholder {
+    display: flex; /* Afficher l'avatar au centre */
+    z-index: 3;
 }
 
 /* État incoming : boutons Accepter/Refuser et toggle caméra */
 .video-call-container.incoming .video-incoming-actions {
     display: flex;
+    z-index: 30; /* Au-dessus de tout */
 }
 
 .video-call-container.incoming .video-incoming-camera-toggle {
     display: block;
+    z-index: 30; /* Au-dessus de tout */
 }
 
 .video-call-container.incoming .video-control-panel {
@@ -444,6 +470,18 @@ static ROUTE_ICONS = {
 .video-call-container.incoming .video-header {
     opacity: 1;
     pointer-events: auto;
+    z-index: 20; /* Au-dessus du placeholder */
+}
+
+/* Overlay sombre pendant calling/incoming pour améliorer la lisibilité */
+.video-call-container.calling::before,
+.video-call-container.incoming::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 2;
+    pointer-events: none;
 }
 
 /* État controls-hidden : header et panel masqués en fondu */
@@ -554,7 +592,7 @@ static ROUTE_ICONS = {
 
     background: #111;
 
-    z-index: 1;
+    z-index: 4; /* Au-dessus du placeholder pour s'afficher quand la vidéo arrive */
 }
 
 
@@ -566,9 +604,10 @@ static ROUTE_ICONS = {
     position: absolute;
     inset: 0;
 
-    z-index: 2;
+    z-index: 6; /* Au-dessus de la vidéo mais sous les contrôles */
 
-    display: flex;
+    display: none; /* Caché par défaut */
+
     flex-direction: column;
 
     justify-content: center;
@@ -587,6 +626,16 @@ static ROUTE_ICONS = {
 
 .remote-video-placeholder.hidden {
     display: none;
+}
+
+/* État incoming : afficher le placeholder (avatar) */
+.video-call-container.incoming .remote-video-placeholder {
+    display: flex;
+}
+
+/* État calling : afficher le placeholder (avatar) */
+.video-call-container.calling .remote-video-placeholder {
+    display: flex;
 }
 
 .video-avatar {
@@ -641,7 +690,7 @@ static ROUTE_ICONS = {
     left: 0;
     right: 0;
 
-    z-index: 10;
+    z-index: 15; /* Au-dessus de la vidéo et du placeholder */
 
     display: flex;
     align-items: center;
@@ -653,6 +702,14 @@ static ROUTE_ICONS = {
         rgba(0, 0, 0, .75),
         transparent
     );
+}
+
+/* Overlay transparent pour capturer les clics sur la vidéo */
+.video-click-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: auto;
 }
 
 .video-header-btn {
@@ -800,7 +857,7 @@ static ROUTE_ICONS = {
 
     transform: translateX(-50%);
 
-    z-index: 30;
+    z-index: 25; /* Au-dessus de la vidéo et du placeholder */
 
     width: calc(100% - 25px);
 
@@ -1408,6 +1465,14 @@ button, [role="button"] { cursor: pointer; }
   <div id="interface-3" class="view-container video-call-view">
     <div class="video-call-container">
       <video id="remote-video" class="remote-video" autoplay playsinline webkit-playsinline muted disablePictureInPicture disableRemotePlayback controlsList="nofullscreen nodownload noremoteplayback noplaybackrate"></video>
+      <div class="remote-video-placeholder">
+        <div class="video-avatar">
+          <span class="js-contact-initial">G</span>
+        </div>
+        <div class="video-contact-name js-contact-name">GHOMSI</div>
+        <div class="video-call-status status-bar">Appel vidéo...</div>
+      </div>
+      <div class="video-click-overlay"></div>
       <div class="video-header">
         <div class="video-header-info">
           <div class="video-header-name js-contact-name">GHOMSI</div>
@@ -3418,7 +3483,8 @@ button, [role="button"] { cursor: pointer; }
             this.setCallingState(false);
             this.setIncomingVideoState(false);
             this.placePipAtBottomRight();
-            this.startControlsAutoHide();
+            this.showControls(); // Afficher les contrôles (sans auto-hide)
+            // this.startControlsAutoHide(); // Désactivé : les contrôles restent visibles
             this.resetIncomingCameraToggleUI();
 
             // Masquer le placeholder de la vidéo distante
@@ -4637,20 +4703,30 @@ showLocalStorageOnScreen = () => {
     const container = document.querySelector(".video-call-container");
     if (!container) return;
 
+    // Créer l'overlay si n'existe pas
+    let overlay = container.querySelector(".video-click-overlay");
+    if (!overlay) {
+      overlay = document.createElement("div");
+      overlay.className = "video-click-overlay";
+      container.appendChild(overlay);
+    }
+
+    // Tap sur l'overlay = toggle contrôles
+    overlay.addEventListener("click", (e) => {
+      if (this.isControlsHiddenLocked) return;
+      this.toggleControls();
+    });
+
     // Tap sur le fond (hors boutons, panel, local-video-wrapper) = toggle contrôles
     container.addEventListener("click", (e) => {
       if (this.isControlsHiddenLocked) return;
 
-      const isCalling = container.classList.contains("calling");
-      const isIncoming = container.classList.contains("incoming");
-
-      if (isCalling || isIncoming) return;
-
       const isButton = e.target.closest("button") || e.target.closest(".video-control-btn");
       const isPanel = e.target.closest(".video-control-panel");
       const isLocalWrapper = e.target.closest(".local-video-wrapper");
+      const isOverlay = e.target.closest(".video-click-overlay");
 
-      if (!isButton && !isPanel && !isLocalWrapper) {
+      if (!isButton && !isPanel && !isLocalWrapper && !isOverlay) {
         this.toggleControls();
       }
     });
@@ -5153,6 +5229,7 @@ showLocalStorageOnScreen = () => {
   groupMigratingIds = new Set(); // personnes déjà en ligne avec nous avant la transformation 1-à-1 -> groupe
   groupMigrateTimer = null; // fin de l'affichage "Connexion…" de ces personnes
   groupIsLeaving = false; // true quand l'utilisateur est en train de quitter
+  groupDowngradingToOneToOne = false; // true pendant la bascule vers interface 1-à-1
 
   // Minuteries (toutes nettoyées dans cleanGroupState)
   groupTimerInterval = null; // chrono de l'appel
@@ -5907,6 +5984,107 @@ showLocalStorageOnScreen = () => {
       clearTimeout(this.groupAloneTimer);
       this.groupAloneTimer = null;
     }
+
+    // Si on passe de 3+ participants à 2 participants (moi + 1 autre),
+    // basculer vers l'interface 1-à-1 vidéo normale
+    if (this.groupRoomId && this.groupIsVideo && others.length === 1) {
+      const otherId = others[0].userId;
+      if (!this.groupDowngradingToOneToOne) {
+        this.groupDowngradingToOneToOne = true;
+        console.log(`🔄 [GROUPE] Bascule vers appel 1-à-1 avec ${otherId}`);
+        this.downgradeGroupToOneToOne(otherId);
+      }
+    }
+
+    // Si on passe de 2 participants à 3+ participants,
+    // rebasculer vers l'interface de groupe
+    if (this.groupRoomId && this.groupIsVideo && others.length >= 2) {
+      if (this.groupDowngradingToOneToOne) {
+        this.groupDowngradingToOneToOne = false;
+        console.log(`🔄 [GROUPE] Bascule vers appel de groupe (${others.length} autres participants)`);
+        this.upgradeToGroupInterface();
+      }
+    }
+  };
+
+  // Bascule de l'interface de groupe vers l'interface 1-à-1 vidéo
+  downgradeGroupToOneToOne = (otherId) => {
+    try {
+      // Récupérer le peer WebRTC existant avec l'autre participant
+      const peer = this.groupPeers.get(otherId);
+      if (!peer || !peer.stream) {
+        console.warn("⚠️ Pas de connexion vidéo avec l'autre participant, reste en mode groupe");
+        this.groupDowngradingToOneToOne = false;
+        return;
+      }
+
+      // Afficher l'interface vidéo 1-à-1
+      this.showInterface(this.interfaceVideo);
+      this.setCallingState(false);
+      this.setIncomingVideoState(false);
+
+      // Attacher la vidéo distante au <video> remote-video
+      const remoteVideo = document.getElementById("remote-video");
+      if (remoteVideo && peer.stream) {
+        remoteVideo.srcObject = peer.stream;
+        remoteVideo.play().catch(e => console.warn("⚠️ Erreur play remote-video:", e));
+      }
+
+      // Afficher la vidéo locale
+      const localVideo = document.getElementById("local-video");
+      if (localVideo && this.groupLocalStream) {
+        localVideo.srcObject = this.groupLocalStream;
+        localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
+      }
+
+      // Masquer le placeholder
+      const placeholder = document.querySelector(".remote-video-placeholder");
+      if (placeholder) placeholder.classList.add("hidden");
+
+      // Afficher les contrôles
+      this.showControls();
+      this.startControlsAutoHide();
+
+      // Positionner la vidéo locale en bas à droite
+      this.placePipAtBottomRight();
+
+      // Mettre à jour le nom du contact
+      this.setContactName(otherId);
+
+      console.log("✅ Bascule vers interface 1-à-1 réussie");
+    } catch (error) {
+      console.error("❌ Erreur bascule vers 1-à-1:", error);
+      this.groupDowngradingToOneToOne = false;
+    }
+  };
+
+  // Bascule de l'interface 1-à-1 vers l'interface de groupe
+  upgradeToGroupInterface = () => {
+    try {
+      // Réafficher l'interface de groupe
+      this.showInterface(this.interfaceGroup);
+      this.interfaceGroup.dataset.video = String(this.groupIsVideo);
+
+      // Réinitialiser la grille de groupe
+      this.renderGroupGrid();
+
+      // Mettre à jour les contrôles de groupe
+      this.updateGroupMicUI();
+      this.updateGroupCamUI();
+      this.updateGroupSpeakerUI();
+
+      // Démarrer/continuer le timer de groupe
+      if (!this.groupTimerInterval) {
+        this.startGroupTimer();
+      }
+
+      // Démarrer/continuer la détection de l'orateur
+      this.startGroupSpeakerDetection();
+
+      console.log("✅ Bascule vers interface de groupe réussie");
+    } catch (error) {
+      console.error("❌ Erreur bascule vers groupe:", error);
+    }
   };
 
   /* =========================================================
@@ -6635,6 +6813,7 @@ showLocalStorageOnScreen = () => {
       clearTimeout(this[name]);
       this[name] = null;
     });
+    this.groupDowngradingToOneToOne = false;
     this.stopGroupTimer();
     this.stopGroupSpeakerDetection();
     this.closeAllGroupPeers();
