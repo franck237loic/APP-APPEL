@@ -1669,6 +1669,16 @@ button, [role="button"] { cursor: pointer; }
         toast.id = "call-toast";
         document.body.appendChild(toast);
       }
+      // S'assurer que interface-3 existe même si le HTML complet n'est pas réinjecté
+      if (!document.getElementById("interface-3")) {
+        console.log("⚠️ interface-3 manquant, réinjection partielle...");
+        const host = document.createElement("div");
+        host.innerHTML = CallManager.HTML;
+        const interface3 = host.querySelector("#interface-3");
+        if (interface3) {
+          document.body.appendChild(interface3);
+        }
+      }
       this.injectLogPanel();
       return;
     }
@@ -2307,6 +2317,18 @@ button, [role="button"] { cursor: pointer; }
           this.stopHeartbeat();
           this.wsId = null;
           this.wsReadyState = WebSocket.CLOSED;
+          // ✅ Annuler le timer de requête de groupe pour éviter le timeout faux positif
+          if (this.groupCreating || this.groupJoinPending) {
+            console.log("⏱️ [GROUPE] WebSocket fermé pendant la création/jonction - timer annulé, réessai après reconnexion");
+            this._groupRequestRetryNeeded = true;
+            this._groupRequestRetryData = {
+              creating: this.groupCreating,
+              roomId: this.groupRoomId,
+              isVideo: this.groupIsVideo,
+              invitees: this.groupRoster.filter(r => r.state === "RINGING").map(r => r.userId),
+            };
+          }
+          clearTimeout(this.groupRequestTimer);
           if (!this.manuallyClosed) {
             this.updateStatus("Hors ligne");
             this.scheduleReconnect();
@@ -2322,6 +2344,18 @@ button, [role="button"] { cursor: pointer; }
           this.stopHeartbeat();
           this.wsId = null;
           this.wsReadyState = WebSocket.CLOSED;
+          // ✅ Annuler le timer de requête de groupe pour éviter le timeout faux positif
+          if (this.groupCreating || this.groupJoinPending) {
+            console.log("⏱️ [GROUPE] WebSocket en erreur pendant la création/jonction - timer annulé, réessai après reconnexion");
+            this._groupRequestRetryNeeded = true;
+            this._groupRequestRetryData = {
+              creating: this.groupCreating,
+              roomId: this.groupRoomId,
+              isVideo: this.groupIsVideo,
+              invitees: this.groupRoster.filter(r => r.state === "RINGING").map(r => r.userId),
+            };
+          }
+          clearTimeout(this.groupRequestTimer);
           if (!this.manuallyClosed) {
             this.scheduleReconnect();
           }
@@ -2973,6 +3007,7 @@ button, [role="button"] { cursor: pointer; }
     );
 
     if (this.isVideoCall) {
+      console.log("🎬 Appel vidéo entrant - interfaceVideo:", this.interfaceVideo);
       this.showInterface(this.interfaceVideo);
       this.setCallingState(true);
       this.setIncomingVideoState(true);
@@ -3727,6 +3762,11 @@ showLocalStorageOnScreen = () => {
         this.peerConnection.close();
       } catch (e) {}
       this.peerConnection = null;
+    }
+    // Nettoyer aussi l'ancien peerConnection de transition s'il existe
+    if (this._oldPeerConnection) {
+      this.closePeerConnectionSilently(this._oldPeerConnection);
+      this._oldPeerConnection = null;
     }
     this.activeRTC = null;
 
@@ -4488,8 +4528,10 @@ showLocalStorageOnScreen = () => {
 
   setIncomingVideoState = (isIncoming) => {
     const container = document.querySelector(".video-call-container");
+    console.log("🎬 setIncomingVideoState:", isIncoming, "container trouvé:", !!container);
     if (container) {
       container.classList.toggle("incoming", isIncoming);
+      console.log("🎬 Classes après toggle:", container.className);
     }
   };
 
@@ -5399,7 +5441,10 @@ showLocalStorageOnScreen = () => {
   handleGroupInvite = (data) => {
     // 1-à-1 -> groupe : la personne avec qui JE SUIS EN APPEL m'ajoute à sa salle.
     // Pas de sonnerie : on bascule automatiquement (voir joinGroupFromCall).
-    if (this.isOneToOneConnected() && this.targetUserId === data.from) {
+    // FIX: Accepter même si l'état de connexion est transient (disconnected, connecting, etc.)
+    // tant qu'on a un peerConnection actif avec l'appelant
+    if (this.peerConnection && this.targetUserId === data.from && !this.groupRoomId) {
+      console.log("🔀 [GROUPE] Transformation automatique - peerConnection existe avec", data.from, ", état:", this.peerConnection.connectionState || this.peerConnection.iceConnectionState);
       this.joinGroupFromCall(data);
       return;
     }
@@ -5558,6 +5603,11 @@ showLocalStorageOnScreen = () => {
         clearTimeout(this.groupRequestTimer);
         // On N'applique PAS son roster (créateur seul) : le roster complet
         // avec les "RINGING" suit immédiatement via "group-roster".
+
+        // ✅ Fermer l'ancien peerConnection 1-à-1 maintenant que le groupe est créé
+        // Cela permet une transition fluide sans coupure
+        this.closePeerConnectionSilently(this._oldPeerConnection);
+        this._oldPeerConnection = null;
         break;
 
       // On nous invite.
@@ -5632,6 +5682,28 @@ showLocalStorageOnScreen = () => {
   // Après une (re)connexion WebSocket : si on est dans une salle, on la rejoint
   // à nouveau (le serveur nous avait marqué LEFT à la coupure).
   onGroupSocketRegistered = () => {
+    // ✅ Réessayer la création/jonction de groupe si elle était en cours
+    if (this._groupRequestRetryNeeded && this._groupRequestRetryData) {
+      console.log("🔄 [GROUPE] Réessai de la création/jonction après reconnexion");
+      const retryData = this._groupRequestRetryData;
+      this._groupRequestRetryNeeded = false;
+      this._groupRequestRetryData = null;
+
+      if (retryData.creating) {
+        // Réessayer la création
+        this.groupCreating = true;
+        this.groupIsVideo = retryData.isVideo;
+        this.sendGroupCreate(retryData.invitees);
+      } else if (retryData.roomId) {
+        // Réessayer la jonction
+        this.groupJoinPending = true;
+        this.groupRoomId = retryData.roomId;
+        this.groupIsVideo = retryData.isVideo;
+        this.sendSignal({ type: "group-join", roomId: retryData.roomId });
+      }
+      return;
+    }
+
     if (!this.groupRoomId || this.groupCreating || this.groupIsLeaving || !this.groupLocalStream) return;
     console.log("🔄 [GROUPE] re-jonction de la salle après reconnexion");
     this.groupRejoining = true;
@@ -6460,8 +6532,9 @@ showLocalStorageOnScreen = () => {
 
   // Sort de l'appel 1-à-1 SANS le raccrocher côté interlocuteur :
   //  - le flux micro/caméra est conservé (transmis au groupe),
-  //  - la connexion WebRTC 1-à-1 est fermée, aucun "call-end" n'est envoyé,
-  //  - tout l'état 1-à-1 est remis à zéro (cleanCallState).
+  //  - la connexion WebRTC 1-à-1 est MAINTENUE TEMPORAIREMENT (pour éviter la coupure),
+  //  - aucun "call-end" n'est envoyé,
+  //  - tout l'état 1-à-1 est remis à zéro (SAUF peerConnection).
   // Retourne ce qu'il faut pour continuer en groupe.
   handOverCallToGroup = () => {
     const stream = this.localStream;
@@ -6473,13 +6546,15 @@ showLocalStorageOnScreen = () => {
       isFrontCamera: this.isFrontCamera,
       speakerOn: this.currentAudioRoute === "speaker" || this.isSpeakerOn === true,
       elapsed: this.getOneToOneElapsedSeconds(),
+      peerConnection: this.peerConnection, // ✅ Garder le peerConnection actif
+      targetUserId: this.targetUserId,     // ✅ Garder l'ID de l'interlocuteur
     };
 
-    // 1) Le flux local passe au groupe : on le détache AVANT cleanCallState,
-    //    qui arrête normalement toutes les pistes du flux 1-à-1.
+    // 1) Le flux local passe au groupe : on le détache
     this.localStream = null;
 
     // 2) Neutraliser la connexion 1-à-1 : plus aucun événement (ni redémarrage ICE).
+    //    MAIS ON NE FERME PAS LA CONNEXION (pour éviter la coupure audio/vidéo)
     const pc = this.peerConnection;
     if (pc) {
       pc.onicecandidate = null;
@@ -6488,9 +6563,34 @@ showLocalStorageOnScreen = () => {
       pc.oniceconnectionstatechange = null;
     }
 
-    // 3) Nettoyage standard (ferme la connexion, remet le chrono à 0...). Aucun signal envoyé.
-    this.cleanCallState();
+    // 3) Nettoyage PARTIEL (sans fermer le peerConnection ni envoyer de signal)
+    this.targetUserId = null;
+    this.pendingOffer = null;
+    this.currentCallId = null;
+    this.currentNotId = null;
+    this.pendingCandidates = [];
+    this.autoAcceptOnOffer = false;
+    this._acceptInProgress = false;
+    this.isRestartingIce = false;
+    this.isVideoCall = false;
+    this.peerConnection = null; // ✅ Important : retirer la référence pour que cleanCallState ne le ferme pas
+    // On garde this.isMuted, this.isCameraOff, etc. pour adoptCarriedMedia
+
     return carry;
+  };
+
+  // Ferme proprement un peerConnection sans envoyer de signal "call-end"
+  closePeerConnectionSilently = (pc) => {
+    if (!pc) return;
+    try {
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.onconnectionstatechange = null;
+      pc.oniceconnectionstatechange = null;
+      pc.close();
+    } catch (e) {
+      console.error("❌ Erreur fermeture silencieuse peerConnection :", e);
+    }
   };
 
   // Le groupe reprend le micro / la caméra de l'appel 1-à-1.
@@ -6522,6 +6622,9 @@ showLocalStorageOnScreen = () => {
     console.log("🔀 [GROUPE] transformation de l'appel 1-à-1 avec", peerId, "en groupe, + ", extra.join(", "));
     const carry = this.handOverCallToGroup();
     this.adoptCarriedMedia(carry);
+
+    // ✅ Sauvegarder l'ancien peerConnection pour le fermer plus tard (quand le groupe est créé)
+    this._oldPeerConnection = carry.peerConnection;
 
     // Mon interlocuteur est déjà en ligne : il bascule tout seul (pas de sonnerie).
     // En attendant sa jonction on affiche "Connexion…" au lieu de "Sonne…".
@@ -6559,6 +6662,10 @@ showLocalStorageOnScreen = () => {
     ];
     this.showGroupScreen(carry.elapsed);
     this.sendSignal({ type: "group-join", roomId: data.roomId });
+
+    // ✅ Fermer l'ancien peerConnection 1-à-1 maintenant que le groupe est rejoint
+    // Cela permet une transition fluide sans coupure (le peerConnection reste actif pendant la transition)
+    this.closePeerConnectionSilently(carry.peerConnection);
 
     // Garde-fou : si le serveur ne confirme pas, on abandonne.
     this.groupJoinPending = true;

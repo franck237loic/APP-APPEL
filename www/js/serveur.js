@@ -103,19 +103,21 @@ class RoomManager {
       return [];
     }
 
+    // Garde-fou : invitedIds doit être un tableau
+    const ids = Array.isArray(invitedIds) ? invitedIds : [];
     const results = [];
     const inviterState = room.participants.get(inviterId);
 
     // Vérifier que l'inviteur est JOINED
     if (!inviterState || inviterState.state !== "JOINED") {
-      return invitedIds.map((id) => ({
+      return ids.map((id) => ({
         userId: id,
         success: false,
         reason: "Non autorisé",
       }));
     }
 
-    for (const invitedId of invitedIds) {
+    for (const invitedId of ids) {
       // Vérifier que l'invité n'est pas déjà dans la salle (quel que soit son état)
       if (room.participants.has(invitedId)) {
         results.push({
@@ -476,13 +478,15 @@ class RoomManager {
   }
 
   /**
-   * Vérifie si un utilisateur est dans une salle (quel que soit son état)
+   * Vérifie si un utilisateur est activement dans une salle (JOINED ou RINGING uniquement).
+   * LEFT / DECLINED / MISSED ne bloquent plus les nouvelles invitations.
    * @param {string} userId - Identifiant de l'utilisateur
-   * @returns {boolean} true si l'utilisateur est dans une salle
+   * @returns {boolean} true si l'utilisateur est JOINED ou RINGING dans une salle
    */
   isUserInAnyRoom(userId) {
     for (const room of this.rooms.values()) {
-      if (room.participants.has(userId)) {
+      const p = room.participants.get(userId);
+      if (p && (p.state === "JOINED" || p.state === "RINGING")) {
         return true;
       }
     }
@@ -865,10 +869,26 @@ wss.on("connection", (ws) => {
       // Pourquoi : Créer une nouvelle salle et inviter les participants simultanément
       if (type === "group-create") {
         const { isVideo, invitedIds } = data;
+
+        // Validation : invitedIds doit être un tableau non vide
+        if (!Array.isArray(invitedIds) || invitedIds.length === 0) {
+          ws.send(
+            JSON.stringify({
+              type: "group-error",
+              roomId: null,
+              reason: "invitedIds invalide",
+            }),
+          );
+          return;
+        }
+
         const room = roomManager.createRoom(ws.userId, isVideo);
+
+        // Inviter AVANT d'envoyer les messages → roster complet (créateur + RINGING)
+        const inviteResults = roomManager.invite(room.roomId, invitedIds, ws.userId);
         const roster = roomManager.getRoster(room.roomId);
 
-        // Répondre au créateur avec l'identifiant de la salle et le roster
+        // Répondre au créateur avec l'identifiant de la salle et le roster complet
         ws.send(
           JSON.stringify({
             type: "group-created",
@@ -876,9 +896,6 @@ wss.on("connection", (ws) => {
             roster,
           }),
         );
-
-        // Inviter les utilisateurs
-        const inviteResults = roomManager.invite(room.roomId, invitedIds, ws.userId);
 
         // Envoyer les invitations aux utilisateurs connectés et notifications aux hors-ligne
         for (const result of inviteResults) {
@@ -906,6 +923,15 @@ wss.on("connection", (ws) => {
                 isVideo,
                 notId,
                 "group-invite",
+              );
+            } else {
+              // Ni connecté ni token FCM → introuvable (pas de silence)
+              ws.send(
+                JSON.stringify({
+                  type: "group-error",
+                  roomId: room.roomId,
+                  reason: `Introuvable: ${result.userId}`,
+                }),
               );
             }
           } else if (result.reason === "Occupé") {
@@ -940,11 +966,23 @@ wss.on("connection", (ws) => {
           return;
         }
 
-        const room = roomManager.rooms.get(roomId);
-        const roster = roomManager.getRoster(roomId);
+        // Validation : invitedIds doit être un tableau non vide
+        if (!Array.isArray(invitedIds) || invitedIds.length === 0) {
+          ws.send(
+            JSON.stringify({
+              type: "group-error",
+              roomId,
+              reason: "invitedIds invalide",
+            }),
+          );
+          return;
+        }
 
-        // Inviter les utilisateurs
+        const room = roomManager.rooms.get(roomId);
+
+        // Inviter AVANT de lire le roster → roster complet
         const inviteResults = roomManager.invite(roomId, invitedIds, ws.userId);
+        const roster = roomManager.getRoster(roomId);
 
         // Envoyer les invitations
         for (const result of inviteResults) {
@@ -971,6 +1009,15 @@ wss.on("connection", (ws) => {
                 room.isVideo,
                 notId,
                 "group-invite",
+              );
+            } else {
+              // Ni connecté ni token FCM → introuvable
+              ws.send(
+                JSON.stringify({
+                  type: "group-error",
+                  roomId,
+                  reason: `Introuvable: ${result.userId}`,
+                }),
               );
             }
           } else if (result.reason === "Occupé") {
