@@ -6120,12 +6120,15 @@ showLocalStorageOnScreen = () => {
   };
 
   // Liste des participants à afficher : moi d'abord, puis les autres
-  // (ceux qui ont quitté / refusé passent en fin de liste). Maximum 6 tuiles.
+  // Affiche UNIQUEMENT JOINED et RINGING (LEFT/DECLINED/MISSED retirés immédiatement)
+  // Style WhatsApp : dès qu'un participant quitte, sa tuile disparaît
   getGroupDisplayIds = () => {
-    const away = (state) => state === "DECLINED" || state === "MISSED" || state === "LEFT";
     const others = this.groupRoster
-      .filter((r) => r.userId !== this.myId)
-      .sort((a, b) => Number(away(a.state)) - Number(away(b.state)))
+      .filter(
+        (r) =>
+          r.userId !== this.myId &&
+          (r.state === "JOINED" || r.state === "RINGING"),
+      )
       .map((r) => r.userId);
     return [this.myId, ...others].slice(0, CallManager.GROUP_MAX_PARTICIPANTS);
   };
