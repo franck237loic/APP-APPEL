@@ -130,8 +130,9 @@ class RoomManager {
     }
 
     for (const invitedId of ids) {
-      // Vérifier que l'invité n'est pas déjà dans la salle (quel que soit son état)
-      if (room.participants.has(invitedId)) {
+      // Vérifier que l'invité n'est pas déjà dans la salle (sauf LEFT/DECLINED/MISSED qu'on peut réinviter)
+      const existingParticipant = room.participants.get(invitedId);
+      if (existingParticipant && (existingParticipant.state === "JOINED" || existingParticipant.state === "RINGING")) {
         results.push({
           userId: invitedId,
           success: false,
@@ -140,7 +141,7 @@ class RoomManager {
         continue;
       }
 
-      // Vérifier que l'invité n'est pas déjà dans une autre salle
+      // Vérifier que l'invité n'est pas déjà dans une autre salle (seulement JOINED/RINGING bloquent)
       if (this.isUserInAnyRoom(invitedId)) {
         results.push({
           userId: invitedId,
@@ -161,22 +162,45 @@ class RoomManager {
         continue;
       }
 
-      // Ajouter l'invité avec état RINGING et démarrer le timer
-      const inviteTimer = setTimeout(() => {
-        this.markMissed(roomId, invitedId);
-      }, this.INVITE_TIMEOUT_MS);
+      // Si l'utilisateur existe déjà (LEFT/DECLINED/MISSED), réinviter
+      if (existingParticipant) {
+        // Annuler l'ancien timer s'il existe
+        if (existingParticipant.inviteTimer) {
+          clearTimeout(existingParticipant.inviteTimer);
+        }
 
-      room.participants.set(invitedId, {
-        state: "RINGING",
-        invitedBy: inviterId,
-        inviteTimer,
-      });
+        // Réinitialiser à RINGING avec nouveau timer
+        const inviteTimer = setTimeout(() => {
+          this.markMissed(roomId, invitedId);
+        }, this.INVITE_TIMEOUT_MS);
 
-      console.log(`📩 ${invitedId} invité à la salle ${roomId} par ${inviterId}`);
-      results.push({
-        userId: invitedId,
-        success: true,
-      });
+        existingParticipant.state = "RINGING";
+        existingParticipant.invitedBy = inviterId;
+        existingParticipant.inviteTimer = inviteTimer;
+
+        console.log(`📩 ${invitedId} réinvité à la salle ${roomId} par ${inviterId} (état précédent: ${existingParticipant.state})`);
+        results.push({
+          userId: invitedId,
+          success: true,
+        });
+      } else {
+        // Nouvel invité : ajouter avec état RINGING
+        const inviteTimer = setTimeout(() => {
+          this.markMissed(roomId, invitedId);
+        }, this.INVITE_TIMEOUT_MS);
+
+        room.participants.set(invitedId, {
+          state: "RINGING",
+          invitedBy: inviterId,
+          inviteTimer,
+        });
+
+        console.log(`📩 ${invitedId} invité à la salle ${roomId} par ${inviterId}`);
+        results.push({
+          userId: invitedId,
+          success: true,
+        });
+      }
     }
 
     // Diffuser le roster mis à jour

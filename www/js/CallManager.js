@@ -1209,7 +1209,6 @@ button, [role="button"] { cursor: pointer; }
 /* États d'un participant */
 .group-tile.is-ringing { opacity: .75; }
 .group-tile.is-ringing .group-avatar::before { animation: groupPulse 1.4s ease-in-out infinite; }
-.group-tile.is-away { opacity: .45; }
 .group-tile.is-speaking { border-color: #00a884; } /* orateur actif */
 
 @keyframes groupPulse {
@@ -1225,8 +1224,7 @@ button, [role="button"] { cursor: pointer; }
     gap: 14px;
     padding: 10px 8px 22px;
 }
-/* Appel audio seulement : on cache les boutons caméra */
-.group-call-view[data-video="false"] .group-only-video { display: none; }
+/* Les boutons caméra sont maintenant toujours visibles (peut activer caméra même en appel audio) */
 
 /* ----- Zone 4 : feuille d'ajout de participants ----- */
 .group-sheet-overlay {
@@ -1527,13 +1525,13 @@ button, [role="button"] { cursor: pointer; }
           </button>
           <span>Haut-parleur</span>
         </div>
-        <div class="video-control-wrapper group-only-video">
+        <div class="video-control-wrapper">
           <button class="video-control-btn js-group-cam-btn" type="button" onclick="toggleGroupCamera()" aria-label="Caméra">
             <i class="fa-solid fa-video js-group-cam-icon"></i>
           </button>
           <span>Caméra</span>
         </div>
-        <div class="video-control-wrapper group-only-video">
+        <div class="video-control-wrapper">
           <button class="video-control-btn" type="button" onclick="switchGroupCamera()" aria-label="Changer de caméra">
             <i class="fa-solid fa-camera-rotate"></i>
           </button>
@@ -5273,13 +5271,77 @@ showLocalStorageOnScreen = () => {
   };
 
   // Coupe / réactive MA caméra et prévient les autres.
-  toggleGroupCamera = () => {
-    if (!this.groupIsVideo || !this.groupLocalStream) return;
-    const track = this.groupLocalStream.getVideoTracks()[0];
-    if (!track) return;
+  // Permet maintenant d'activer la caméra même dans un appel audio.
+  toggleGroupCamera = async () => {
+    if (!this.groupLocalStream) return;
 
+    const videoTrack = this.groupLocalStream.getVideoTracks()[0];
+
+    // Si pas de piste vidéo (appel audio), l'ajouter
+    if (!videoTrack) {
+      try {
+        if (this.isIOS()) {
+          await this.ensureMediaAuthorizedIOS();
+        }
+
+        const videoStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: this.groupIsFrontCamera ? "user" : "environment",
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+          },
+        });
+
+        const newVideoTrack = videoStream.getVideoTracks()[0];
+        newVideoTrack.enabled = true;
+
+        // Ajouter la piste vidéo au stream existant
+        this.groupLocalStream.addTrack(newVideoTrack);
+
+        // Ajouter la piste à toutes les connexions WebRTC existantes et renégocier
+        for (const [peerId, peer] of this.groupPeers.entries()) {
+          if (peer.pc) {
+            peer.pc.addTrack(newVideoTrack, this.groupLocalStream);
+            // Renégocier pour que l'autre côté reçoive la nouvelle piste vidéo
+            await this.renegotiateWithPeer(peerId);
+          }
+        }
+
+        // Marquer comme vidéo activée
+        this.groupIsVideo = true;
+        this.groupIsCamOff = false;
+
+        // Mettre à jour l'interface
+        const ui = this.interfaceGroup;
+        if (ui) ui.dataset.video = "true";
+
+        this.updateGroupCamUI();
+        this.updateGroupTile(this.myId);
+        this.sendGroupSignalToAll({
+          kind: "state",
+          micMuted: this.groupIsMuted,
+          camOff: this.groupIsCamOff,
+        });
+
+        this.showCallToast("Caméra activée");
+      } catch (error) {
+        console.error("❌ [GROUPE] Erreur activation caméra :", error);
+        this.showCallToast("Impossible d'activer la caméra");
+      }
+      return;
+    }
+
+    // Caméra déjà présente : toggle on/off
     this.groupIsCamOff = !this.groupIsCamOff;
-    track.enabled = !this.groupIsCamOff;
+    videoTrack.enabled = !this.groupIsCamOff;
+
+    // Si on active la caméra et groupIsVideo était false, le mettre à true
+    if (!this.groupIsCamOff && !this.groupIsVideo) {
+      this.groupIsVideo = true;
+      const ui = this.interfaceGroup;
+      if (ui) ui.dataset.video = "true";
+    }
+
     this.updateGroupCamUI();
     this.updateGroupTile(this.myId);
     this.sendGroupSignalToAll({
@@ -5292,15 +5354,21 @@ showLocalStorageOnScreen = () => {
   // Bascule caméra avant / arrière : la nouvelle piste remplace l'ancienne
   // dans CHAQUE connexion (replaceTrack), sans renégociation.
   switchGroupCamera = async () => {
-    if (!this.groupIsVideo || !this.groupLocalStream || this._groupSwitching) return;
-    this._groupSwitching = true;
+    if (!this.groupLocalStream || this._groupSwitching) return;
 
+    // Si pas de piste vidéo, activer d'abord la caméra
     const oldTrack = this.groupLocalStream.getVideoTracks()[0];
+    if (!oldTrack) {
+      await this.toggleGroupCamera();
+      return;
+    }
+
+    this._groupSwitching = true;
     const nextFacing = this.groupIsFrontCamera ? "environment" : "user";
 
     try {
       // Android : il faut libérer l'ancienne caméra avant d'ouvrir l'autre.
-      if (oldTrack) oldTrack.stop();
+      oldTrack.stop();
 
       const newStream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -5318,7 +5386,7 @@ showLocalStorageOnScreen = () => {
         if (sender) await sender.replaceTrack(newTrack);
       }
 
-      if (oldTrack) this.groupLocalStream.removeTrack(oldTrack);
+      this.groupLocalStream.removeTrack(oldTrack);
       this.groupLocalStream.addTrack(newTrack);
       this.groupIsFrontCamera = !this.groupIsFrontCamera;
       this.updateGroupTile(this.myId);
@@ -5500,7 +5568,17 @@ showLocalStorageOnScreen = () => {
       this.sendSignal({ type: "group-decline", roomId: data.roomId });
       return;
     }
-    if (this.groupRoomId === data.roomId) return; // déjà dedans
+
+    // Si on a le même groupRoomId mais qu'on a déjà quitté (pas de localStream ni de peers), accepter la réinvitation
+    if (this.groupRoomId === data.roomId) {
+      if (!this.groupLocalStream && this.groupPeers.size === 0) {
+        console.log(`🔄 [GROUPE] Réinvitation acceptée pour la salle ${data.roomId} (avions quitté)`);
+        // Nettoyer l'ancien roomId pour accepter comme nouvelle invitation
+        this.groupRoomId = null;
+      } else {
+        return; // déjà actif dans cette salle
+      }
+    }
 
     this.groupPendingInvite = {
       roomId: data.roomId,
@@ -5770,6 +5848,8 @@ showLocalStorageOnScreen = () => {
     if (!Array.isArray(roster)) return;
     this.groupRoster = roster;
 
+    console.log(`📋 [GROUPE] Roster reçu:`, roster.map(r => `${r.userId}(${r.state})`).join(", "));
+
     // Dès que le serveur ne la voit plus "RINGING", la personne n'est plus "en migration".
     this.groupMigratingIds.forEach((id) => {
       const r = roster.find((x) => x.userId === id);
@@ -5787,6 +5867,7 @@ showLocalStorageOnScreen = () => {
       // 1) Ceux qui ne sont plus dans l'appel : on ferme leur connexion.
       Array.from(this.groupPeers.keys()).forEach((id) => {
         if (!joinedOthers.includes(id)) {
+          console.log(`🔌 [GROUPE] Fermeture connexion avec: ${id}`);
           this.closeGroupPeer(id);
           this.groupPeerStates.delete(id);
           this.groupRetryCount.delete(id);
@@ -5831,6 +5912,28 @@ showLocalStorageOnScreen = () => {
   /* =========================================================
      GROUPE — SECTION 8 : CONNEXIONS WEBRTC (UNE PAR PARTICIPANT)
   ========================================================= */
+
+  // Renégocie avec un participant (quand on ajoute une piste vidéo)
+  renegotiateWithPeer = async (peerId) => {
+    const peer = this.groupPeers.get(peerId);
+    if (!peer || !peer.pc) return;
+
+    try {
+      // Créer une nouvelle offre avec la nouvelle piste vidéo
+      const offer = await peer.pc.createOffer();
+      await peer.pc.setLocalDescription(offer);
+
+      // Envoyer l'offre au participant
+      this.sendGroupSignal(peerId, {
+        kind: "offer",
+        sdp: { type: offer.type, sdp: offer.sdp },
+      });
+
+      console.log(`🔄 [GROUPE] Renégociation envoyée à ${peerId} (ajout piste vidéo)`);
+    } catch (error) {
+      console.error("❌ [GROUPE] Erreur renégociation avec", peerId, error);
+    }
+  };
 
   // Crée la connexion WebRTC avec UN participant et y branche mes pistes.
   createGroupPeer = (peerId) => {
@@ -5885,28 +5988,52 @@ showLocalStorageOnScreen = () => {
     }
   };
 
-  // Réception d'une offre : on repart TOUJOURS d'une connexion neuve, puis on répond.
+  // Réception d'une offre : nouvelle connexion OU renégociation (ajout piste vidéo).
   handleGroupOffer = async (from, sdp) => {
     if (!this.groupLocalStream) return; // pas encore prêt
-    if (this.groupPeers.has(from)) this.closeGroupPeer(from);
 
-    // Création synchrone : les candidats ICE qui suivent seront mis en file d'attente.
-    const peer = this.createGroupPeer(from);
+    const existingPeer = this.groupPeers.get(from);
+
+    // Si pas de connexion existante : nouvelle connexion
+    if (!existingPeer) {
+      // Création synchrone : les candidats ICE qui suivent seront mis en file d'attente.
+      const peer = this.createGroupPeer(from);
+      try {
+        await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        peer.remoteSet = true;
+        await this.flushGroupCandidates(peer);
+
+        const answer = await peer.pc.createAnswer();
+        await peer.pc.setLocalDescription(answer);
+        this.sendGroupSignal(from, {
+          kind: "answer",
+          sdp: { type: answer.type, sdp: answer.sdp },
+        });
+        this.capGroupVideoBitrate(peer.pc);
+      } catch (error) {
+        console.error("❌ [GROUPE] handleGroupOffer (nouvelle connexion) :", from, error);
+        this.closeGroupPeer(from);
+      }
+      return;
+    }
+
+    // Renégociation : connexion existe déjà (ajout de piste vidéo par exemple)
     try {
-      await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      peer.remoteSet = true;
-      await this.flushGroupCandidates(peer);
+      await existingPeer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      existingPeer.remoteSet = true;
+      await this.flushGroupCandidates(existingPeer);
 
-      const answer = await peer.pc.createAnswer();
-      await peer.pc.setLocalDescription(answer);
+      const answer = await existingPeer.pc.createAnswer();
+      await existingPeer.pc.setLocalDescription(answer);
       this.sendGroupSignal(from, {
         kind: "answer",
         sdp: { type: answer.type, sdp: answer.sdp },
       });
-      this.capGroupVideoBitrate(peer.pc);
+      this.capGroupVideoBitrate(existingPeer.pc);
+
+      console.log(`🔄 [GROUPE] Renégociation réussie avec ${from}`);
     } catch (error) {
-      console.error("❌ [GROUPE] handleGroupOffer :", from, error);
-      this.closeGroupPeer(from);
+      console.error("❌ [GROUPE] handleGroupOffer (renégociation) :", from, error);
     }
   };
 
@@ -6093,7 +6220,8 @@ showLocalStorageOnScreen = () => {
       peer.audioEl.remove();
     }
     this.groupAnalysers.delete(peerId);
-    this.updateGroupTile(peerId);
+    // NE PAS appeler updateGroupTile ici : la tuile sera supprimée par renderGroupGrid()
+    // si le participant n'est plus dans le roster
   };
 
   // Ferme toutes les connexions (fin d'appel ou reconnexion).
@@ -6140,9 +6268,12 @@ showLocalStorageOnScreen = () => {
     if (!grid) return;
     const ids = this.getGroupDisplayIds();
 
+    console.log(`🔧 [GROUPE] renderGroupGrid - Tuiles à afficher: [${ids.join(", ")}]`);
+
     // Tuiles qui ne doivent plus exister
     Array.from(this.groupTiles.keys()).forEach((id) => {
       if (!ids.includes(id)) {
+        console.log(`🗑️ [GROUPE] Suppression tuile: ${id}`);
         const tile = this.groupTiles.get(id);
         const v = tile.querySelector("video");
         if (v) v.srcObject = null;
@@ -6216,7 +6347,6 @@ showLocalStorageOnScreen = () => {
 
     // Classes d'état
     tile.classList.toggle("is-ringing", state === "RINGING");
-    tile.classList.toggle("is-away", state === "DECLINED" || state === "MISSED" || state === "LEFT");
     tile.classList.toggle("is-muted", state === "JOINED" && micMuted);
     tile.classList.toggle("is-speaking", this.groupActiveSpeakerId === userId);
     tile.classList.toggle("has-video", showVideo);
