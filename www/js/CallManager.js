@@ -5406,6 +5406,22 @@ showLocalStorageOnScreen = () => {
   //   invitees       : IDs à faire sonner / à rappeler dans la salle
   //   elapsedSeconds : temps déjà écoulé (on garde le chrono d'un appel 1-à-1)
   sendGroupCreate = (invitees, elapsedSeconds = 0) => {
+    // 1) Vérifier wsReadyState === OPEN et myId défini
+    if (this.wsReadyState !== WebSocket.OPEN) {
+      console.error("[GROUPE] WebSocket non connecté, impossible d'envoyer group-create");
+      this.finishGroupCall("Pas de connexion serveur");
+      return;
+    }
+
+    if (!this.myId) {
+      console.error("[GROUPE] myId non défini, impossible d'envoyer group-create");
+      this.finishGroupCall("Identifiant utilisateur manquant");
+      return;
+    }
+
+    // 2) Log explicite
+    console.log("[GROUPE] envoi group-create", { invitedIds: invitees, isVideo: this.groupIsVideo, myId: this.myId });
+
     this.groupCreating = true;
 
     // Liste provisoire (le vrai roster arrive du serveur juste après).
@@ -5416,16 +5432,24 @@ showLocalStorageOnScreen = () => {
     this.showGroupScreen(elapsedSeconds);
 
     // Création de la salle : le serveur fait sonner tout le monde.
-    this.sendSignal({
+    const sent = this.sendSignal({
       type: "group-create",
       isVideo: this.groupIsVideo,
       invitedIds: invitees,
     });
 
+    // 3) Si sendSignal retourne false → finishGroupCall immédiatement
+    if (!sent) {
+      console.error("[GROUPE] sendSignal a échoué, impossible d'envoyer group-create");
+      this.finishGroupCall("Pas de connexion serveur");
+      return;
+    }
+
     // Garde-fou : si le serveur ne répond pas, on annule proprement.
     clearTimeout(this.groupRequestTimer);
     this.groupRequestTimer = setTimeout(() => {
       if (this.groupCreating) {
+        console.error("[GROUPE] TIMEOUT group-created non reçu — vérifier serveur / réseau / register-user");
         this.finishGroupCall("Impossible de créer l'appel de groupe");
       }
     }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
@@ -5593,6 +5617,7 @@ showLocalStorageOnScreen = () => {
     switch (action) {
       // Le serveur confirme la création de la salle (nous = créateur).
       case "group-created":
+        console.log("[GROUPE] group-created reçu", data);
         if (!this.groupCreating) {
           // Annulé entre-temps : on quitte la salle fantôme.
           this.sendSignal({ type: "group-leave", roomId: data.roomId });
@@ -5601,8 +5626,12 @@ showLocalStorageOnScreen = () => {
         this.groupCreating = false;
         this.groupRoomId = data.roomId;
         clearTimeout(this.groupRequestTimer);
-        // On N'applique PAS son roster (créateur seul) : le roster complet
-        // avec les "RINGING" suit immédiatement via "group-roster".
+
+        // ✅ Appliquer le roster reçu s'il est un tableau non vide
+        if (Array.isArray(data.roster) && data.roster.length > 0) {
+          console.log("[GROUPE] Application du roster reçu dans group-created :", data.roster);
+          this.applyGroupRoster(data.roster, true);
+        }
 
         // ✅ Fermer l'ancien peerConnection 1-à-1 maintenant que le groupe est créé
         // Cela permet une transition fluide sans coupure
@@ -5666,6 +5695,7 @@ showLocalStorageOnScreen = () => {
         if (this.groupPendingInvite && this.groupPendingInvite.roomId === data.roomId) {
           this.dismissGroupInvite(data.reason || "Appel de groupe indisponible");
         } else if (data.roomId === this.groupRoomId && (this.groupJoinPending || this.groupCreating)) {
+          // Sur réception group-error pendant groupCreating : finishGroupCall immédiatement
           this.finishGroupCall(data.reason || "Impossible de rejoindre l'appel");
         } else {
           this.showCallToast(data.reason || "Erreur d'appel de groupe");
@@ -5674,7 +5704,9 @@ showLocalStorageOnScreen = () => {
 
       // Un invité est déjà dans un autre appel.
       case "group-busy":
+        console.log(`[GROUPE] group-busy reçu : ${data.userId} est déjà en appel`);
         this.showCallToast(`${data.userId} est déjà en appel`);
+        // NE PAS annuler toute la création si d'autres invités sont OK (la salle existe déjà)
         break;
     }
   };

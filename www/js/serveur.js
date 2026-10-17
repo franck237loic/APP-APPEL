@@ -868,82 +868,121 @@ wss.on("connection", (ws) => {
       // Envoyé par : Créateur -> Reçu par : Créateur (confirmation) + Invités (invitation)
       // Pourquoi : Créer une nouvelle salle et inviter les participants simultanément
       if (type === "group-create") {
-        const { isVideo, invitedIds } = data;
+        try {
+          const { isVideo, invitedIds } = data;
 
-        // Validation : invitedIds doit être un tableau non vide
-        if (!Array.isArray(invitedIds) || invitedIds.length === 0) {
+          console.log(`[GROUPE] group-create reçu de ${ws.userId || "?"} avec invitedIds:`, invitedIds);
+
+          // a. Vérifier que ws.userId est défini (utilisateur enregistré via register-user)
+          if (!ws.userId) {
+            console.error(`[GROUPE] group-create refusé : utilisateur non enregistré`);
+            ws.send(
+              JSON.stringify({
+                type: "group-error",
+                roomId: null,
+                reason: "Non enregistré",
+              }),
+            );
+            return;
+          }
+
+          // b. Valider invitedIds : Array.isArray && length > 0
+          if (!Array.isArray(invitedIds) || invitedIds.length === 0) {
+            console.error(`[GROUPE] group-create refusé : invitedIds invalide`);
+            ws.send(
+              JSON.stringify({
+                type: "group-error",
+                roomId: null,
+                reason: "invitedIds invalide",
+              }),
+            );
+            return;
+          }
+
+          // c. createRoom(ws.userId, isVideo)
+          const room = roomManager.createRoom(ws.userId, isVideo);
+          console.log(`[GROUPE] Salle créée : ${room.roomId}`);
+
+          // d. invite(roomId, invitedIds, ws.userId) AVANT de construire le roster
+          const inviteResults = roomManager.invite(room.roomId, invitedIds, ws.userId);
+          console.log(`[GROUPE] Résultats invitation :`, inviteResults);
+
+          // e. getRoster(roomId) → roster COMPLET (créateur JOINED + invités RINGING)
+          const roster = roomManager.getRoster(room.roomId);
+          console.log(`[GROUPE] Roster complet :`, roster);
+
+          // f. Envoyer IMMÉDIATEMENT au créateur, AVANT toute notif push
+          ws.send(
+            JSON.stringify({
+              type: "group-created",
+              roomId: room.roomId,
+              roster,
+            }),
+          );
+          console.log(`[GROUPE] group-created envoyé au créateur ${ws.userId}`);
+
+          // g. Ensuite seulement : boucle invitations (ws ouvert → group-invite, sinon pushToken → push, sinon group-error)
+          for (const result of inviteResults) {
+            if (result.success) {
+              const invitedUser = users.get(result.userId);
+              if (invitedUser?.ws && invitedUser.ws.readyState === WebSocket.OPEN) {
+                invitedUser.ws.send(
+                  JSON.stringify({
+                    type: "group-invite",
+                    roomId: room.roomId,
+                    from: ws.userId,
+                    isVideo: isVideo,
+                    roster,
+                  }),
+                );
+                console.log(`[GROUPE] group-invite envoyé à ${result.userId} (WebSocket)`);
+              } else if (invitedUser?.pushToken) {
+                // Utilisateur hors-ligne : envoyer notification Push
+                const notId = Math.floor(100000 + Math.random() * 900000);
+                await envoyerNotificationPush(
+                  invitedUser.pushToken,
+                  ws.userId,
+                  `Appel ${isVideo ? "vidéo" : "audio"} de groupe`,
+                  ws.userId,
+                  room.roomId,
+                  isVideo,
+                  notId,
+                  "group-invite",
+                );
+                console.log(`[GROUPE] notification push envoyée à ${result.userId}`);
+              } else {
+                // Ni connecté ni token FCM → introuvable
+                ws.send(
+                  JSON.stringify({
+                    type: "group-error",
+                    roomId: room.roomId,
+                    reason: `Introuvable: ${result.userId}`,
+                  }),
+                );
+                console.log(`[GROUPE] utilisateur introuvable : ${result.userId}`);
+              }
+            } else if (result.reason === "Occupé") {
+              // h. Pour reason === "Occupé" → envoyer group-busy au créateur
+              ws.send(
+                JSON.stringify({
+                  type: "group-busy",
+                  roomId: room.roomId,
+                  userId: result.userId,
+                }),
+              );
+              console.log(`[GROUPE] utilisateur occupé : ${result.userId}`);
+            }
+          }
+        } catch (error) {
+          // i. Tout le handler dans un try/catch : en cas d'exception, envoyer group-error au créateur
+          console.error(`[GROUPE] Erreur dans group-create :`, error);
           ws.send(
             JSON.stringify({
               type: "group-error",
               roomId: null,
-              reason: "invitedIds invalide",
+              reason: error.message || "Erreur serveur",
             }),
           );
-          return;
-        }
-
-        const room = roomManager.createRoom(ws.userId, isVideo);
-
-        // Inviter AVANT d'envoyer les messages → roster complet (créateur + RINGING)
-        const inviteResults = roomManager.invite(room.roomId, invitedIds, ws.userId);
-        const roster = roomManager.getRoster(room.roomId);
-
-        // Répondre au créateur avec l'identifiant de la salle et le roster complet
-        ws.send(
-          JSON.stringify({
-            type: "group-created",
-            roomId: room.roomId,
-            roster,
-          }),
-        );
-
-        // Envoyer les invitations aux utilisateurs connectés et notifications aux hors-ligne
-        for (const result of inviteResults) {
-          if (result.success) {
-            const invitedUser = users.get(result.userId);
-            if (invitedUser?.ws && invitedUser.ws.readyState === WebSocket.OPEN) {
-              invitedUser.ws.send(
-                JSON.stringify({
-                  type: "group-invite",
-                  roomId: room.roomId,
-                  from: ws.userId,
-                  isVideo: isVideo,
-                  roster,
-                }),
-              );
-            } else if (invitedUser?.pushToken) {
-              // Utilisateur hors-ligne : envoyer notification Push
-              const notId = Math.floor(100000 + Math.random() * 900000);
-              await envoyerNotificationPush(
-                invitedUser.pushToken,
-                ws.userId,
-                `Appel ${isVideo ? "vidéo" : "audio"} de groupe`,
-                ws.userId,
-                room.roomId,
-                isVideo,
-                notId,
-                "group-invite",
-              );
-            } else {
-              // Ni connecté ni token FCM → introuvable (pas de silence)
-              ws.send(
-                JSON.stringify({
-                  type: "group-error",
-                  roomId: room.roomId,
-                  reason: `Introuvable: ${result.userId}`,
-                }),
-              );
-            }
-          } else if (result.reason === "Occupé") {
-            // Notifier le créateur que l'utilisateur est occupé
-            ws.send(
-              JSON.stringify({
-                type: "group-busy",
-                roomId: room.roomId,
-                userId: result.userId,
-              }),
-            );
-          }
         }
         return;
       }
@@ -952,83 +991,116 @@ wss.on("connection", (ws) => {
       // Envoyé par : Participant JOINED -> Reçu par : Nouveaux invités (invitation)
       // Pourquoi : Permettre d'ajouter des personnes pendant l'appel
       if (type === "group-add") {
-        const { roomId, invitedIds } = data;
+        try {
+          const { roomId, invitedIds } = data;
 
-        // Vérifier que l'émetteur est JOINED dans la salle
-        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) {
-          ws.send(
-            JSON.stringify({
-              type: "group-error",
-              roomId,
-              reason: "Non autorisé",
-            }),
-          );
-          return;
-        }
+          console.log(`[GROUPE] group-add reçu de ${ws.userId || "?"} pour salle ${roomId} avec invitedIds:`, invitedIds);
 
-        // Validation : invitedIds doit être un tableau non vide
-        if (!Array.isArray(invitedIds) || invitedIds.length === 0) {
-          ws.send(
-            JSON.stringify({
-              type: "group-error",
-              roomId,
-              reason: "invitedIds invalide",
-            }),
-          );
-          return;
-        }
-
-        const room = roomManager.rooms.get(roomId);
-
-        // Inviter AVANT de lire le roster → roster complet
-        const inviteResults = roomManager.invite(roomId, invitedIds, ws.userId);
-        const roster = roomManager.getRoster(roomId);
-
-        // Envoyer les invitations
-        for (const result of inviteResults) {
-          if (result.success) {
-            const invitedUser = users.get(result.userId);
-            if (invitedUser?.ws && invitedUser.ws.readyState === WebSocket.OPEN) {
-              invitedUser.ws.send(
-                JSON.stringify({
-                  type: "group-invite",
-                  roomId,
-                  from: ws.userId,
-                  isVideo: room.isVideo,
-                  roster,
-                }),
-              );
-            } else if (invitedUser?.pushToken) {
-              const notId = Math.floor(100000 + Math.random() * 900000);
-              await envoyerNotificationPush(
-                invitedUser.pushToken,
-                ws.userId,
-                `Appel ${room.isVideo ? "vidéo" : "audio"} de groupe`,
-                ws.userId,
-                roomId,
-                room.isVideo,
-                notId,
-                "group-invite",
-              );
-            } else {
-              // Ni connecté ni token FCM → introuvable
-              ws.send(
-                JSON.stringify({
-                  type: "group-error",
-                  roomId,
-                  reason: `Introuvable: ${result.userId}`,
-                }),
-              );
-            }
-          } else if (result.reason === "Occupé") {
+          // Vérifier que l'émetteur est JOINED dans la salle
+          if (!roomManager.isJoinedInRoom(roomId, ws.userId)) {
+            console.error(`[GROUPE] group-add refusé : ${ws.userId || "?"} n'est pas JOINED dans ${roomId}`);
             ws.send(
               JSON.stringify({
-                type: "group-busy",
+                type: "group-error",
                 roomId,
-                userId: result.userId,
+                reason: "Non autorisé",
               }),
             );
+            return;
           }
+
+          // Validation : invitedIds doit être un tableau non vide
+          if (!Array.isArray(invitedIds) || invitedIds.length === 0) {
+            console.error(`[GROUPE] group-add refusé : invitedIds invalide`);
+            ws.send(
+              JSON.stringify({
+                type: "group-error",
+                roomId,
+                reason: "invitedIds invalide",
+              }),
+            );
+            return;
+          }
+
+          const room = roomManager.rooms.get(roomId);
+          if (!room) {
+            console.error(`[GROUPE] group-add refusé : salle ${roomId} introuvable`);
+            ws.send(
+              JSON.stringify({
+                type: "group-error",
+                roomId,
+                reason: "Salle introuvable",
+              }),
+            );
+            return;
+          }
+
+          // Inviter AVANT de lire le roster → roster complet
+          const inviteResults = roomManager.invite(roomId, invitedIds, ws.userId);
+          console.log(`[GROUPE] Résultats invitation (group-add) :`, inviteResults);
+
+          const roster = roomManager.getRoster(roomId);
+          console.log(`[GROUPE] Roster complet (group-add) :`, roster);
+
+          // Envoyer les invitations
+          for (const result of inviteResults) {
+            if (result.success) {
+              const invitedUser = users.get(result.userId);
+              if (invitedUser?.ws && invitedUser.ws.readyState === WebSocket.OPEN) {
+                invitedUser.ws.send(
+                  JSON.stringify({
+                    type: "group-invite",
+                    roomId,
+                    from: ws.userId,
+                    isVideo: room.isVideo,
+                    roster,
+                  }),
+                );
+                console.log(`[GROUPE] group-invite envoyé à ${result.userId} (WebSocket)`);
+              } else if (invitedUser?.pushToken) {
+                const notId = Math.floor(100000 + Math.random() * 900000);
+                await envoyerNotificationPush(
+                  invitedUser.pushToken,
+                  ws.userId,
+                  `Appel ${room.isVideo ? "vidéo" : "audio"} de groupe`,
+                  ws.userId,
+                  roomId,
+                  room.isVideo,
+                  notId,
+                  "group-invite",
+                );
+                console.log(`[GROUPE] notification push envoyée à ${result.userId}`);
+              } else {
+                // Ni connecté ni token FCM → introuvable
+                ws.send(
+                  JSON.stringify({
+                    type: "group-error",
+                    roomId,
+                    reason: `Introuvable: ${result.userId}`,
+                  }),
+                );
+                console.log(`[GROUPE] utilisateur introuvable : ${result.userId}`);
+              }
+            } else if (result.reason === "Occupé") {
+              ws.send(
+                JSON.stringify({
+                  type: "group-busy",
+                  roomId,
+                  userId: result.userId,
+                }),
+              );
+              console.log(`[GROUPE] utilisateur occupé : ${result.userId}`);
+            }
+          }
+        } catch (error) {
+          console.error(`[GROUPE] Erreur dans group-add :`, error);
+          ws.send(
+            JSON.stringify({
+              type: "group-error",
+              roomId: data.roomId || null,
+              reason: error.message || "Erreur serveur",
+            }),
+          );
         }
         return;
       }
