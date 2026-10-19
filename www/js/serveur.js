@@ -1165,20 +1165,7 @@ wss.on("connection", (ws) => {
           const inviteResults = roomManager.invite(room.roomId, invitedIds, ws.userId);
           console.log(`[GROUPE] Résultats invitation :`, inviteResults);
 
-          // IMPORTANT : Pour les participants déjà en WebSocket ouvert (déjà en appel avec le créateur),
-          // les mettre directement en JOINED au lieu de RINGING (pas de sonnerie)
-          for (const result of inviteResults) {
-            if (result.success) {
-              const invitedUser = users.get(result.userId);
-              if (invitedUser?.ws && invitedUser.ws.readyState === WebSocket.OPEN) {
-                // Mettre directement en JOINED (pas de sonnerie pour ceux déjà en appel)
-                roomManager.join(room.roomId, result.userId);
-                console.log(`[GROUPE] ${result.userId} mis directement en JOINED (déjà en appel)`);
-              }
-            }
-          }
-
-          // e. getRoster(roomId) → roster COMPLET (créateur JOINED + invités JOINED/RINGING)
+          // e. getRoster(roomId) → roster COMPLET (créateur JOINED + invités RINGING)
           const roster = roomManager.getRoster(room.roomId);
           console.log(`[GROUPE] Roster complet :`, roster);
 
