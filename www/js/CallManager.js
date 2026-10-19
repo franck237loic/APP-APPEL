@@ -5748,14 +5748,16 @@ showLocalStorageOnScreen = () => {
     const inv = this.groupPendingInvite;
     if (!inv) return;
 
-    const others = inv.roster
-      .map((r) => r.userId)
-      .filter((id) => id !== this.myId && id !== inv.from);
+    // Compter le nombre de participants JOINED (déjà dans l'appel)
+    const joinedCount = inv.roster.filter((r) => r.state === "JOINED").length;
     const type = inv.isVideo ? "vidéo" : "audio";
-    const suffix = others.length ? ` avec ${others.join(", ")}` : "";
+    
+    // Afficher le nombre de participants comme WhatsApp
+    // Ex: "Appel de groupe vidéo (3 participants)" ou "Appel de groupe audio"
+    const participantText = joinedCount > 1 ? ` (${joinedCount} participants)` : "";
 
     this.setContactName(inv.from);
-    this.updateStatus(`Appel de groupe ${type}${suffix}`);
+    this.updateStatus(`Appel de groupe ${type}${participantText}`);
     this.showInterface(this.interfaceReceiver);
     this.startVibration();
   };
@@ -6516,14 +6518,15 @@ showLocalStorageOnScreen = () => {
   };
 
   // Liste des participants à afficher : moi d'abord, puis les autres
-  // Affiche UNIQUEMENT JOINED et RINGING (LEFT/DECLINED/MISSED retirés immédiatement)
+  // IMPORTANT : Affiche UNIQUEMENT JOINED (pas RINGING)
+  // Les participants en RINGING ne doivent pas apparaître dans la grille
   // Style WhatsApp : dès qu'un participant quitte, sa tuile disparaît
   getGroupDisplayIds = () => {
     const others = this.groupRoster
       .filter(
         (r) =>
           r.userId !== this.myId &&
-          (r.state === "JOINED" || r.state === "RINGING"),
+          r.state === "JOINED", // Uniquement JOINED, pas RINGING
       )
       .map((r) => r.userId);
     return [this.myId, ...others].slice(0, CallManager.GROUP_MAX_PARTICIPANTS);

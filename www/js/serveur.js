@@ -583,8 +583,11 @@ class RoomManager {
    * 
    * MESSAGE : { type: "group-roster", roomId, roster }
    * 
-   * IMPORTANT : Seuls les participants JOINED reçoivent le message
-   *             (pas ceux en RINGING, LEFT, DECLINED, MISSED)
+   * IMPORTANT : 
+   * - Seuls les participants JOINED reçoivent le message
+   * - Le roster envoyé ne contient QUE les participants JOINED
+   *   (pas RINGING, LEFT, DECLINED, MISSED) pour éviter que les participants
+   *   existants ne voient l'interface de ceux qui sonnent
    * 
    * @param {string} roomId - Identifiant de la salle
    */
@@ -594,11 +597,22 @@ class RoomManager {
       return;
     }
 
-    const roster = this.getRoster(roomId);
+    // IMPORTANT : Filtrer le roster pour n'envoyer que les participants JOINED
+    // Cela évite que les participants existants ne voient ceux qui sonnent
+    const joinedRoster = [];
+    for (const [userId, data] of room.participants.entries()) {
+      if (data.state === "JOINED") {
+        joinedRoster.push({
+          userId,
+          state: data.state,
+        });
+      }
+    }
+
     const message = {
       type: "group-roster",
       roomId,
-      roster,
+      roster: joinedRoster,
     };
 
     // Envoyer uniquement aux participants JOINED
