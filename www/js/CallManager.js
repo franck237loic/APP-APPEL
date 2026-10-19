@@ -2874,6 +2874,25 @@ button, [role="button"] { cursor: pointer; }
         this.isVideoCall ? this.interfaceVideo : this.interfaceSender,
       );
       this.setContactName(this.targetUserId);
+      
+      // IMPORTANT : Pour les appels vidéo, s'assurer que les vidéos sont correctement attachées
+      if (this.isVideoCall) {
+        const localVideo = document.getElementById("local-video");
+        if (localVideo && this.localStream) {
+          localVideo.srcObject = this.localStream;
+          localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
+        }
+        
+        // Sortir de l'état calling
+        this.setCallingState(false);
+        this.setIncomingVideoState(false);
+        this.placePipAtBottomRight();
+        this.showControls();
+        
+        // Masquer le placeholder
+        const placeholder = document.querySelector(".remote-video-placeholder");
+        if (placeholder) placeholder.classList.add("hidden");
+      }
     } catch (error) {
       console.error("❌ Erreur réponse :", error);
       this.hangUp(false);
@@ -3467,24 +3486,36 @@ button, [role="button"] { cursor: pointer; }
 
         if (event.track.kind === "video") {
           const remoteVideo = document.getElementById("remote-video");
+          const localVideo = document.getElementById("local-video");
+          
           if (remoteVideo) {
-            // Son uniquement via <audio> — évite silence / double audio WebView
+            // IMPORTANT : S'assurer que la vidéo distante contient bien le stream distant
+            // et que la vidéo locale contient bien le stream local
             remoteVideo.muted = true;
-            if (remoteVideo.srcObject !== stream) {
-              remoteVideo.srcObject = stream;
-            }
+            
+            // Forcer le réattachement du stream distant
+            remoteVideo.srcObject = null; // D'abord nettoyer
+            await new Promise(resolve => setTimeout(resolve, 50)); // Petit délai
+            remoteVideo.srcObject = stream; // Puis attacher le stream distant
+            
             try {
               await remoteVideo.play();
+              console.log("✅ Vidéo distante jouée correctement");
             } catch (e) {
               console.error("❌ Erreur play remote-video :", e);
+            }
+
+            // S'assurer que la vidéo locale a toujours le bon stream
+            if (localVideo && this.localStream) {
+              localVideo.srcObject = this.localStream;
+              localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
             }
 
             // Sortir de l'état calling quand la vidéo distante arrive
             this.setCallingState(false);
             this.setIncomingVideoState(false);
             this.placePipAtBottomRight();
-            this.showControls(); // Afficher les contrôles (sans auto-hide)
-            // this.startControlsAutoHide(); // Désactivé : les contrôles restent visibles
+            this.showControls(); // Afficher les contrôles
             this.resetIncomingCameraToggleUI();
 
             // Masquer le placeholder de la vidéo distante
@@ -3788,6 +3819,15 @@ showLocalStorageOnScreen = () => {
       } catch (e) {}
     }
 
+    // IMPORTANT : Si on est dans un appel de groupe basculé vers 1-à-1,
+    // il faut quitter l'appel de groupe proprement pour nettoyer tous les états
+    if (this.groupRoomId && this.groupDowngradingToOneToOne) {
+      console.log("🔄 [HANGUP] Appel de groupe basculé vers 1-à-1 : quitter l'appel de groupe");
+      this.groupDowngradingToOneToOne = false;
+      this.leaveGroupCall("Appel terminé");
+      return;
+    }
+
     if (sendSignalToPeer && this.targetUserId) {
       this.sendSignal({
         type: "call-end",
@@ -3809,6 +3849,13 @@ showLocalStorageOnScreen = () => {
     // Masquer l'UI d'abord (évite flash / écran noir), puis libérer les médias
     this.closeInterfaces();
     this.cleanCallState();
+    
+    // IMPORTANT : S'assurer que le bouton d'appel est désactivé
+    this.toggleCallButtons(false);
+    this.targetUserId = null;
+    this.peerConnection = null;
+    this.localStream = null;
+    this.isVideoCall = false;
     this.toggleCallButtons(false);
     this.updateStatus("En ligne");
     this.closeNativeIncomingCallScreenIfNeeded();
@@ -4711,14 +4758,22 @@ showLocalStorageOnScreen = () => {
       container.appendChild(overlay);
     }
 
+    // IMPORTANT : Supprimer les anciens event listeners pour éviter les doublons
+    // En clonant l'élément, on supprime tous les event listeners
+    const newOverlay = overlay.cloneNode(true);
+    overlay.parentNode.replaceChild(newOverlay, overlay);
+    overlay = newOverlay;
+
     // Tap sur l'overlay = toggle contrôles
     overlay.addEventListener("click", (e) => {
+      console.log("👆 Tap sur overlay détecté");
       if (this.isControlsHiddenLocked) return;
       this.toggleControls();
     });
 
     // Tap sur le fond (hors boutons, panel, local-video-wrapper) = toggle contrôles
-    container.addEventListener("click", (e) => {
+    // Utiliser pointerdown pour meilleure réactivité sur mobile
+    container.addEventListener("pointerdown", (e) => {
       if (this.isControlsHiddenLocked) return;
 
       const isButton = e.target.closest("button") || e.target.closest(".video-control-btn");
@@ -4726,6 +4781,8 @@ showLocalStorageOnScreen = () => {
       const isLocalWrapper = e.target.closest(".local-video-wrapper");
       const isOverlay = e.target.closest(".video-click-overlay");
 
+      console.log("👆 Tap sur container détecté, target:", e.target.className);
+      
       if (!isButton && !isPanel && !isLocalWrapper && !isOverlay) {
         this.toggleControls();
       }
@@ -4739,6 +4796,8 @@ showLocalStorageOnScreen = () => {
         this.startControlsAutoHide();
       });
     });
+    
+    console.log("✅ initControlsToggle() terminé");
   };
 
   showControls = () => {
@@ -5167,29 +5226,37 @@ showLocalStorageOnScreen = () => {
      #                                                                       #
      #   APPEL DE GROUPE (style WhatsApp, maillage WebRTC)                   #
      #                                                                       #
-     #   Principe :                                                          #
+     #   PRINCIPE ARCHITECTURAL :                                           #
      #   - Pas d'hôte : l'appel vit tant qu'une personne est dedans.         #
      #   - Tous les invités sonnent en même temps (états du serveur :        #
      #     RINGING / JOINED / DECLINED / MISSED / LEFT).                     #
-     #   - Maillage : chaque participant a UNE connexion WebRTC directe      #
+     #   - Maillage WebRTC : chaque participant a UNE connexion directe     #
      #     avec chacun des autres (max 6 personnes, vous inclus).            #
-     #   - Toute la signalisation WebRTC passe par le message serveur        #
-     #     "group-signal" { roomId, targetId, payload } dont le payload      #
-     #     contient : offer | answer | candidate | state (micro/caméra).     #
-     #   - Aucun code du 1-à-1 n'est modifié, hormis quelques "gardes"       #
-     #     d'une ligne (acceptCall, rejectCall, makeCall, handleIncomingCall,#
+     #   - Pas de serveur de médias : les flux circulent directement entre    #
+     #     pairs (peer-to-peer).                                             #
+     #   - Signalisation via serveur : tous les messages WebRTC passent     #
+     #     par le message "group-signal" { roomId, targetId, payload }.     #
+     #   - Le payload contient : offer | answer | candidate | state         #
+     #     (micro/caméra).                                                   #
+     #   - Code isolé : aucune modification du code 1-à-1, hormis quelques    #
+     #     gardes (acceptCall, rejectCall, makeCall, handleIncomingCall,      #
      #     handleSignalMessage, notifications push).                         #
      #                                                                       #
      ######################################################################## */
 
   /* =========================================================
      GROUPE — SECTION 1 : CONSTANTES
+  ========================================================= 
+     
+     Définit les constantes utilisées pour la gestion des appels de groupe.
+     Ces valeurs doivent correspondre à celles du serveur pour un bon
+     fonctionnement.  
   ========================================================= */
 
-  static GROUP_MAX_PARTICIPANTS = 6; // vous inclus (limite du maillage)
-  static GROUP_INVITE_TIMEOUT_MS = 45000; // identique au serveur
-  static GROUP_ALONE_GRACE_MS = 6000; // délai avant de quitter un appel où l'on est seul
-  static GROUP_REQUEST_TIMEOUT_MS = 12000; // délai max pour créer / rejoindre une salle
+  static GROUP_MAX_PARTICIPANTS = 6; // Maximum de participants (vous inclus) - limite du maillage WebRTC
+  static GROUP_INVITE_TIMEOUT_MS = 45000; // Délai d'expiration d'une invitation (45s) - identique au serveur
+  static GROUP_ALONE_GRACE_MS = 6000; // Délai de grâce avant de quitter un appel où l'on est seul (6s)
+  static GROUP_REQUEST_TIMEOUT_MS = 12000; // Délai maximum pour créer ou rejoindre une salle (12s)
 
   // Libellés affichés sous le nom, selon l'état du participant
   static GROUP_STATE_LABELS = {
@@ -5202,34 +5269,37 @@ showLocalStorageOnScreen = () => {
 
   /* =========================================================
      GROUPE — SECTION 2 : ÉTAT (propriétés de classe)
-     Tout l'état de groupe est séparé de l'état 1-à-1
+     
+     IMPORTANT : Tout l'état de groupe est séparé de l'état 1-à-1
      (peerConnection / localStream / targetUserId ne sont jamais utilisés ici).
+     
+     Chaque propriété gère un aspect spécifique de l'appel de groupe.
   ========================================================= */
 
-  groupRoomId = null; // identifiant de la salle en cours (null = pas en groupe)
-  groupIsVideo = false; // appel de groupe vidéo ou audio
-  groupRoster = []; // [{ userId, state }] : liste officielle envoyée par le serveur
-  groupPeers = new Map(); // userId -> { pc, stream, pendingCandidates, remoteSet, connState, audioEl, isInitiator }
-  groupPeerStates = new Map(); // userId -> { micMuted, camOff } (états annoncés par les autres)
-  groupRetryCount = new Map(); // userId -> nombre de relances de connexion
-  groupTiles = new Map(); // userId -> élément DOM de la tuile
-  groupLocalStream = null; // MON flux micro/caméra (partagé avec tous les pairs)
-  groupPendingInvite = null; // invitation reçue en attente de réponse { roomId, from, isVideo, roster }
-  groupSelectedIds = []; // IDs choisis dans la feuille "Ajouter"
-  groupIsMuted = false;
-  groupIsCamOff = false;
-  groupIsFrontCamera = true;
-  groupSpeakerOn = false;
-  groupActiveSpeakerId = null; // participant qui parle en ce moment
-  groupCreating = false; // true entre l'envoi de group-create et group-created
-  groupRejoining = false; // true pendant une reconnexion à la salle (voir onGroupSocketRegistered)
-  groupEverHadPeer = false; // quelqu'un d'autre a-t-il déjà rejoint ?
-  groupAcceptInProgress = false; // anti double-clic sur "Accepter"
-  groupJoinPending = false; // true entre l'envoi de group-join et sa confirmation
-  groupMigratingIds = new Set(); // personnes déjà en ligne avec nous avant la transformation 1-à-1 -> groupe
-  groupMigrateTimer = null; // fin de l'affichage "Connexion…" de ces personnes
-  groupIsLeaving = false; // true quand l'utilisateur est en train de quitter
-  groupDowngradingToOneToOne = false; // true pendant la bascule vers interface 1-à-1
+  groupRoomId = null; // Identifiant unique de la salle en cours (null = pas en appel de groupe)
+  groupIsVideo = false; // Type d'appel : true = vidéo, false = audio uniquement
+  groupRoster = []; // Liste officielle des participants envoyée par le serveur : [{ userId, state }]
+  groupPeers = new Map(); // Connexions WebRTC : userId -> { pc, stream, pendingCandidates, remoteSet, connState, audioEl, isInitiator }
+  groupPeerStates = new Map(); // États annoncés par les autres participants : userId -> { micMuted, camOff }
+  groupRetryCount = new Map(); // Compteur de tentatives de reconnexion : userId -> nombre de relances
+  groupTiles = new Map(); // Éléments DOM de l'interface : userId -> élément <div> de la tuile
+  groupLocalStream = null; // MON flux média (micro + caméra) partagé avec tous les pairs
+  groupPendingInvite = null; // Invitation reçue en attente de réponse : { roomId, from, isVideo, roster }
+  groupSelectedIds = []; // IDs choisis dans la feuille "Ajouter des participants"
+  groupIsMuted = false; // Mon micro est coupé
+  groupIsCamOff = false; // Ma caméra est coupée
+  groupIsFrontCamera = true; // Caméra avant activée (true) ou arrière (false)
+  groupSpeakerOn = false; // Haut-parleur activé
+  groupActiveSpeakerId = null; // ID du participant qui parle en ce moment (détection d'orateur)
+  groupCreating = false; // true entre l'envoi de group-create et la réception de group-created
+  groupRejoining = false; // true pendant une reconnexion à la salle après une déconnexion
+  groupEverHadPeer = false; // Quelqu'un d'autre a-t-il déjà rejoint l'appel ?
+  groupAcceptInProgress = false; // Anti double-clic sur le bouton "Accepter"
+  groupJoinPending = false; // true entre l'envoi de group-join et la réception de group-joined
+  groupMigratingIds = new Set(); // IDs des personnes déjà en ligne avant transformation 1-à-1 -> groupe
+  groupMigrateTimer = null; // Timer pour l'affichage "Connexion…" des personnes en migration
+  groupIsLeaving = false; // true quand l'utilisateur est en train de quitter l'appel
+  groupDowngradingToOneToOne = false; // true pendant la bascule automatique vers interface 1-à-1
 
   // Minuteries (toutes nettoyées dans cleanGroupState)
   groupTimerInterval = null; // chrono de l'appel
@@ -5986,19 +6056,19 @@ showLocalStorageOnScreen = () => {
     }
 
     // Si on passe de 3+ participants à 2 participants (moi + 1 autre),
-    // basculer vers l'interface 1-à-1 vidéo normale
-    if (this.groupRoomId && this.groupIsVideo && others.length === 1) {
+    // basculer vers l'interface 1-à-1 normale (audio ou vidéo selon le type d'appel)
+    if (this.groupRoomId && others.length === 1) {
       const otherId = others[0].userId;
       if (!this.groupDowngradingToOneToOne) {
         this.groupDowngradingToOneToOne = true;
-        console.log(`🔄 [GROUPE] Bascule vers appel 1-à-1 avec ${otherId}`);
+        console.log(`🔄 [GROUPE] Bascule vers appel 1-à-1 ${this.groupIsVideo ? 'vidéo' : 'audio'} avec ${otherId}`);
         this.downgradeGroupToOneToOne(otherId);
       }
     }
 
     // Si on passe de 2 participants à 3+ participants,
     // rebasculer vers l'interface de groupe
-    if (this.groupRoomId && this.groupIsVideo && others.length >= 2) {
+    if (this.groupRoomId && others.length >= 2) {
       if (this.groupDowngradingToOneToOne) {
         this.groupDowngradingToOneToOne = false;
         console.log(`🔄 [GROUPE] Bascule vers appel de groupe (${others.length} autres participants)`);
@@ -6007,51 +6077,71 @@ showLocalStorageOnScreen = () => {
     }
   };
 
-  // Bascule de l'interface de groupe vers l'interface 1-à-1 vidéo
+  // Bascule de l'interface de groupe vers l'interface 1-à-1 (audio ou vidéo)
   downgradeGroupToOneToOne = (otherId) => {
     try {
       // Récupérer le peer WebRTC existant avec l'autre participant
       const peer = this.groupPeers.get(otherId);
       if (!peer || !peer.stream) {
-        console.warn("⚠️ Pas de connexion vidéo avec l'autre participant, reste en mode groupe");
+        console.warn("⚠️ Pas de connexion avec l'autre participant, reste en mode groupe");
         this.groupDowngradingToOneToOne = false;
         return;
       }
 
-      // Afficher l'interface vidéo 1-à-1
-      this.showInterface(this.interfaceVideo);
-      this.setCallingState(false);
-      this.setIncomingVideoState(false);
+      // Déterminer l'interface à afficher selon le type d'appel
+      const targetInterface = this.groupIsVideo ? this.interfaceVideo : this.interfaceSender;
+      
+      // Afficher l'interface 1-à-1 appropriée
+      this.showInterface(targetInterface);
+      
+      // Pour les appels vidéo : gérer les états vidéo
+      if (this.groupIsVideo) {
+        this.setCallingState(false);
+        this.setIncomingVideoState(false);
 
-      // Attacher la vidéo distante au <video> remote-video
-      const remoteVideo = document.getElementById("remote-video");
-      if (remoteVideo && peer.stream) {
-        remoteVideo.srcObject = peer.stream;
-        remoteVideo.play().catch(e => console.warn("⚠️ Erreur play remote-video:", e));
+        // Attacher la vidéo distante au <video> remote-video
+        const remoteVideo = document.getElementById("remote-video");
+        if (remoteVideo && peer.stream) {
+          remoteVideo.srcObject = peer.stream;
+          remoteVideo.play().catch(e => console.warn("⚠️ Erreur play remote-video:", e));
+        }
+
+        // Afficher la vidéo locale
+        const localVideo = document.getElementById("local-video");
+        if (localVideo && this.groupLocalStream) {
+          localVideo.srcObject = this.groupLocalStream;
+          localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
+        }
+
+        // Masquer le placeholder
+        const placeholder = document.querySelector(".remote-video-placeholder");
+        if (placeholder) placeholder.classList.add("hidden");
+
+        // Afficher les contrôles vidéo
+        this.showControls();
+        this.startControlsAutoHide();
+
+        // Positionner la vidéo locale en bas à droite
+        this.placePipAtBottomRight();
+      } else {
+        // Pour les appels audio : afficher les contrôles audio
+        this.toggleCallButtons(true);
+        this.toggleCallControlButtons(false);
       }
-
-      // Afficher la vidéo locale
-      const localVideo = document.getElementById("local-video");
-      if (localVideo && this.groupLocalStream) {
-        localVideo.srcObject = this.groupLocalStream;
-        localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
-      }
-
-      // Masquer le placeholder
-      const placeholder = document.querySelector(".remote-video-placeholder");
-      if (placeholder) placeholder.classList.add("hidden");
-
-      // Afficher les contrôles
-      this.showControls();
-      this.startControlsAutoHide();
-
-      // Positionner la vidéo locale en bas à droite
-      this.placePipAtBottomRight();
 
       // Mettre à jour le nom du contact
       this.setContactName(otherId);
 
-      console.log("✅ Bascule vers interface 1-à-1 réussie");
+      // IMPORTANT : Maintenir la connexion WebRTC active pour le raccrochage
+      // Ne pas fermer le peer, car on doit continuer à communiquer
+      this.targetUserId = otherId;
+      this.peerConnection = peer.pc;
+      this.localStream = this.groupLocalStream;
+      
+      // Mettre à jour le type d'appel pour le 1-à-1
+      this.isVideoCall = this.groupIsVideo;
+
+      console.log(`✅ Bascule vers interface 1-à-1 ${this.groupIsVideo ? 'vidéo' : 'audio'} réussie`);
     } catch (error) {
       console.error("❌ Erreur bascule vers 1-à-1:", error);
       this.groupDowngradingToOneToOne = false;
@@ -6794,6 +6884,13 @@ showLocalStorageOnScreen = () => {
     this.cleanGroupState();
     this.closeInterfaces();
     this.updateStatus("En ligne");
+
+    // IMPORTANT : Nettoyer l'état de l'appel 1-à-1 pour désactiver le bouton d'appel
+    this.targetUserId = null;
+    this.peerConnection = null;
+    this.localStream = null;
+    this.isVideoCall = false;
+    this.toggleCallButtons(false);
 
     // Android : libère le périphérique audio de communication
     if (this.isAndroid() && window.cordova && cordova.exec) {

@@ -52,58 +52,114 @@ const pendingCalls = new Map();
 // APPEL DE GROUPE — RoomManager (Style WhatsApp)
 // =========================================================
 /**
+ * =========================================================
+ *   GESTION DES APPELS DE GROUPE - SERVEUR
+ * =========================================================
+ * 
  * Classe RoomManager : Gère les salles d'appel de groupe en maillage (mesh)
- * Comportement style WhatsApp :
+ * 
+ * ARCHITECTURE WEBRTC MESH :
+ * - Chaque participant est connecté directement à tous les autres (maillage complet)
+ * - Pas de serveur de médias central : les flux vidéo/audio circulent directement entre pairs
+ * - Le serveur ne sert qu'à la signalisation (échange des offres/réponses SDP et candidats ICE)
+ * 
+ * COMPORTEMENT STYLE WHATSAPP :
  * - Pas d'hôte : la salle vit tant qu'au moins 1 participant est JOINED
  * - Chaque invité accepte ou refuse indépendamment
  * - Les invités peuvent rejoindre même après avoir refusé (tant que la salle est active)
  * - Chaque invitation expire après INVITE_TIMEOUT_MS (45 secondes)
- *
- * Cycle de vie d'un participant :
+ * 
+ * ÉTATS D'UN PARTICIPANT :
+ * - RINGING : L'utilisateur est invité et n'a pas encore répondu
+ * - JOINED : L'utilisateur a accepté et participe activement à l'appel
+ * - LEFT : L'utilisateur a quitté l'appel volontairement
+ * - DECLINED : L'utilisateur a refusé l'invitation
+ * - MISSED : L'invitation a expiré (l'utilisateur n'a pas répondu à temps)
+ * 
+ * CYCLE DE VIE D'UN PARTICIPANT :
  * RINGING -> JOINED -> LEFT
  * RINGING -> DECLINED
  * RINGING -> MISSED (expiration du timer)
  * DECLINED/MISSED/LEFT -> JOINED (rejoindre possible)
+ * 
+ * CAPACITÉ :
+ * - Maximum 6 participants simultanés (JOINED + RINGING comptés ensemble)
+ * - WhatsApp limite à 8, mais 6 est raisonnable pour le maillage complet
  */
 class RoomManager {
   constructor() {
-    // Map : roomId -> { roomId, creatorId, isVideo, createdAt, participants: Map<userId, {state, invitedBy, inviteTimer}> }
+    // Map globale de toutes les salles actives
+    // Clé : roomId (identifiant unique de la salle)
+    // Valeur : { roomId, creatorId, isVideo, createdAt, participants: Map<userId, {state, invitedBy, inviteTimer}> }
     this.rooms = new Map();
-    this.MAX_PARTICIPANTS = 6; // JOINED + RINGING comptés ensemble
-    this.INVITE_TIMEOUT_MS = 45000; // 45 secondes pour accepter une invitation
+    
+    // Maximum de participants par salle (JOINED + RINGING)
+    this.MAX_PARTICIPANTS = 6;
+    
+    // Délai d'expiration d'une invitation (45 secondes comme WhatsApp)
+    this.INVITE_TIMEOUT_MS = 45000;
   }
 
   /**
+   * =========================================================
+   *   CRÉATION DE SALLE
+   * =========================================================
+   * 
    * Crée une nouvelle salle d'appel de groupe
-   * @param {string} creatorId - Identifiant du créateur de la salle
-   * @param {boolean} isVideo - Type d'appel (true = vidéo, false = audio)
-   * @returns {object} La salle créée
+   * 
+   * UTILISATION : Quand un utilisateur lance un appel de groupe
+   * - Le créateur est automatiquement ajouté comme JOINED
+   * - L'ID de salle est généré : room_<timestamp>_<creatorId>
+   * 
+   * @param {string} creatorId - Identifiant unique du créateur de la salle
+   * @param {boolean} isVideo - Type d'appel (true = vidéo, false = audio uniquement)
+   * @returns {object} La salle créée avec tous ses détails
    */
   createRoom(creatorId, isVideo) {
+    // Génération d'un ID unique pour la salle
     const roomId = `room_${Date.now()}_${creatorId}`;
+    
+    // Création de l'objet salle
     const room = {
-      roomId,
-      creatorId,
-      isVideo,
-      createdAt: Date.now(),
+      roomId,           // Identifiant unique de la salle
+      creatorId,        // ID de l'utilisateur qui a créé la salle
+      isVideo,          // true = appel vidéo, false = appel audio
+      createdAt: Date.now(),  // Timestamp de création
       participants: new Map([
         [
           creatorId,
           {
-            state: "JOINED",
-            invitedBy: creatorId,
-            inviteTimer: null,
+            state: "JOINED",        // Le créateur est immédiatement JOINED
+            invitedBy: creatorId,   // S'est invité lui-même
+            inviteTimer: null,      // Pas de timer pour le créateur
           },
         ],
       ]),
     };
+    
+    // Ajout de la salle à la Map globale
     this.rooms.set(roomId, room);
     console.log(`🏠 Salle créée : ${roomId} par ${creatorId} (${isVideo ? "vidéo" : "audio"})`);
     return room;
   }
 
   /**
-   * Invite des utilisateurs à une salle
+   * =========================================================
+   *   INVITATION DE PARTICIPANTS
+   * =========================================================
+   * 
+   * Invite des utilisateurs à une salle existante
+   * 
+   * VALIDATIONS :
+   * - L'inviteur doit être JOINED dans la salle
+   * - L'invité ne doit pas déjà être JOINED ou RINGING dans cette salle
+   * - L'invité ne doit pas être occupé dans une autre salle
+   * - La salle ne doit pas être pleine (max 6 participants)
+   * 
+   * RÉINVITATION :
+   * - Si un utilisateur a LEFT/DECLINED/MISSED, il peut être réinvité
+   * - Son timer est réinitialisé et son état repasse à RINGING
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {Array<string>} invitedIds - Liste des identifiants à inviter
    * @param {string} inviterId - Identifiant de celui qui invite (doit être JOINED)
@@ -120,7 +176,7 @@ class RoomManager {
     const results = [];
     const inviterState = room.participants.get(inviterId);
 
-    // Vérifier que l'inviteur est JOINED
+    // Vérifier que l'inviteur est JOINED (autorisation)
     if (!inviterState || inviterState.state !== "JOINED") {
       return ids.map((id) => ({
         userId: id,
@@ -129,6 +185,7 @@ class RoomManager {
       }));
     }
 
+    // Traitement de chaque invitation
     for (const invitedId of ids) {
       // Vérifier que l'invité n'est pas déjà dans la salle (sauf LEFT/DECLINED/MISSED qu'on peut réinviter)
       const existingParticipant = room.participants.get(invitedId);
@@ -151,7 +208,7 @@ class RoomManager {
         continue;
       }
 
-      // Vérifier la capacité
+      // Vérifier la capacité maximale de la salle
       const totalParticipants = room.participants.size;
       if (totalParticipants >= this.MAX_PARTICIPANTS) {
         results.push({
@@ -162,14 +219,14 @@ class RoomManager {
         continue;
       }
 
-      // Si l'utilisateur existe déjà (LEFT/DECLINED/MISSED), réinviter
+      // Cas 1 : L'utilisateur existe déjà (LEFT/DECLINED/MISSED) -> réinviter
       if (existingParticipant) {
-        // Annuler l'ancien timer s'il existe
+        // Annuler l'ancien timer d'invitation s'il existe
         if (existingParticipant.inviteTimer) {
           clearTimeout(existingParticipant.inviteTimer);
         }
 
-        // Réinitialiser à RINGING avec nouveau timer
+        // Réinitialiser à RINGING avec nouveau timer d'expiration
         const inviteTimer = setTimeout(() => {
           this.markMissed(roomId, invitedId);
         }, this.INVITE_TIMEOUT_MS);
@@ -184,7 +241,7 @@ class RoomManager {
           success: true,
         });
       } else {
-        // Nouvel invité : ajouter avec état RINGING
+        // Cas 2 : Nouvel invité -> ajouter avec état RINGING
         const inviteTimer = setTimeout(() => {
           this.markMissed(roomId, invitedId);
         }, this.INVITE_TIMEOUT_MS);
@@ -203,17 +260,32 @@ class RoomManager {
       }
     }
 
-    // Diffuser le roster mis à jour
+    // Diffuser le roster mis à jour à tous les participants JOINED
     this.broadcastRoster(roomId);
 
     return results;
   }
 
   /**
+   * =========================================================
+   *   REJOINDRE UNE SALLE
+   * =========================================================
+   * 
    * Un utilisateur rejoint une salle (accepte l'invitation ou rejoint après avoir refusé)
+   * 
+   * VALIDATIONS :
+   * - La salle doit exister
+   * - Si l'utilisateur n'est pas dans la salle : vérifier la capacité
+   * - Si l'utilisateur n'est pas dans la salle : vérifier qu'il n'est pas dans une autre salle
+   * 
+   * EFFETS :
+   * - L'état passe à JOINED
+   * - Le timer d'invitation est annulé
+   * - Le roster est diffusé à tous les participants
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {string} userId - Identifiant de l'utilisateur
-   * @returns {boolean} true si rejoint, false sinon
+   * @returns {boolean} true si rejoint avec succès, false sinon
    */
   join(roomId, userId) {
     const room = this.rooms.get(roomId);
@@ -223,13 +295,14 @@ class RoomManager {
 
     const participant = room.participants.get(userId);
 
-    // Si l'utilisateur n'est pas dans la salle, vérifier la capacité
+    // Cas 1 : L'utilisateur n'est pas encore dans la salle
     if (!participant) {
+      // Vérifier la capacité maximale
       if (room.participants.size >= this.MAX_PARTICIPANTS) {
         return false;
       }
 
-      // Vérifier qu'il n'est pas dans une autre salle
+      // Vérifier qu'il n'est pas déjà dans une autre salle
       if (this.isUserInAnyRoom(userId)) {
         return false;
       }
@@ -242,8 +315,9 @@ class RoomManager {
       });
       console.log(`👤 ${userId} a rejoint la salle ${roomId}`);
     } else {
-      // L'utilisateur est déjà dans la salle, changer son état à JOINED
-      // Annuler le timer s'il existe
+      // Cas 2 : L'utilisateur est déjà dans la salle (LEFT/DECLINED/MISSED/RINGING)
+      // Changer son état à JOINED
+      // Annuler le timer d'invitation s'il existe
       if (participant.inviteTimer) {
         clearTimeout(participant.inviteTimer);
         participant.inviteTimer = null;
@@ -253,17 +327,34 @@ class RoomManager {
       console.log(`👤 ${userId} a rejoint la salle ${roomId} (état mis à jour)`);
     }
 
-    // Diffuser le roster mis à jour
+    // Diffuser le roster mis à jour à tous les participants JOINED
     this.broadcastRoster(roomId);
 
     return true;
   }
 
   /**
-   * Un utilisateur refuse une invitation
+   * =========================================================
+   *   REFUSER UNE INVITATION
+   * =========================================================
+   * 
+   * Un utilisateur refuse une invitation d'appel de groupe
+   * 
+   * VALIDATIONS :
+   * - La salle doit exister
+   * - L'utilisateur doit être en état RINGING
+   * 
+   * EFFETS :
+   * - L'état passe à DECLINED
+   * - Le timer d'invitation est annulé
+   * - Le roster est diffusé à tous les participants
+   * - La salle peut être fermée si plus personne n'est actif
+   * 
+   * NOTE : L'utilisateur peut être réinvité plus tard
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {string} userId - Identifiant de l'utilisateur
-   * @returns {boolean} true si refusé, false sinon
+   * @returns {boolean} true si refusé avec succès, false sinon
    */
   decline(roomId, userId) {
     const room = this.rooms.get(roomId);
@@ -276,7 +367,7 @@ class RoomManager {
       return false;
     }
 
-    // Annuler le timer
+    // Annuler le timer d'invitation
     if (participant.inviteTimer) {
       clearTimeout(participant.inviteTimer);
       participant.inviteTimer = null;
@@ -285,20 +376,37 @@ class RoomManager {
     participant.state = "DECLINED";
     console.log(`🚫 ${userId} a refusé l'invitation à la salle ${roomId}`);
 
-    // Diffuser le roster mis à jour
+    // Diffuser le roster mis à jour à tous les participants JOINED
     this.broadcastRoster(roomId);
 
-    // Vérifier si la salle doit être fermée
+    // Vérifier si la salle doit être fermée (plus personne actif)
     this.checkRoomClosure(roomId);
 
     return true;
   }
 
   /**
-   * Un utilisateur quitte une salle (état LEFT)
+   * =========================================================
+   *   QUITTER UNE SALLE
+   * =========================================================
+   * 
+   * Un utilisateur quitte volontairement une salle en cours d'appel
+   * 
+   * VALIDATIONS :
+   * - La salle doit exister
+   * - L'utilisateur doit être dans la salle
+   * 
+   * EFFETS :
+   * - L'état passe à LEFT
+   * - Le timer d'invitation est annulé
+   * - Le roster est diffusé à tous les participants
+   * - La salle peut être fermée si plus personne n'est actif
+   * 
+   * NOTE : L'utilisateur peut être réinvité plus tard
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {string} userId - Identifiant de l'utilisateur
-   * @returns {boolean} true si quitté, false sinon
+   * @returns {boolean} true si quitté avec succès, false sinon
    */
   leave(roomId, userId) {
     const room = this.rooms.get(roomId);
@@ -311,7 +419,7 @@ class RoomManager {
       return false;
     }
 
-    // Annuler le timer s'il existe
+    // Annuler le timer d'invitation s'il existe
     if (participant.inviteTimer) {
       clearTimeout(participant.inviteTimer);
       participant.inviteTimer = null;
@@ -320,17 +428,33 @@ class RoomManager {
     participant.state = "LEFT";
     console.log(`👋 ${userId} a quitté la salle ${roomId}`);
 
-    // Diffuser le roster mis à jour
+    // Diffuser le roster mis à jour à tous les participants JOINED
     this.broadcastRoster(roomId);
 
-    // Vérifier si la salle doit être fermée
+    // Vérifier si la salle doit être fermée (plus personne actif)
     this.checkRoomClosure(roomId);
 
     return true;
   }
 
   /**
-   * Marque un utilisateur comme MISSED (invitation expirée)
+   * =========================================================
+   *   MARQUER APPEL MANQUÉ
+   * =========================================================
+   * 
+   * Marque un utilisateur comme MISSED quand son invitation expire
+   * 
+   * VALIDATIONS :
+   * - La salle doit exister
+   * - L'utilisateur doit être en état RINGING
+   * 
+   * EFFETS :
+   * - L'état passe à MISSED
+   * - Le timer est supprimé
+   * - Une notification FCM est envoyée (appel manqué)
+   * - Le roster est diffusé à tous les participants
+   * - La salle peut être fermée si plus personne n'est actif
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {string} userId - Identifiant de l'utilisateur
    */
@@ -349,7 +473,7 @@ class RoomManager {
     participant.inviteTimer = null;
     console.log(`⏰ Invitation expirée pour ${userId} dans la salle ${roomId}`);
 
-    // Envoyer notification d'appel manqué
+    // Envoyer notification FCM d'appel manqué
     const user = users.get(userId);
     if (user?.pushToken) {
       envoyerNotificationAppelManque(
@@ -360,15 +484,20 @@ class RoomManager {
       );
     }
 
-    // Diffuser le roster mis à jour
+    // Diffuser le roster mis à jour à tous les participants JOINED
     this.broadcastRoster(roomId);
 
-    // Vérifier si la salle doit être fermée
+    // Vérifier si la salle doit être fermée (plus personne actif)
     this.checkRoomClosure(roomId);
   }
 
   /**
-   * Récupère le roster (liste des participants avec leur état)
+   * =========================================================
+   *   RÉCUPÉRER LE ROSTER
+   * =========================================================
+   * 
+   * Récupère la liste de tous les participants avec leur état
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @returns {Array<{userId, state}>} Roster ou null si salle inexistante
    */
@@ -389,7 +518,14 @@ class RoomManager {
   }
 
   /**
+   * =========================================================
+   *   COMPTER LES PARTICIPANTS ACTIFS
+   * =========================================================
+   * 
    * Compte le nombre de participants JOINED dans une salle
+   * 
+   * UTILISATION : Pour vérifier si l'appel est en cours
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @returns {number} Nombre de participants JOINED
    */
@@ -409,7 +545,14 @@ class RoomManager {
   }
 
   /**
+   * =========================================================
+   *   COMPTER LES PARTICIPANTS EN ATTENTE
+   * =========================================================
+   * 
    * Compte le nombre de participants RINGING dans une salle
+   * 
+   * UTILISATION : Pour vérifier combien de personnes sont en train de sonner
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @returns {number} Nombre de participants RINGING
    */
@@ -429,7 +572,20 @@ class RoomManager {
   }
 
   /**
+   * =========================================================
+   *   DIFFUSER LE ROSTER
+   * =========================================================
+   * 
    * Diffuse le roster à tous les participants JOINED d'une salle
+   * 
+   * BUT : Informer tous les participants actifs des changements
+   *       (quelqu'un a rejoint, quitté, refusé, etc.)
+   * 
+   * MESSAGE : { type: "group-roster", roomId, roster }
+   * 
+   * IMPORTANT : Seuls les participants JOINED reçoivent le message
+   *             (pas ceux en RINGING, LEFT, DECLINED, MISSED)
+   * 
    * @param {string} roomId - Identifiant de la salle
    */
   broadcastRoster(roomId) {
@@ -457,8 +613,16 @@ class RoomManager {
   }
 
   /**
+   * =========================================================
+   *   VÉRIFIER LA FERMETURE DE SALLE
+   * =========================================================
+   * 
    * Vérifie si une salle doit être fermée et la ferme si nécessaire
-   * Fermeture si : countJoined === 0 ET countRinging === 0
+   * 
+   * CONDITION DE FERMETURE :
+   * - countJoined === 0 ET countRinging === 0
+   * - C'est-à-dire : plus personne n'est actif ou en attente
+   * 
    * @param {string} roomId - Identifiant de la salle
    */
   checkRoomClosure(roomId) {
@@ -470,13 +634,26 @@ class RoomManager {
     const joinedCount = this.countJoined(roomId);
     const ringingCount = this.countRinging(roomId);
 
+    // Fermer la salle si plus personne n'est actif ou en attente
     if (joinedCount === 0 && ringingCount === 0) {
       this.closeRoom(roomId, "Plus aucun participant");
     }
   }
 
   /**
-   * Ferme une salle et notifie les participants
+   * =========================================================
+   *   FERMER UNE SALLE
+   * =========================================================
+   * 
+   * Ferme une salle et notifie tous les participants
+   * 
+   * EFFETS :
+   * - Annule tous les timers d'invitation
+   * - Notifie tous les participants (y compris LEFT, DECLINED, MISSED)
+   * - Supprime la salle de la Map globale
+   * 
+   * MESSAGE : { type: "group-ended", roomId, reason }
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {string} reason - Raison de la fermeture
    */
@@ -488,7 +665,7 @@ class RoomManager {
 
     console.log(`🗑️ Fermeture de la salle ${roomId} : ${reason}`);
 
-    // Annuler tous les timers
+    // Annuler tous les timers d'invitation en cours
     for (const participant of room.participants.values()) {
       if (participant.inviteTimer) {
         clearTimeout(participant.inviteTimer);
@@ -509,13 +686,24 @@ class RoomManager {
       }
     }
 
-    // Supprimer la salle
+    // Supprimer la salle de la Map globale
     this.rooms.delete(roomId);
   }
 
   /**
-   * Vérifie si un utilisateur est activement dans une salle (JOINED ou RINGING uniquement).
-   * LEFT / DECLINED / MISSED ne bloquent plus les nouvelles invitations.
+   * =========================================================
+   *   VÉRIFIER SI UTILISATEUR OCCUPÉ
+   * =========================================================
+   * 
+   * Vérifie si un utilisateur est activement dans une salle
+   * 
+   * CONDITIONS :
+   * - Retourne true si l'utilisateur est JOINED ou RINGING dans une salle
+   * - LEFT / DECLINED / MISSED ne bloquent pas les nouvelles invitations
+   * 
+   * UTILISATION : Empêcher un utilisateur d'être invité à une autre salle
+   *             alors qu'il est déjà occupé
+   * 
    * @param {string} userId - Identifiant de l'utilisateur
    * @returns {boolean} true si l'utilisateur est JOINED ou RINGING dans une salle
    */
@@ -530,7 +718,12 @@ class RoomManager {
   }
 
   /**
+   * =========================================================
+   *   VÉRIFIER SI UTILISATEUR DANS SALLE SPÉCIFIQUE
+   * =========================================================
+   * 
    * Vérifie si un utilisateur est dans une salle spécifique avec un état JOINED
+   * 
    * @param {string} roomId - Identifiant de la salle
    * @param {string} userId - Identifiant de l'utilisateur
    * @returns {boolean} true si l'utilisateur est JOINED dans la salle
@@ -545,7 +738,14 @@ class RoomManager {
   }
 
   /**
+   * =========================================================
+   *   RÉCUPÉRER LES SALLES D'UN UTILISATEUR
+   * =========================================================
+   * 
    * Récupère toutes les salles dans lesquelles un utilisateur participe
+   * 
+   * UTILISATION : Pour quitter toutes les salles lors d'une déconnexion
+   * 
    * @param {string} userId - Identifiant de l'utilisateur
    * @returns {Array<string>} Liste des roomId des salles de l'utilisateur
    */
@@ -560,7 +760,15 @@ class RoomManager {
   }
 
   /**
-   * Marque un utilisateur comme LEFT dans toutes ses salles (déconnexion)
+   * =========================================================
+   *   MARQUER UTILISATEUR PARTI TOUTES LES SALLES
+   * =========================================================
+   * 
+   * Marque un utilisateur comme LEFT dans toutes ses salles
+   * 
+   * UTILISATION : Appelé automatiquement lors d'une déconnexion WebSocket
+   *             pour nettoyer proprement l'état de l'utilisateur
+   * 
    * @param {string} userId - Identifiant de l'utilisateur
    */
   markLeftInAllRooms(userId) {
@@ -943,7 +1151,20 @@ wss.on("connection", (ws) => {
           const inviteResults = roomManager.invite(room.roomId, invitedIds, ws.userId);
           console.log(`[GROUPE] Résultats invitation :`, inviteResults);
 
-          // e. getRoster(roomId) → roster COMPLET (créateur JOINED + invités RINGING)
+          // IMPORTANT : Pour les participants déjà en WebSocket ouvert (déjà en appel avec le créateur),
+          // les mettre directement en JOINED au lieu de RINGING (pas de sonnerie)
+          for (const result of inviteResults) {
+            if (result.success) {
+              const invitedUser = users.get(result.userId);
+              if (invitedUser?.ws && invitedUser.ws.readyState === WebSocket.OPEN) {
+                // Mettre directement en JOINED (pas de sonnerie pour ceux déjà en appel)
+                roomManager.join(room.roomId, result.userId);
+                console.log(`[GROUPE] ${result.userId} mis directement en JOINED (déjà en appel)`);
+              }
+            }
+          }
+
+          // e. getRoster(roomId) → roster COMPLET (créateur JOINED + invités JOINED/RINGING)
           const roster = roomManager.getRoster(room.roomId);
           console.log(`[GROUPE] Roster complet :`, roster);
 
