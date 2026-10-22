@@ -9,20 +9,45 @@ class CallManager {
   static RECONNECT_DELAY = 5000;
 
   static RTC_CONFIG = {
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:stun2.l.google.com:19302" },
+    // iceServers: [
+    //   { urls: "stun:stun.l.google.com:19302" },
+    //   { urls: "stun:stun1.l.google.com:19302" },
+    //   { urls: "stun:stun2.l.google.com:19302" },
+    //   {
+    //     urls: [
+    //       "turn:openrelay.metered.ca:80",
+    //       "turns:openrelay.metered.ca:443",
+    //     ],
+    //     username: "openrelayproject",
+    //     credential: "openrelayproject",
+    //   },
+    // ],
+ 
+  "iceServers": [
       {
-        urls: [
-          "turn:openrelay.metered.ca:80",
-          "turns:openrelay.metered.ca:443",
-        ],
-        username: "openrelayproject",
-        credential: "openrelayproject",
+        "urls": "stun:stun.relay.metered.ca:80"
       },
+      {
+        "urls": "turn:socialstatus.furthermarket.com:80",
+        "username": "coturn",
+        "credential": "Fm@camtel2026coturn"
+      },
+      {
+        "urls": "turn:socialstatus.furthermarket.com:443?transport=udp",
+        "username": "coturn",
+        "credential": "Fm@camtel2026coturn"
+      },
+      {
+        "urls": "turn:socialstatus.furthermarket.com:443?transport=tcp",
+        "username": "coturn",
+        "credential": "Fm@camtel2026coturn"
+      }
     ],
+    "iceTransportPolicy":"relay",
+    "bundlePolicy": "max-bundle"
+    
   };
+  
 // ajouter icônes et labels pour les routes audio (écouteur, haut-parleur, bluetooth)
  static ROUTE_LABELS = {
   earpiece: "Écouteur",         // son bas (comme WhatsApp)
@@ -1399,6 +1424,12 @@ button, [role="button"] { cursor: pointer; }
           <span class="btn-label js-mic-label">Désactiver le micro</span>
         </div>
         <div class="btn-wrapper">
+          <button class="control-btn" type="button" id="btn-screen-share-audio" onclick="toggleScreenShare()">
+            <i class="fa-solid fa-desktop" id="screen-share-icon-audio"></i>
+          </button>
+          <span class="btn-label" id="screen-share-label-audio">Écran</span>
+        </div>
+        <div class="btn-wrapper">
           <button class="control-btn" type="button">
             <i class="fa-solid fa-ellipsis"></i>
           </button>
@@ -1536,6 +1567,14 @@ button, [role="button"] { cursor: pointer; }
             <i class="fa-solid fa-microphone js-mic-icon"></i>
           </button>
           <span class="js-mic-label" data-label-on="Micro" data-label-muted="Muet">Micro</span>
+        </div>
+
+        // bouton de partages creen-share 
+        <div class="video-control-wrapper">
+          <button class="video-control-btn" type="button" id="btn-screen-share" onclick="toggleScreenShare()">
+            <i class="fa-solid fa-desktop" id="screen-share-icon"></i>
+          </button>
+          <span id="screen-share-label">Écran</span>
         </div>
         <div class="video-control-wrapper">
           <button class="video-control-btn video-hangup" type="button" onclick="hangUp(true)">
@@ -1681,6 +1720,9 @@ button, [role="button"] { cursor: pointer; }
     this.pendingNativeCall = null;
     this.callToastTimer = null;
     this.currentAudioRoute = "earpiece";
+    this.isScreenSharing = false;
+    this.screenStream = null;
+    this._cameraTrackBackup = null;
 
     this.mountUI();
     this.interfaceReceiver = document.getElementById("interface-2");
@@ -2685,6 +2727,10 @@ button, [role="button"] { cursor: pointer; }
         this.handleRemoteCameraState(data);
         break;
 
+      case "screen-share-state":
+        this.handleRemoteScreenShare(data);
+        break;
+
       case "call-refused":
       case "call-end":
         // GROUPE : un message 1-à-1 ne doit jamais fermer un appel de groupe
@@ -2805,7 +2851,12 @@ button, [role="button"] { cursor: pointer; }
     try {
       await this.initMediaAndPeer();
 
-      const offer = await this.peerConnection.createOffer();
+      console.log("📞 Création de l'offer - isVideoCall:", this.isVideoCall);
+      const offer = await this.peerConnection.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: this.isVideoCall,
+      });
+      console.log("✅ Offer créée avec offerToReceiveVideo:", this.isVideoCall);
       await this.peerConnection.setLocalDescription(offer);
 
       this.sendSignal({
@@ -2864,6 +2915,7 @@ button, [role="button"] { cursor: pointer; }
       await this.peerConnection.setRemoteDescription(
         new SessionDescription(data.answer),
       );
+      console.log("✅ setRemoteDescription(answer) OK");
       await this.processPendingCandidates();
       this.startTimer();
       this.updateStatus("Appel connecté");
@@ -2874,21 +2926,32 @@ button, [role="button"] { cursor: pointer; }
         this.isVideoCall ? this.interfaceVideo : this.interfaceSender,
       );
       this.setContactName(this.targetUserId);
-      
+
       // IMPORTANT : Pour les appels vidéo, s'assurer que les vidéos sont correctement attachées
       if (this.isVideoCall) {
         const localVideo = document.getElementById("local-video");
+        const remoteVideo = document.getElementById("remote-video");
+
+        console.log("📹 Configuration vidéos après answer - localStream:", !!this.localStream);
+
+        // Attacher la vidéo locale
         if (localVideo && this.localStream) {
           localVideo.srcObject = this.localStream;
           localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
+          console.log("✅ Vidéo locale attachée");
         }
-        
+
+        // La vidéo distante sera attachée via ontrack, mais on s'assure que l'élément est prêt
+        if (remoteVideo) {
+          console.log("✅ Élément vidéo distante prêt, en attente du stream via ontrack");
+        }
+
         // Sortir de l'état calling
         this.setCallingState(false);
         this.setIncomingVideoState(false);
         this.placePipAtBottomRight();
         this.showControls();
-        
+
         // Masquer le placeholder
         const placeholder = document.querySelector(".remote-video-placeholder");
         if (placeholder) placeholder.classList.add("hidden");
@@ -3175,9 +3238,14 @@ button, [role="button"] { cursor: pointer; }
     try {
       this.updateStatus("Connexion à l'appel...");
 
-      // Pour les appels vidéo, réutiliser localStream s'il existe déjà (créé par startLocalPreview)
-      if (this.isVideoCall && this.localStream) {
-        await this.initMediaAndPeer(false); // false: ne pas recréer localStream
+      console.log("📞 acceptCall - isVideoCall:", this.isVideoCall, "localStream existe:", !!this.localStream);
+
+      // Pour les appels vidéo, TOUJOURS créer un nouveau stream avec vidéo
+      // pour éviter les problèmes de réutilisation de stream sans piste vidéo
+      if (this.isVideoCall) {
+        // Forcer la création d'un nouveau stream vidéo
+        this.localStream = null; // Nettoyer l'ancien stream
+        await this.initMediaAndPeer(true); // true: créer un nouveau stream avec vidéo
       } else {
         await this.initMediaAndPeer();
       }
@@ -3190,7 +3258,12 @@ button, [role="button"] { cursor: pointer; }
       );
       await this.processPendingCandidates();
 
-      const answer = await this.peerConnection.createAnswer();
+      console.log("📞 Création de l'answer - isVideoCall:", this.isVideoCall);
+      const answer = await this.peerConnection.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: this.isVideoCall,
+      });
+      console.log("✅ Answer créée avec offerToReceiveVideo:", this.isVideoCall);
       await this.peerConnection.setLocalDescription(answer);
 
       this.sendSignal({
@@ -3261,16 +3334,13 @@ button, [role="button"] { cursor: pointer; }
         });
       }
 
-      // Pour les appels vidéo, réutiliser localStream s'il existe déjà (créé par startLocalPreview)
-      if (this.isVideoCall && this.localStream) {
-        // localStream existe déjà, créer peerConnection sans recréer le stream
-        this.activeRTC = {
-          getUserMedia: (c) => navigator.mediaDevices.getUserMedia(c),
-          PeerConnection: window.RTCPeerConnection,
-          SessionDescription: window.RTCSessionDescription,
-          IceCandidate: window.RTCIceCandidate,
-        };
-        this.peerConnection = new this.activeRTC.PeerConnection(CallManager.RTC_CONFIG);
+      // Pour les appels vidéo, TOUJOURS créer un nouveau stream avec vidéo
+      // pour éviter les problèmes de réutilisation de stream sans piste vidéo
+      if (this.isVideoCall) {
+        console.log("📞 [iOS] answerIncomingCall - isVideoCall:", this.isVideoCall, "localStream existe:", !!this.localStream);
+        // Forcer la création d'un nouveau stream vidéo
+        this.localStream = null; // Nettoyer l'ancien stream
+        await this.initMediaAndPeer(true); // true: créer un nouveau stream avec vidéo
       } else {
         await this.initMediaAndPeer(false); // false: attacher pistes après setRemoteDescription
       }
@@ -3291,7 +3361,12 @@ button, [role="button"] { cursor: pointer; }
 
       await this.processPendingCandidates();
 
-      const answer = await this.peerConnection.createAnswer();
+      console.log("📞 [iOS] Création de l'answer - isVideoCall:", this.isVideoCall);
+      const answer = await this.peerConnection.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: this.isVideoCall,
+      });
+      console.log("✅ [iOS] Answer créée avec offerToReceiveVideo:", this.isVideoCall);
       await this.peerConnection.setLocalDescription(answer);
 
       this.sendSignal({
@@ -3412,11 +3487,18 @@ button, [role="button"] { cursor: pointer; }
 
       // Android: Toujours forcer l'écouteur par défaut (comme WhatsApp)
       if (this.isAndroid()) {
-        const initialRoute = await this.setAudioRoute("earpiece");
-        // setAudioRoute met déjà à jour currentAudioRoute avec la route réelle
-        this.isSpeakerOn = this.currentAudioRoute === "speaker";
-        this.updateAudioRouteIcon();
-        console.log("🔊 Route audio initialisée: " + this.currentAudioRoute + " (écouteur par défaut)");
+        try {
+          const initialRoute = await this.setAudioRoute("earpiece");
+          // setAudioRoute met déjà à jour currentAudioRoute avec la route réelle
+          this.isSpeakerOn = this.currentAudioRoute === "speaker";
+          this.updateAudioRouteIcon();
+          console.log("🔊 Route audio initialisée: " + this.currentAudioRoute + " (écouteur par défaut)");
+        } catch (audioError) {
+          console.warn("⚠️ Erreur initialisation route audio (poursuite quand même):", audioError);
+          // Valeurs par défaut si le plugin échoue
+          this.currentAudioRoute = "earpiece";
+          this.isSpeakerOn = false;
+        }
       }
 
       this.peerConnection = new this.activeRTC.PeerConnection(CallManager.RTC_CONFIG);
@@ -3487,17 +3569,20 @@ button, [role="button"] { cursor: pointer; }
         if (event.track.kind === "video") {
           const remoteVideo = document.getElementById("remote-video");
           const localVideo = document.getElementById("local-video");
-          
+
+          console.log("📹 Track vidéo reçu - remoteVideo element:", !!remoteVideo, "stream:", !!stream, "video tracks:", stream.getVideoTracks().length);
+
           if (remoteVideo) {
             // IMPORTANT : S'assurer que la vidéo distante contient bien le stream distant
             // et que la vidéo locale contient bien le stream local
             remoteVideo.muted = true;
-            
-            // Forcer le réattachement du stream distant
-            remoteVideo.srcObject = null; // D'abord nettoyer
-            await new Promise(resolve => setTimeout(resolve, 50)); // Petit délai
-            remoteVideo.srcObject = stream; // Puis attacher le stream distant
-            
+
+            // Attacher le stream distant directement (sans nettoyage forcé)
+            if (remoteVideo.srcObject !== stream) {
+              console.log("📹 Attachement du stream distant à remote-video");
+              remoteVideo.srcObject = stream;
+            }
+
             try {
               await remoteVideo.play();
               console.log("✅ Vidéo distante jouée correctement");
@@ -3507,7 +3592,10 @@ button, [role="button"] { cursor: pointer; }
 
             // S'assurer que la vidéo locale a toujours le bon stream
             if (localVideo && this.localStream) {
-              localVideo.srcObject = this.localStream;
+              if (localVideo.srcObject !== this.localStream) {
+                console.log("📹 Réattachement stream local à local-video");
+                localVideo.srcObject = this.localStream;
+              }
               localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
             }
 
@@ -3562,9 +3650,13 @@ button, [role="button"] { cursor: pointer; }
 
           // Android: Réappliquer la route audio actuelle (ne pas changer automatiquement)
           if (this.isAndroid()) {
-            const confirmedRoute = await this.setAudioRoute(this.currentAudioRoute);
-            console.log("🔊 [WEBRTC] Route réappliquée après connexion: " + confirmedRoute);
-            this.updateAudioRouteIcon();
+            try {
+              const confirmedRoute = await this.setAudioRoute(this.currentAudioRoute);
+              console.log("🔊 [WEBRTC] Route réappliquée après connexion: " + confirmedRoute);
+              this.updateAudioRouteIcon();
+            } catch (audioError) {
+              console.warn("⚠️ Erreur réapplication route audio (poursuite quand même):", audioError);
+            }
           }
 
           // Re-play audio distant (autoplay parfois bloqué au 1er ontrack)
@@ -3828,6 +3920,16 @@ showLocalStorageOnScreen = () => {
       return;
     }
 
+    // Arrêter le partage d'écran avant de nettoyer
+    if (this.isScreenSharing) {
+      if (this.screenStream) {
+        this.screenStream.getTracks().forEach((track) => track.stop());
+        this.screenStream = null;
+      }
+      this.isScreenSharing = false;
+      this._cameraTrackBackup = null;
+    }
+
     if (sendSignalToPeer && this.targetUserId) {
       this.sendSignal({
         type: "call-end",
@@ -3916,6 +4018,9 @@ showLocalStorageOnScreen = () => {
     this.isVideoCall = false;
     this.isCameraOff = false;
     this.isMuted = false;
+    this.isScreenSharing = false;
+    this.screenStream = null;
+    this._cameraTrackBackup = null;
     this.updateMicUI();
     document
       .querySelectorAll(".js-remote-mute-badge")
@@ -4074,6 +4179,17 @@ showLocalStorageOnScreen = () => {
         resolve(route);
         return;
       }
+
+      // Vérifier si le plugin existe
+      if (!cordova.plugins || !cordova.plugins.AudioRoutePlugin) {
+        console.warn("⚠️ [JS] AudioRoutePlugin non disponible, simulation locale");
+        this.currentAudioRoute = route;
+        this.isSpeakerOn = route === "speaker";
+        this.updateAudioRouteIcon();
+        resolve(route);
+        return;
+      }
+
       cordova.exec(
         (realRoute) => {
           // Android retourne la route RÉELLEMENT active (pas la route demandée)
@@ -4091,8 +4207,12 @@ showLocalStorageOnScreen = () => {
         },
         (err) => {
           console.error("❌ [JS] setAudioRoute FAILED:", err);
-          // En cas d'erreur, on ne change PAS l'état local
-          resolve(this.currentAudioRoute || "earpiece");
+          // En cas d'erreur, on continue quand même avec une simulation locale
+          console.warn("⚠️ [JS] Utilisation de fallback local pour la route audio");
+          this.currentAudioRoute = route;
+          this.isSpeakerOn = route === "speaker";
+          this.updateAudioRouteIcon();
+          resolve(route);
         },
         "AudioRoutePlugin",
         "setRoute",
@@ -4643,6 +4763,233 @@ showLocalStorageOnScreen = () => {
   showLocalVideoPlaceholder = (show) => {
     const placeholder = document.getElementById("local-video-placeholder");
     if (placeholder) placeholder.style.display = show ? "flex" : "none";
+  };
+
+  /* =========================================================
+     PARTAGE D'ÉCRAN (1-à-1 uniquement)
+  ========================================================= */
+
+  canStartScreenShare = () => {
+    if (this.groupRoomId || this.groupCreating) {
+      this.showCallToast("Partage d'écran non disponible en groupe");
+      return false;
+    }
+    if (!this.peerConnection) {
+      this.showCallToast("Aucun appel en cours");
+      return false;
+    }
+    if (this.isScreenSharing) {
+      this.showCallToast("Partage d'écran déjà actif");
+      return false;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      this.showCallToast("Partage d'écran non supporté");
+      return false;
+    }
+    return true;
+  };
+
+  ensureVideoBeforeScreenShare = async () => {
+    if (this.isVideoCall && this.localStream && this.localStream.getVideoTracks().length > 0) {
+      return true;
+    }
+
+    try {
+      this.showCallToast("Activation de la caméra...");
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user" },
+      });
+      const videoTrack = videoStream.getVideoTracks()[0];
+      if (!videoTrack) {
+        this.showCallToast("Impossible d'activer la caméra");
+        return false;
+      }
+
+      this.localStream.addTrack(videoTrack);
+
+      const videoTransceiver = this.peerConnection
+        .getTransceivers()
+        .find((t) => t.receiver && t.receiver.track && t.receiver.track.kind === "video");
+
+      if (videoTransceiver) {
+        await videoTransceiver.sender.replaceTrack(videoTrack);
+        videoTransceiver.direction = "sendrecv";
+      } else {
+        this.peerConnection.addTrack(videoTrack, this.localStream);
+      }
+
+      const localVideo = document.getElementById("local-video");
+      if (localVideo) localVideo.srcObject = this.localStream;
+
+      this.showLocalVideoPlaceholder(false);
+      this.isRenegotiating = true;
+      const offer = await this.peerConnection.createOffer();
+      await this.peerConnection.setLocalDescription(offer);
+      this.sendSignal({
+        type: "restart-offer",
+        targetId: this.targetUserId,
+        offer: offer,
+        isVideo: true,
+      });
+
+      this.isCameraOff = false;
+      this.isVideoCall = true;
+      this.updateCameraIcon();
+      this.sendCameraState();
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      this.isRenegotiating = false;
+      return true;
+    } catch (error) {
+      console.error("❌ Erreur activation caméra pour partage :", error);
+      this.showCallToast("Caméra refusée ou indisponible");
+      this.isRenegotiating = false;
+      return false;
+    }
+  };
+
+  startScreenShare = async () => {
+    if (!this.canStartScreenShare()) return;
+
+    const videoReady = await this.ensureVideoBeforeScreenShare();
+    if (!videoReady) return;
+
+    try {
+      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: false,
+      });
+
+      const screenTrack = this.screenStream.getVideoTracks()[0];
+      if (!screenTrack) {
+        this.showCallToast("Aucune piste vidéo d'écran");
+        return;
+      }
+
+      const videoSender = this.peerConnection
+        .getSenders()
+        .find((s) => s.track && s.track.kind === "video");
+
+      if (videoSender && videoSender.track) {
+        this._cameraTrackBackup = videoSender.track;
+        await videoSender.replaceTrack(screenTrack);
+      } else {
+        this.peerConnection.addTrack(screenTrack, this.screenStream);
+      }
+
+      this.isScreenSharing = true;
+
+      const localVideo = document.getElementById("local-video");
+      if (localVideo) {
+        localVideo.srcObject = this.screenStream;
+        localVideo.play().catch(() => {});
+      }
+
+      this.sendScreenShareState(true);
+      this.updateScreenShareUI(true);
+      this.showCallToast("Partage d'écran activé");
+
+      screenTrack.onended = () => {
+        console.log("🖥️ Track écran terminée (OS)");
+        this.stopScreenShare();
+      };
+    } catch (error) {
+      console.error("❌ Erreur démarrage partage écran :", error);
+      if (error.name === "NotAllowedError") {
+        this.showCallToast("Partage annulé");
+      } else {
+        this.showCallToast("Erreur partage d'écran");
+      }
+    }
+  };
+
+  stopScreenShare = () => {
+    if (!this.isScreenSharing) return;
+
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach((track) => track.stop());
+      this.screenStream = null;
+    }
+
+    const videoSender = this.peerConnection
+      .getSenders()
+      .find((s) => s.track && s.track.kind === "video");
+
+    if (videoSender) {
+      if (this._cameraTrackBackup && this._cameraTrackBackup.readyState !== "ended") {
+        videoSender.replaceTrack(this._cameraTrackBackup);
+      } else if (this.localStream && this.localStream.getVideoTracks().length > 0) {
+        const cameraTrack = this.localStream.getVideoTracks()[0];
+        if (cameraTrack) {
+          videoSender.replaceTrack(cameraTrack);
+        }
+      }
+    }
+
+    this._cameraTrackBackup = null;
+
+    const localVideo = document.getElementById("local-video");
+    if (localVideo && this.localStream) {
+      localVideo.srcObject = this.localStream;
+      localVideo.play().catch(() => {});
+    }
+
+    this.isScreenSharing = false;
+    this.sendScreenShareState(false);
+    this.updateScreenShareUI(false);
+    this.showCallToast("Partage d'écran arrêté");
+  };
+
+  toggleScreenShare = () => {
+    if (this.isScreenSharing) {
+      this.stopScreenShare();
+    } else {
+      this.startScreenShare();
+    }
+  };
+
+  sendScreenShareState = (active) => {
+    if (this.targetUserId) {
+      this.sendSignal({
+        type: "screen-share-state",
+        targetId: this.targetUserId,
+        active: !!active,
+      });
+    }
+  };
+
+  updateScreenShareUI = (active) => {
+    const btn = document.getElementById("btn-screen-share");
+    const icon = document.getElementById("screen-share-icon");
+    const label = document.getElementById("screen-share-label");
+
+    const btnAudio = document.getElementById("btn-screen-share-audio");
+    const iconAudio = document.getElementById("screen-share-icon-audio");
+    const labelAudio = document.getElementById("screen-share-label-audio");
+
+    if (active) {
+      if (btn) btn.classList.add("active");
+      if (icon) icon.className = "fa-solid fa-desktop";
+      if (label) label.textContent = "Arrêter";
+      if (btnAudio) btnAudio.classList.add("active");
+      if (iconAudio) iconAudio.className = "fa-solid fa-desktop";
+      if (labelAudio) labelAudio.textContent = "Arrêter";
+    } else {
+      if (btn) btn.classList.remove("active");
+      if (icon) icon.className = "fa-solid fa-desktop";
+      if (label) label.textContent = "Écran";
+      if (btnAudio) btnAudio.classList.remove("active");
+      if (iconAudio) iconAudio.className = "fa-solid fa-desktop";
+      if (labelAudio) labelAudio.textContent = "Écran";
+    }
+  };
+
+  handleRemoteScreenShare = (data) => {
+    if (data.active) {
+      this.showCallToast("Votre interlocuteur partage son écran");
+    } else {
+      this.showCallToast("Votre interlocuteur a arrêté le partage");
+    }
   };
 
   /* =========================================================
@@ -5389,8 +5736,14 @@ showLocalStorageOnScreen = () => {
 
     // Route audio par défaut : haut-parleur en vidéo, écouteur en audio.
     if (this.isAndroid()) {
-      await this.setAudioRoute(video ? "speaker" : "earpiece");
-      this.groupSpeakerOn = this.currentAudioRoute === "speaker";
+      try {
+        await this.setAudioRoute(video ? "speaker" : "earpiece");
+        this.groupSpeakerOn = this.currentAudioRoute === "speaker";
+      } catch (audioError) {
+        console.warn("⚠️ Erreur initialisation route audio groupe (poursuite quand même):", audioError);
+        this.groupSpeakerOn = !!video;
+        this.currentAudioRoute = video ? "speaker" : "earpiece";
+      }
     } else {
       this.groupSpeakerOn = !!video;
       if (this.isIOS() && typeof activerAudioSessionIOS === "function") {
@@ -5431,6 +5784,7 @@ showLocalStorageOnScreen = () => {
           await this.ensureMediaAuthorizedIOS();
         }
 
+        console.log("📹 [GROUPE] Activation caméra - Obtention du stream vidéo...");
         const videoStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: this.groupIsFrontCamera ? "user" : "environment",
@@ -5441,16 +5795,21 @@ showLocalStorageOnScreen = () => {
 
         const newVideoTrack = videoStream.getVideoTracks()[0];
         newVideoTrack.enabled = true;
+        console.log("📹 [GROUPE] Nouvelle piste vidéo créée:", newVideoTrack.id);
 
         // Ajouter la piste vidéo au stream existant
         this.groupLocalStream.addTrack(newVideoTrack);
+        console.log("📹 [GROUPE] Piste vidéo ajoutée au groupLocalStream");
 
         // Ajouter la piste à toutes les connexions WebRTC existantes et renégocier
+        console.log(`📹 [GROUPE] Renégociation avec ${this.groupPeers.size} pairs...`);
         for (const [peerId, peer] of this.groupPeers.entries()) {
           if (peer.pc) {
+            console.log(`📹 [GROUPE] Ajout piste vidéo à ${peerId}...`);
             peer.pc.addTrack(newVideoTrack, this.groupLocalStream);
             // Renégocier pour que l'autre côté reçoive la nouvelle piste vidéo
             await this.renegotiateWithPeer(peerId);
+            console.log(`📹 [GROUPE] Renégociation terminée avec ${peerId}`);
           }
         }
 
@@ -5471,6 +5830,7 @@ showLocalStorageOnScreen = () => {
         });
 
         this.showCallToast("Caméra activée");
+        console.log("✅ [GROUPE] Caméra activée avec succès");
       } catch (error) {
         console.error("❌ [GROUPE] Erreur activation caméra :", error);
         this.showCallToast("Impossible d'activer la caméra");
@@ -6027,10 +6387,29 @@ showLocalStorageOnScreen = () => {
       //    connexion et envoie l'offre ; l'autre attend l'offre (handleGroupOffer).
       joinedOthers.forEach((id) => {
         if (!this.groupPeers.has(id) && this.isGroupInitiator(id)) {
+          console.log(`🔗 [GROUPE] Nouveau participant ${id} - création de connexion`);
           this.createGroupPeer(id);
           this.sendGroupOffer(id);
         }
       });
+
+      // 3) IMPORTANT : Si on est participant existant et un nouveau arrive,
+      //    on doit renégocier pour lui envoyer nos pistes vidéo actuelles
+      //    (pour qu'il puisse voir les caméras déjà actives)
+      const existingPeers = Array.from(this.groupPeers.keys());
+      const newParticipants = joinedOthers.filter(id => !existingPeers.includes(id));
+
+      if (newParticipants.length > 0 && existingPeers.length > 0) {
+        console.log(`📹 [GROUPE] Nouveaux participants: ${newParticipants.join(", ")} - envoi des pistes vidéo actuelles`);
+        // Pour chaque nouveau participant, renégocier pour envoyer nos pistes (asynchrone)
+        newParticipants.forEach((newId) => {
+          if (this.groupPeers.has(newId)) {
+            this.renegotiateWithPeer(newId).catch(err => {
+              console.warn(`⚠️ [GROUPE] Erreur renégociation avec ${newId}:`, err);
+            });
+          }
+        });
+      }
     }
 
     this.renderGroupGrid();
@@ -6128,7 +6507,8 @@ showLocalStorageOnScreen = () => {
       } else {
         // Pour les appels audio : afficher les contrôles audio
         this.toggleCallButtons(true);
-        this.toggleCallControlButtons(false);
+        // S'assurer que les boutons de l'interface audio sont activés
+        this.toggleCallControlButtons(true);
       }
 
       // Mettre à jour le nom du contact
@@ -6186,12 +6566,24 @@ showLocalStorageOnScreen = () => {
   // Renégocie avec un participant (quand on ajoute une piste vidéo)
   renegotiateWithPeer = async (peerId) => {
     const peer = this.groupPeers.get(peerId);
-    if (!peer || !peer.pc) return;
+    if (!peer || !peer.pc) {
+      console.warn(`⚠️ [GROUPE] renegotiateWithPeer - peer ou pc introuvable pour ${peerId}`);
+      return;
+    }
 
     try {
+      console.log(`🔄 [GROUPE] Début renégociation avec ${peerId}...`);
+      console.log(`🔄 [GROUPE] État signaling avant: ${peer.pc.signalingState}`);
+
       // Créer une nouvelle offre avec la nouvelle piste vidéo
-      const offer = await peer.pc.createOffer();
+      const offer = await peer.pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+      console.log(`🔄 [GROUPE] Offre créée pour ${peerId}, tracks: ${offer.sdp.match(/m=/g)?.length || 0}`);
+
       await peer.pc.setLocalDescription(offer);
+      console.log(`🔄 [GROUPE] setLocalDescription OK pour ${peerId}`);
 
       // Envoyer l'offre au participant
       this.sendGroupSignal(peerId, {
@@ -6246,13 +6638,18 @@ showLocalStorageOnScreen = () => {
     const peer = this.groupPeers.get(peerId);
     if (!peer) return;
     try {
-      const offer = await peer.pc.createOffer();
+      console.log(`📡 [GROUPE] Création offre pour ${peerId} - groupIsVideo: ${this.groupIsVideo}`);
+      const offer = await peer.pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true, // TOUJOURS accepter vidéo (peut venir plus tard)
+      });
       await peer.pc.setLocalDescription(offer);
       this.sendGroupSignal(peerId, {
         kind: "offer",
         sdp: { type: offer.type, sdp: offer.sdp },
       });
       this.capGroupVideoBitrate(peer.pc);
+      console.log(`✅ [GROUPE] Offre envoyée à ${peerId}`);
     } catch (error) {
       console.error("❌ [GROUPE] sendGroupOffer :", peerId, error);
     }
@@ -6264,8 +6661,17 @@ showLocalStorageOnScreen = () => {
 
     const existingPeer = this.groupPeers.get(from);
 
+    // Détecter si l'offre contient de la vidéo (m=video dans le SDP)
+    const offerHasVideo = sdp.sdp && sdp.sdp.includes('m=video');
+    console.log(`📡 [GROUPE] Offre reçue de ${from} - contient vidéo: ${offerHasVideo}, groupIsVideo: ${this.groupIsVideo}`);
+
+    // NE PAS activer groupIsVideo automatiquement si l'offre contient de la vidéo
+    // Si l'appel a démarré en audio, il doit rester en audio
+    // L'utilisateur peut activer la vidéo manuellement via le bouton caméra
+
     // Si pas de connexion existante : nouvelle connexion
     if (!existingPeer) {
+      console.log(`🔗 [GROUPE] Nouvelle connexion avec ${from}`);
       // Création synchrone : les candidats ICE qui suivent seront mis en file d'attente.
       const peer = this.createGroupPeer(from);
       try {
@@ -6273,13 +6679,17 @@ showLocalStorageOnScreen = () => {
         peer.remoteSet = true;
         await this.flushGroupCandidates(peer);
 
-        const answer = await peer.pc.createAnswer();
+        const answer = await peer.pc.createAnswer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true, // TOUJOURS accepter vidéo (peut venir plus tard)
+        });
         await peer.pc.setLocalDescription(answer);
         this.sendGroupSignal(from, {
           kind: "answer",
           sdp: { type: answer.type, sdp: answer.sdp },
         });
         this.capGroupVideoBitrate(peer.pc);
+        console.log(`✅ [GROUPE] Nouvelle connexion réussie avec ${from}`);
       } catch (error) {
         console.error("❌ [GROUPE] handleGroupOffer (nouvelle connexion) :", from, error);
         this.closeGroupPeer(from);
@@ -6288,12 +6698,16 @@ showLocalStorageOnScreen = () => {
     }
 
     // Renégociation : connexion existe déjà (ajout de piste vidéo par exemple)
+    console.log(`🔄 [GROUPE] Renégociation reçue de ${from}`);
     try {
       await existingPeer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
       existingPeer.remoteSet = true;
       await this.flushGroupCandidates(existingPeer);
 
-      const answer = await existingPeer.pc.createAnswer();
+      const answer = await existingPeer.pc.createAnswer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true, // TOUJOURS accepter vidéo
+      });
       await existingPeer.pc.setLocalDescription(answer);
       this.sendGroupSignal(from, {
         kind: "answer",
@@ -6301,7 +6715,7 @@ showLocalStorageOnScreen = () => {
       });
       this.capGroupVideoBitrate(existingPeer.pc);
 
-      console.log(`🔄 [GROUPE] Renégociation réussie avec ${from}`);
+      console.log(`✅ [GROUPE] Renégociation réussie avec ${from}`);
     } catch (error) {
       console.error("❌ [GROUPE] handleGroupOffer (renégociation) :", from, error);
     }
@@ -6366,8 +6780,22 @@ showLocalStorageOnScreen = () => {
         break;
       case "state":
         // Micro / caméra coupés chez l'autre : badge + avatar sur sa tuile.
-        this.groupPeerStates.set(from, { micMuted: !!p.micMuted, camOff: !!p.camOff });
+        const oldState = this.groupPeerStates.get(from) || {};
+        const newCamOff = !!p.camOff;
+        this.groupPeerStates.set(from, { micMuted: !!p.micMuted, camOff: newCamOff });
         this.updateGroupTile(from);
+
+        // Si la caméra vient d'être activée (camOff passe de true à false),
+        // demander une renégociation pour recevoir la vidéo
+        if (oldState.camOff === true && newCamOff === false) {
+          console.log(`📹 [GROUPE] Caméra activée par ${from} - demande de renégociation`);
+          const peer = this.groupPeers.get(from);
+          if (peer && peer.pc) {
+            this.renegotiateWithPeer(from).catch(err => {
+              console.warn(`⚠️ [GROUPE] Erreur renégociation avec ${from}:`, err);
+            });
+          }
+        }
         break;
     }
   };
@@ -6375,14 +6803,21 @@ showLocalStorageOnScreen = () => {
   // Un flux (audio ou vidéo) arrive d'un participant.
   handleGroupTrack = (peerId, event) => {
     const peer = this.groupPeers.get(peerId);
-    if (!peer) return;
+    if (!peer) {
+      console.warn(`⚠️ [GROUPE] handleGroupTrack - peer introuvable pour ${peerId}`);
+      return;
+    }
+
+    console.log(`📹/🔊 [GROUPE] Track reçu de ${peerId} - kind: ${event.track.kind}, id: ${event.track.id}`);
 
     // Un seul MediaStream par participant (audio + vidéo ensemble).
     if (event.streams && event.streams[0]) {
       peer.stream = event.streams[0];
+      console.log(`✅ [GROUPE] Stream attaché pour ${peerId} - audio: ${peer.stream.getAudioTracks().length}, video: ${peer.stream.getVideoTracks().length}`);
     } else {
       if (!peer.stream) peer.stream = new MediaStream();
       peer.stream.addTrack(event.track);
+      console.log(`✅ [GROUPE] Track ajouté au stream existant pour ${peerId}`);
     }
 
     // Le son passe par un <audio> dédié ; l'image par le <video> (muet) de la tuile.
@@ -6604,7 +7039,9 @@ showLocalStorageOnScreen = () => {
     const micMuted = isSelf ? this.groupIsMuted : !!remoteState.micMuted;
     const camOff = isSelf ? this.groupIsCamOff : !!remoteState.camOff;
     const hasVideoTrack = !!stream && stream.getVideoTracks().length > 0;
-    const showVideo = this.groupIsVideo && state === "JOINED" && hasVideoTrack && !camOff;
+    // Afficher la vidéo si : JOINED + piste vidéo présente + caméra non coupée
+    // Indépendamment de groupIsVideo (pour permettre réception vidéo même si appel démarré en audio)
+    const showVideo = state === "JOINED" && hasVideoTrack && !camOff;
 
     // Textes (textContent : jamais d'HTML venant d'un autre utilisateur)
     tile.querySelector(".group-tile-name").textContent = isSelf ? "Vous" : userId;
@@ -6626,9 +7063,16 @@ showLocalStorageOnScreen = () => {
     const video = tile.querySelector("video");
     if (showVideo) {
       video.muted = true;
-      if (video.srcObject !== stream) video.srcObject = stream;
+      if (video.srcObject !== stream) {
+        console.log(`📹 [GROUPE] Attachement vidéo pour ${userId} - showVideo: ${showVideo}, hasVideoTrack: ${hasVideoTrack}`);
+        video.srcObject = stream;
+      }
       const p = video.play();
-      if (p && p.catch) p.catch(() => {});
+      if (p && p.catch) {
+        p.catch((e) => {
+          console.warn(`⚠️ [GROUPE] Erreur play vidéo pour ${userId}:`, e);
+        });
+      }
     } else if (video.srcObject) {
       video.srcObject = null;
     }
@@ -7006,7 +7450,7 @@ showLocalStorageOnScreen = () => {
     const stream = this.localStream;
     const carry = {
       stream,
-      isVideo: this.isVideoCall && !!stream && stream.getVideoTracks().length > 0,
+      isVideo: this.isVideoCall && !this.isCameraOff, // Utiliser isVideoCall + caméra activée (pas juste présence de pistes)
       isMuted: this.isMuted,
       isCameraOff: this.isCameraOff,
       isFrontCamera: this.isFrontCamera,
@@ -7182,6 +7626,7 @@ window.toggleScreenLog = callManager.toggleScreenLog;
 window.clearScreenLog = callManager.clearScreenLog;
 window.showLocalStorageOnScreen = callManager.showLocalStorageOnScreen;
 window.toggleIncomingCamera = callManager.toggleIncomingCamera;
+window.toggleScreenShare = callManager.toggleScreenShare;
 
 // Helpers écran d'accueil (index.html)
 window.copyMyId = () => {

@@ -1118,6 +1118,23 @@ wss.on("connection", (ws) => {
         return;
       }
 
+      // 9. Partage d'écran (1-à-1)
+      // Envoyé par : A ou B -> Reçu par : l'autre participant
+      // Pourquoi : Relayer l'état du partage d'écran
+      if (type === "screen-share-state") {
+        const targetWs = users.get(targetId)?.ws;
+        if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+          targetWs.send(
+            JSON.stringify({
+              type: "screen-share-state",
+              active: !!data.active,
+              from: ws.userId,
+            }),
+          );
+        }
+        return;
+      }
+
       // =========================================================
       // APPEL DE GROUPE — Gestion des messages de groupe (Style WhatsApp)
       // =========================================================
