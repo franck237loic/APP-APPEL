@@ -1568,8 +1568,6 @@ button, [role="button"] { cursor: pointer; }
           </button>
           <span class="js-mic-label" data-label-on="Micro" data-label-muted="Muet">Micro</span>
         </div>
-
-        // bouton de partages creen-share 
         <div class="video-control-wrapper">
           <button class="video-control-btn" type="button" id="btn-screen-share" onclick="toggleScreenShare()">
             <i class="fa-solid fa-desktop" id="screen-share-icon"></i>
@@ -3922,6 +3920,7 @@ showLocalStorageOnScreen = () => {
 
     // Arrêter le partage d'écran avant de nettoyer
     if (this.isScreenSharing) {
+      console.log("[SCREEN] hangUp: arrêt du partage d'écran");
       if (this.screenStream) {
         this.screenStream.getTracks().forEach((track) => track.stop());
         this.screenStream = null;
@@ -4769,6 +4768,12 @@ showLocalStorageOnScreen = () => {
      PARTAGE D'ÉCRAN (1-à-1 uniquement)
   ========================================================= */
 
+  isScreenShareSupported = () => {
+    const supported = navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function";
+    console.log("[SCREEN] getDisplayMedia support =", supported);
+    return supported;
+  };
+
   canStartScreenShare = () => {
     if (this.groupRoomId || this.groupCreating) {
       this.showCallToast("Partage d'écran non disponible en groupe");
@@ -4782,19 +4787,22 @@ showLocalStorageOnScreen = () => {
       this.showCallToast("Partage d'écran déjà actif");
       return false;
     }
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
-      this.showCallToast("Partage d'écran non supporté");
+    if (!this.isScreenShareSupported()) {
+      this.showCallToast("Partage d'écran non supporté sur cet appareil");
       return false;
     }
     return true;
   };
 
   ensureVideoBeforeScreenShare = async () => {
+    console.log("[SCREEN] ensureVideoBeforeScreenShare()");
     if (this.isVideoCall && this.localStream && this.localStream.getVideoTracks().length > 0) {
+      console.log("[SCREEN] Caméra déjà active, pas besoin d'upgrade");
       return true;
     }
 
     try {
+      console.log("[SCREEN] Upgrade audio vers vidéo pour partage d'écran");
       this.showCallToast("Activation de la caméra...");
       const videoStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "user" },
@@ -4839,9 +4847,10 @@ showLocalStorageOnScreen = () => {
 
       await new Promise((resolve) => setTimeout(resolve, 500));
       this.isRenegotiating = false;
+      console.log("[SCREEN] Upgrade vidéo terminé avec succès");
       return true;
     } catch (error) {
-      console.error("❌ Erreur activation caméra pour partage :", error);
+      console.error("[SCREEN] Erreur activation caméra pour partage :", error);
       this.showCallToast("Caméra refusée ou indisponible");
       this.isRenegotiating = false;
       return false;
@@ -4849,68 +4858,207 @@ showLocalStorageOnScreen = () => {
   };
 
   startScreenShare = async () => {
+    console.log("[SCREEN] startScreenShare()");
     if (!this.canStartScreenShare()) return;
 
-    const videoReady = await this.ensureVideoBeforeScreenShare();
-    if (!videoReady) return;
+    // ====================================================================
+    // CHEMIN 1 : NAVIGATEUR (getDisplayMedia natif)
+    // ====================================================================
+    // Sur PC Chrome/Firefox/Edge, getDisplayMedia fonctionne nativement
+    // On utilise le chemin standard sans plugin
+    if (navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function") {
+      console.log("[SCREEN] path=browser (getDisplayMedia natif)");
 
-    try {
-      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
+      const videoReady = await this.ensureVideoBeforeScreenShare();
+      if (!videoReady) return;
+
+      try {
+        console.log("[SCREEN] Appel getDisplayMedia...");
+        this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: false,
+        });
+
+        const screenTrack = this.screenStream.getVideoTracks()[0];
+        if (!screenTrack) {
+          this.showCallToast("Aucune piste vidéo d'écran");
+          return;
+        }
+
+        const videoSender = this.peerConnection
+          .getSenders()
+          .find((s) => s.track && s.track.kind === "video");
+
+        if (videoSender && videoSender.track) {
+          this._cameraTrackBackup = videoSender.track;
+          await videoSender.replaceTrack(screenTrack);
+          console.log("[SCREEN] replaceTrack OK");
+        } else {
+          this.peerConnection.addTrack(screenTrack, this.screenStream);
+          console.log("[SCREEN] addTrack OK (pas de sender vidéo existant)");
+        }
+
+        this.isScreenSharing = true;
+
+        const localVideo = document.getElementById("local-video");
+        if (localVideo) {
+          localVideo.srcObject = this.screenStream;
+          localVideo.play().catch(() => {});
+        }
+
+        this.sendScreenShareState(true);
+        this.updateScreenShareUI(true);
+        this.showCallToast("Partage d'écran activé");
+
+        screenTrack.onended = () => {
+          console.log("[SCREEN] Track écran terminée (OS)");
+          this.stopScreenShare();
+        };
+      } catch (error) {
+        console.error("[SCREEN] getDisplayMedia error:", error.name, error.message);
+        if (error.name === "NotAllowedError" || error.name === "abort") {
+          this.showCallToast("Partage d'écran annulé");
+        } else if (error.name === "NotSupportedError" || !this.isScreenShareSupported()) {
+          this.showCallToast("Non supporté sur cet appareil");
+        } else {
+          this.showCallToast("Impossible de partager l'écran");
+        }
+      }
+      return;
+    }
+
+    // ====================================================================
+    // CHEMIN 2 : ANDROID CORDOVA (plugin natif ScreenShareLive)
+    // ====================================================================
+    // Sur Android Cordova, getDisplayMedia est absent dans la WebView
+    // On utilise le plugin cordova-plugin-screenshare-live avec MediaProjection
+    if (window.ScreenShareLive) {
+      console.log("[SCREEN] path=native (plugin ScreenShareLive)");
+
+      // Vérifier la disponibilité du plugin
+      const pluginAvailable = await new Promise((resolve) => {
+        ScreenShareLive.isAvailable(
+          (isAvailable) => resolve(isAvailable),
+          () => resolve(false)
+        );
       });
 
-      const screenTrack = this.screenStream.getVideoTracks()[0];
-      if (!screenTrack) {
-        this.showCallToast("Aucune piste vidéo d'écran");
+      if (!pluginAvailable) {
+        console.log("[SCREEN] Plugin non disponible sur cet appareil");
+        this.showCallToast("Partage d'écran non supporté sur cet appareil");
         return;
       }
 
-      const videoSender = this.peerConnection
-        .getSenders()
-        .find((s) => s.track && s.track.kind === "video");
+      // ensureVideoBeforeScreenShare (logique existante : audio → caméra d'abord)
+      const videoReady = await this.ensureVideoBeforeScreenShare();
+      if (!videoReady) return;
 
-      if (videoSender && videoSender.track) {
-        this._cameraTrackBackup = videoSender.track;
-        await videoSender.replaceTrack(screenTrack);
-      } else {
-        this.peerConnection.addTrack(screenTrack, this.screenStream);
+      try {
+        console.log("[SCREEN] Démarrage capture natif...");
+
+        // Démarrer la capture via le plugin natif
+        await new Promise((resolve, reject) => {
+          ScreenShareLive.start(
+            {
+              maxWidth: 1280,
+              maxHeight: 720,
+              maxFps: 10,
+              jpegQuality: 0.7
+            },
+            resolve,
+            reject
+          );
+        });
+
+        console.log("[SCREEN] Capture natif démarrée");
+
+        // Créer le MediaStream depuis les frames reçues du natif
+        // Le plugin dessine les frames sur un canvas, puis canvas.captureStream()
+        // crée un MediaStream compatible WebRTC
+        const screenStream = await ScreenShareLive.createStreamFromFrames({ fps: 10 });
+        const screenTrack = screenStream.getVideoTracks()[0];
+
+        if (!screenTrack) {
+          this.showCallToast("Aucune piste vidéo d'écran");
+          return;
+        }
+
+        console.log("[SCREEN] MediaStream créé depuis canvas");
+
+        // replaceTrack (logique existante)
+        const videoSender = this.peerConnection
+          .getSenders()
+          .find((s) => s.track && s.track.kind === "video");
+
+        if (videoSender && videoSender.track) {
+          this._cameraTrackBackup = videoSender.track;
+          await videoSender.replaceTrack(screenTrack);
+          console.log("[SCREEN] replaceTrack OK (chemin natif)");
+        } else {
+          this.peerConnection.addTrack(screenTrack, screenStream);
+          console.log("[SCREEN] addTrack OK (pas de sender vidéo existant)");
+        }
+
+        this.isScreenSharing = true;
+        this.screenStream = screenStream;
+
+        // Mise à jour de l'aperçu local
+        const localVideo = document.getElementById("local-video");
+        if (localVideo) {
+          localVideo.srcObject = screenStream;
+          localVideo.play().catch(() => {});
+        }
+
+        this.sendScreenShareState(true);
+        this.updateScreenShareUI(true);
+        this.showCallToast("Partage d'écran activé");
+
+        screenTrack.onended = () => {
+          console.log("[SCREEN] Track écran terminée (OS ou natif)");
+          this.stopScreenShare();
+        };
+
+      } catch (error) {
+        console.error("[SCREEN] Erreur chemin natif:", error);
+        this.showCallToast("Impossible de partager l'écran");
       }
-
-      this.isScreenSharing = true;
-
-      const localVideo = document.getElementById("local-video");
-      if (localVideo) {
-        localVideo.srcObject = this.screenStream;
-        localVideo.play().catch(() => {});
-      }
-
-      this.sendScreenShareState(true);
-      this.updateScreenShareUI(true);
-      this.showCallToast("Partage d'écran activé");
-
-      screenTrack.onended = () => {
-        console.log("🖥️ Track écran terminée (OS)");
-        this.stopScreenShare();
-      };
-    } catch (error) {
-      console.error("❌ Erreur démarrage partage écran :", error);
-      if (error.name === "NotAllowedError") {
-        this.showCallToast("Partage annulé");
-      } else {
-        this.showCallToast("Erreur partage d'écran");
-      }
+      return;
     }
+
+    // ====================================================================
+    // CHEMIN 3 : NON SUPPORTÉ
+    // ====================================================================
+    // Ni getDisplayMedia ni plugin natif disponibles
+    console.log("[SCREEN] path=unsupported");
+    this.showCallToast("Partage d'écran non supporté sur cet appareil");
   };
 
   stopScreenShare = () => {
+    console.log("[SCREEN] stopScreenShare()");
     if (!this.isScreenSharing) return;
 
+    // ====================================================================
+    // Arrêter le plugin natif si actif (chemin Android Cordova)
+    // ====================================================================
+    if (window.ScreenShareLive) {
+      console.log("[SCREEN] Arrêt plugin natif...");
+      ScreenShareLive.stop(
+        () => console.log("[SCREEN] Plugin natif arrêté avec succès"),
+        (err) => console.error("[SCREEN] Erreur arrêt plugin natif:", err)
+      );
+    }
+
+    // ====================================================================
+    // Arrêter les tracks du stream (chemin navigateur ou natif)
+    // ====================================================================
     if (this.screenStream) {
       this.screenStream.getTracks().forEach((track) => track.stop());
       this.screenStream = null;
     }
 
+    // ====================================================================
+    // Restaurer la piste caméra (replaceTrack inverse)
+    // ====================================================================
     const videoSender = this.peerConnection
       .getSenders()
       .find((s) => s.track && s.track.kind === "video");
@@ -4918,16 +5066,21 @@ showLocalStorageOnScreen = () => {
     if (videoSender) {
       if (this._cameraTrackBackup && this._cameraTrackBackup.readyState !== "ended") {
         videoSender.replaceTrack(this._cameraTrackBackup);
+        console.log("[SCREEN] replaceTrack caméra restaurée (backup)");
       } else if (this.localStream && this.localStream.getVideoTracks().length > 0) {
         const cameraTrack = this.localStream.getVideoTracks()[0];
         if (cameraTrack) {
           videoSender.replaceTrack(cameraTrack);
+          console.log("[SCREEN] replaceTrack caméra restaurée (localStream)");
         }
       }
     }
 
     this._cameraTrackBackup = null;
 
+    // ====================================================================
+    // Restaurer l'aperçu local avec la caméra
+    // ====================================================================
     const localVideo = document.getElementById("local-video");
     if (localVideo && this.localStream) {
       localVideo.srcObject = this.localStream;
