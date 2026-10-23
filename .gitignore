@@ -10,8 +10,6 @@ google-services.json
 # Fichiers de build
 platforms/
 plugins/
-# Exception : notre plugin local de partage d'écran
-!plugins/cordova-plugin-screenshare-live/
 .app_appel/
 
 # Fichiers de log

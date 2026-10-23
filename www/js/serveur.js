@@ -864,6 +864,7 @@ wss.on("connection", (ws) => {
         answer,
         candidate,
         isVideo,
+        isVideoUpgrade,
         callId,
       } = data;
 
@@ -1112,6 +1113,8 @@ wss.on("connection", (ws) => {
               type: "restart-offer",
               offer: offer,
               from: ws.userId, // Ajout de l'identifiant de l'expéditeur
+              isVideo: data.isVideo,
+              isVideoUpgrade: data.isVideoUpgrade, // Relayé pour gérer la transition audio → vidéo
             }),
           );
         }

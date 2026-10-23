@@ -1215,6 +1215,34 @@ button, [role="button"] { cursor: pointer; }
 .group-grid.count-3 .group-tile:last-child,
 .group-grid.count-5 .group-tile:last-child { grid-column: span 2; }
 
+/* ----- Mode partage d'écran (style WhatsApp) -----
+   Le premier participant (celui qui partage) prend le grand cadre en haut (80%)
+   Les autres participants s'affichent en petits carreaux en bas (20%) */
+.group-grid.screen-share-mode {
+    grid-template-rows: 80% 20% !important;
+    grid-template-columns: 1fr !important;
+    display: grid !important;
+}
+/* Le partage d'écran occupe toute la première ligne */
+.group-grid.screen-share-mode .group-tile:first-child {
+    grid-row: 1 !important;
+    grid-column: 1 !important;
+}
+/* Les autres participants partagent la deuxième ligne */
+.group-grid.screen-share-mode .group-tile:not(:first-child) {
+    grid-row: 2 !important;
+}
+/* Reset des règles de span pour le mode partage d'écran */
+.group-grid.screen-share-mode .group-tile:last-child {
+    grid-column: auto !important;
+}
+/* Layout horizontal des participants en bas selon le nombre */
+.group-grid.screen-share-mode.count-2 { grid-template-columns: 1fr !important; }
+.group-grid.screen-share-mode.count-3 { grid-template-columns: 1fr 1fr !important; }
+.group-grid.screen-share-mode.count-4 { grid-template-columns: 1fr 1fr 1fr !important; }
+.group-grid.screen-share-mode.count-5 { grid-template-columns: 1fr 1fr 1fr 1fr !important; }
+.group-grid.screen-share-mode.count-6 { grid-template-columns: 1fr 1fr 1fr 1fr 1fr !important; }
+
 /* ----- Tuile d'un participant ----- */
 .group-tile {
     position: relative;
@@ -1292,6 +1320,7 @@ button, [role="button"] { cursor: pointer; }
 .group-tile.is-ringing { opacity: .75; }
 .group-tile.is-ringing .group-avatar::before { animation: groupPulse 1.4s ease-in-out infinite; }
 .group-tile.is-speaking { border-color: #00a884; } /* orateur actif */
+.group-tile.is-screen-sharing { border-color: #25d366; } /* partage d'écran actif */
 
 @keyframes groupPulse {
     0%, 100% { transform: scale(1); }
@@ -1640,6 +1669,12 @@ button, [role="button"] { cursor: pointer; }
           <span>Retourner</span>
         </div>
         <div class="video-control-wrapper">
+          <button class="video-control-btn js-group-screen-btn" id="btn-screen-share-group" type="button" onclick="toggleScreenShare()" aria-label="Partager l'écran">
+            <i class="fa-solid fa-desktop"></i>
+          </button>
+          <span>Écran</span>
+        </div>
+        <div class="video-control-wrapper">
           <button class="video-control-btn js-group-mic-btn" type="button" onclick="toggleGroupMic()" aria-label="Micro">
             <i class="fa-solid fa-microphone js-group-mic-icon"></i>
           </button>
@@ -1721,6 +1756,8 @@ button, [role="button"] { cursor: pointer; }
     this.isScreenSharing = false;
     this.screenStream = null;
     this._cameraTrackBackup = null;
+    this._groupScreenTrack = null;
+    this._groupScreenBackups = new Map();
 
     this.mountUI();
     this.interfaceReceiver = document.getElementById("interface-2");
@@ -2702,6 +2739,7 @@ button, [role="button"] { cursor: pointer; }
         break;
 
       case "restart-offer":
+        console.log("📹 restart-offer reçu - isVideoUpgrade:", data.isVideoUpgrade, "isVideo:", data.isVideo);
         if (data.isVideoUpgrade) {
           this.handleVideoUpgradeOffer(data);
         } else {
@@ -2887,7 +2925,7 @@ button, [role="button"] { cursor: pointer; }
   };
 
   handleCallAnswered = async (data) => {
-    console.log("📞 Appel accepté par le destinataire");
+    console.log("📞 Appel accepté par le destinataire - signalingState:", this.peerConnection?.signalingState);
     if (!this.peerConnection) return;
     if (!data.answer) {
       console.error("❌ Erreur : data.answer est manquant !");
@@ -2896,9 +2934,11 @@ button, [role="button"] { cursor: pointer; }
     }
 
     // Ignorer une 2e réponse (answer dupliquée) si on a déjà quitté
-    // have-local-offer — sinon setRemoteDescription lève et le catch
-    // appelle hangUp() → retour intempestif à l'écran d'accueil.
-    if (this.peerConnection.signalingState !== "have-local-offer") {
+    // Pour les renégociations, l'état sera "have-remote-offer" ou "stable"
+    const isRenegotiation = this.peerConnection.signalingState === "have-remote-offer" ||
+                            this.peerConnection.signalingState === "stable";
+
+    if (!isRenegotiation && this.peerConnection.signalingState !== "have-local-offer") {
       console.warn(
         "⚠️ call-answered ignoré (état déjà avancé) :",
         this.peerConnection.signalingState,
@@ -2915,6 +2955,31 @@ button, [role="button"] { cursor: pointer; }
       );
       console.log("✅ setRemoteDescription(answer) OK");
       await this.processPendingCandidates();
+
+      if (isRenegotiation) {
+        console.log("📹 Réponse de renégociation traitée");
+        // Pour les renégociations, s'assurer que l'interface vidéo est active
+        if (this.isVideoCall) {
+          this.showInterface(this.interfaceVideo);
+          const localVideo = document.getElementById("local-video");
+          const remoteVideo = document.getElementById("remote-video");
+
+          // Réattacher la vidéo locale
+          if (localVideo && this.localStream) {
+            localVideo.srcObject = this.localStream;
+            localVideo.play().catch(e => console.warn("⚠️ Erreur play local-video:", e));
+            console.log("✅ Vidéo locale réattachée après renégociation");
+          }
+
+          // S'assurer que l'élément vidéo distante est prêt (la vidéo arrive via ontrack)
+          if (remoteVideo) {
+            console.log("✅ Élément vidéo distante prêt après renégociation");
+          }
+        }
+        return;
+      }
+
+      // Réponse initiale
       this.startTimer();
       this.updateStatus("Appel connecté");
       this.toggleCallControlButtons(true);
@@ -2989,8 +3054,24 @@ button, [role="button"] { cursor: pointer; }
 
       this.isRenegotiating = true;
 
-      this.localStream.addTrack(videoTrack);
-      this.peerConnection.addTrack(videoTrack, this.localStream);
+      // Réutiliser un sender/transceiver vidéo existant évite les pistes dupliquées.
+      const existingVideoSender = this.peerConnection.getSenders().find(
+        (sender) => sender.track && sender.track.kind === "video"
+      );
+      if (existingVideoSender) {
+        await existingVideoSender.replaceTrack(videoTrack);
+      } else {
+        const videoTransceiver = this.peerConnection.getTransceivers().find(
+          (transceiver) => transceiver.receiver && transceiver.receiver.track && transceiver.receiver.track.kind === "video"
+        );
+        if (videoTransceiver) {
+          await videoTransceiver.sender.replaceTrack(videoTrack);
+          videoTransceiver.direction = "sendrecv";
+        } else {
+          this.peerConnection.addTrack(videoTrack, this.localStream);
+        }
+      }
+      if (!this.localStream.getVideoTracks().includes(videoTrack)) this.localStream.addTrack(videoTrack);
 
       this.isVideoCall = true;
 
@@ -3007,7 +3088,9 @@ button, [role="button"] { cursor: pointer; }
         targetId: this.targetUserId,
         offer: offer,
         isVideo: true,
+        isVideoUpgrade: true,
       });
+      console.log("📹 upgradeToVideo: Message restart-offer envoyé avec isVideoUpgrade: true");
       this.updateStatus("Passage en appel vidéo...");
     } catch (error) {
       this.isRenegotiating = false;
@@ -3025,8 +3108,24 @@ button, [role="button"] { cursor: pointer; }
 
       this.isRenegotiating = true;
 
-      this.localStream.addTrack(videoTrack);
-      this.peerConnection.addTrack(videoTrack, this.localStream);
+      // Réutiliser un sender/transceiver vidéo existant évite les pistes dupliquées.
+      const existingVideoSender = this.peerConnection.getSenders().find(
+        (sender) => sender.track && sender.track.kind === "video"
+      );
+      if (existingVideoSender) {
+        await existingVideoSender.replaceTrack(videoTrack);
+      } else {
+        const videoTransceiver = this.peerConnection.getTransceivers().find(
+          (transceiver) => transceiver.receiver && transceiver.receiver.track && transceiver.receiver.track.kind === "video"
+        );
+        if (videoTransceiver) {
+          await videoTransceiver.sender.replaceTrack(videoTrack);
+          videoTransceiver.direction = "sendrecv";
+        } else {
+          this.peerConnection.addTrack(videoTrack, this.localStream);
+        }
+      }
+      if (!this.localStream.getVideoTracks().includes(videoTrack)) this.localStream.addTrack(videoTrack);
 
       this.isVideoCall = true;
 
@@ -3043,6 +3142,7 @@ button, [role="button"] { cursor: pointer; }
         targetId: this.targetUserId,
         offer: offer,
         isVideo: true,
+        isVideoUpgrade: true,
       });
       this.updateStatus("Passage en appel vidéo...");
     } catch (error) {
@@ -3094,11 +3194,25 @@ button, [role="button"] { cursor: pointer; }
     try {
       if (!this.isVideoCall) {
         this.isVideoCall = true;
+        console.log("📹 Passage en mode vidéo - changement d'interface");
         this.showInterface(this.interfaceVideo);
+        console.log("📹 Interface vidéo affichée");
         this.showLocalVideoPlaceholder(true);
         this.isCameraOff = true;
         this.updateCameraIcon();
         this.sendCameraState();
+
+        // Préparer les éléments vidéo
+        const localVideo = document.getElementById("local-video");
+        const remoteVideo = document.getElementById("remote-video");
+        if (localVideo) {
+          console.log("📹 Élément local-video prêt");
+        }
+        if (remoteVideo) {
+          console.log("📹 Élément remote-video prêt");
+        }
+      } else {
+        console.log("📹 Déjà en mode vidéo - pas de changement d'interface");
       }
 
       const SessionDescription = this.activeRTC
@@ -3107,7 +3221,7 @@ button, [role="button"] { cursor: pointer; }
       await this.peerConnection.setRemoteDescription(
         new SessionDescription(data.offer),
       );
-      console.log("📹 setRemoteDescription(offer) OK");
+      console.log("📹 setRemoteDescription(offer) OK, signalingState:", this.peerConnection.signalingState);
       await this.processPendingCandidates();
 
       const videoTransceiver = this.peerConnection
@@ -3117,22 +3231,23 @@ button, [role="button"] { cursor: pointer; }
             t.receiver && t.receiver.track && t.receiver.track.kind === "video",
         );
 
-      if (
-        videoTransceiver &&
-        !(this.localStream && this.localStream.getVideoTracks().length > 0)
-      ) {
-        videoTransceiver.direction = "recvonly";
+      // IMPORTANT : Toujours utiliser sendrecv pour permettre au récepteur d'activer sa caméra plus tard
+      // Style WhatsApp : les deux participants peuvent activer/désactiver leur caméra librement
+      if (videoTransceiver) {
+        videoTransceiver.direction = "sendrecv";
+        console.log("📹 Transceiver direction fixée à sendrecv (style WhatsApp)");
       }
 
       const answer = await this.peerConnection.createAnswer();
       await this.peerConnection.setLocalDescription(answer);
-      console.log("📹 Réponse créée (recvonly si pas encore de caméra locale)");
+      console.log("📹 Réponse créée avec sendrecv, signalingState:", this.peerConnection.signalingState);
 
       this.sendSignal({
         type: "answer-call",
         targetId: this.targetUserId,
         answer: answer,
       });
+      console.log("📹 Réponse envoyée à l'émetteur");
       this.updateStatus("Appel vidéo connecté");
     } catch (error) {
       console.error("❌ Erreur réception passage vidéo :", error);
@@ -4635,6 +4750,8 @@ showLocalStorageOnScreen = () => {
       const videoTrack = videoStream.getVideoTracks()[0];
       if (!videoTrack) return;
 
+      console.log("📹 Piste vidéo obtenue, readyState:", videoTrack.readyState);
+
       this.localStream.addTrack(videoTrack);
 
       const videoTransceiver = this.peerConnection
@@ -4646,9 +4763,12 @@ showLocalStorageOnScreen = () => {
 
       if (videoTransceiver) {
         await videoTransceiver.sender.replaceTrack(videoTrack);
+        // IMPORTANT : passer la direction à sendrecv pour envoyer aussi la vidéo
         videoTransceiver.direction = "sendrecv";
+        console.log("📹 Transceiver direction changée en sendrecv");
       } else {
         this.peerConnection.addTrack(videoTrack, this.localStream);
+        console.log("📹 Piste vidéo ajoutée au peerConnection");
       }
 
       const localVideo = document.getElementById("local-video");
@@ -4658,15 +4778,18 @@ showLocalStorageOnScreen = () => {
       this.isRenegotiating = true;
       const offer = await this.peerConnection.createOffer();
       await this.peerConnection.setLocalDescription(offer);
+      console.log("📹 Offre créée avec piste vidéo, signalingState:", this.peerConnection.signalingState);
       this.sendSignal({
         type: "restart-offer",
         targetId: this.targetUserId,
         offer: offer,
         isVideo: true,
+        isVideoUpgrade: true,
       });
       console.log("📹 Caméra activée manuellement, renégociation envoyée");
 
       this.isCameraOff = false;
+      this.isVideoCall = true; // S'assurer que isVideoCall est true
       this.updateCameraIcon();
       this.sendCameraState();
     } catch (error) {
@@ -4765,19 +4888,36 @@ showLocalStorageOnScreen = () => {
   };
 
   /* =========================================================
-     PARTAGE D'ÉCRAN (1-à-1 uniquement)
+     PARTAGE D'ÉCRAN (1-à-1 et groupe)
   ========================================================= */
 
   isScreenShareSupported = () => {
-    const supported = navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function";
-    console.log("[SCREEN] getDisplayMedia support =", supported);
-    return supported;
+    const hasGetDisplayMedia =
+      !!(navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function");
+    // Android Cordova : getDisplayMedia absent dans la WebView -> plugin natif MediaProjection
+    const hasNativePlugin =
+      !!(window.ScreenShareLive &&
+         window.cordova &&
+         window.cordova.platformId === "android");
+    console.log("[SCREEN] getDisplayMedia =", hasGetDisplayMedia, "| plugin natif =", hasNativePlugin);
+    return hasGetDisplayMedia || hasNativePlugin;
   };
 
   canStartScreenShare = () => {
     if (this.groupRoomId || this.groupCreating) {
-      this.showCallToast("Partage d'écran non disponible en groupe");
-      return false;
+      if (!this.groupPeers || this.groupPeers.size === 0) {
+        this.showCallToast("Aucun participant connecté dans le groupe");
+        return false;
+      }
+      if (this.isScreenSharing) {
+        this.showCallToast("Partage d'écran déjà actif");
+        return false;
+      }
+      if (!this.isScreenShareSupported()) {
+        this.showCallToast("Partage d'écran non supporté sur cet appareil");
+        return false;
+      }
+      return true;
     }
     if (!this.peerConnection) {
       this.showCallToast("Aucun appel en cours");
@@ -4813,18 +4953,21 @@ showLocalStorageOnScreen = () => {
         return false;
       }
 
-      this.localStream.addTrack(videoTrack);
-
-      const videoTransceiver = this.peerConnection
-        .getTransceivers()
-        .find((t) => t.receiver && t.receiver.track && t.receiver.track.kind === "video");
-
-      if (videoTransceiver) {
+      const videoTransceiver = this.peerConnection.getTransceivers().find(
+        (t) => t.receiver && t.receiver.track && t.receiver.track.kind === "video"
+      );
+      const videoSender = this.peerConnection.getSenders().find(
+        (sender) => sender.track && sender.track.kind === "video"
+      );
+      if (videoSender) {
+        await videoSender.replaceTrack(videoTrack);
+      } else if (videoTransceiver) {
         await videoTransceiver.sender.replaceTrack(videoTrack);
         videoTransceiver.direction = "sendrecv";
       } else {
         this.peerConnection.addTrack(videoTrack, this.localStream);
       }
+      if (!this.localStream.getVideoTracks().includes(videoTrack)) this.localStream.addTrack(videoTrack);
 
       const localVideo = document.getElementById("local-video");
       if (localVideo) localVideo.srcObject = this.localStream;
@@ -4838,6 +4981,7 @@ showLocalStorageOnScreen = () => {
         targetId: this.targetUserId,
         offer: offer,
         isVideo: true,
+        isVideoUpgrade: true,
       });
 
       this.isCameraOff = false;
@@ -4857,8 +5001,77 @@ showLocalStorageOnScreen = () => {
     }
   };
 
+  startGroupScreenShare = async () => {
+    if (!this.canStartScreenShare()) return;
+    try {
+      // Le passage audio -> vidéo est explicite : demander la caméra avant le partage.
+      if (!this.groupLocalStream || !this.groupLocalStream.getVideoTracks().length) {
+        const confirmed = window.confirm("Pour partager votre écran, souhaitez-vous aussi activer votre caméra ?");
+        if (!confirmed) return;
+        await this.toggleGroupCamera();
+        if (!this.groupLocalStream || !this.groupLocalStream.getVideoTracks().length) {
+          this.showCallToast("La caméra doit être activée avant le partage");
+          return;
+        }
+      }
+      let stream = null;
+      if (navigator.mediaDevices && typeof navigator.mediaDevices.getDisplayMedia === "function") {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      } else if (window.ScreenShareLive && window.cordova && window.cordova.platformId === "android") {
+        const available = await new Promise((resolve) => ScreenShareLive.isAvailable(resolve, () => resolve(false)));
+        if (!available) throw new Error("Capture native indisponible");
+        const canvasStream = ScreenShareLive.createCanvasStream(10);
+        this._screenCanvasStream = canvasStream;
+        await new Promise((resolve, reject) => {
+          let started = false;
+          ScreenShareLive.start({ maxWidth: 720, maxFps: 10, jpegQuality: 60 }, (msg) => {
+            if (msg === "started") { started = true; resolve(); return; }
+            if (msg && msg.type === "frame") canvasStream.pushJpegBase64(msg.jpeg);
+          }, (err) => { if (!started) reject(err); });
+        });
+        stream = canvasStream.stream;
+      } else {
+        throw new Error("Capture d'écran indisponible");
+      }
+      const track = stream && stream.getVideoTracks()[0];
+      if (!track) { if (stream) stream.getTracks().forEach((t) => t.stop()); this.showCallToast("Aucune piste d'écran disponible"); return; }
+      this._groupScreenBackups.clear();
+      for (const [peerId, peer] of this.groupPeers.entries()) {
+        if (!peer || !peer.pc) continue;
+        let sender = peer.pc.getSenders().find((item) => item.track && item.track.kind === "video");
+        if (!sender) sender = peer.pc.getSenders().find((item) => item.track === null && item.kind === "video");
+        if (sender) {
+          this._groupScreenBackups.set(peerId, sender.track || null);
+          await sender.replaceTrack(track);
+        } else {
+          sender = peer.pc.addTrack(track, stream);
+          this._groupScreenBackups.set(peerId, null);
+          await this.renegotiateWithPeer(peerId);
+        }
+      }
+      this.screenStream = stream;
+      this._groupScreenTrack = track;
+      this.isScreenSharing = true;
+      // Mettre à jour mon propre état de partage d'écran
+      this.groupPeerStates.set(this.myId, {
+        micMuted: this.groupIsMuted,
+        camOff: this.groupIsCamOff,
+        screenSharing: true
+      });
+      this.sendGroupSignalToAll({ kind: "state", micMuted: this.groupIsMuted, camOff: this.groupIsCamOff, screenSharing: true });
+      this.updateScreenShareUI(true);
+      this.renderGroupGrid(); // Recharger la grille pour appliquer le layout
+      this.showCallToast("Partage d'écran de groupe activé");
+      track.onended = () => this.stopScreenShare();
+    } catch (error) {
+      console.error("[SCREEN][GROUP] Erreur partage d'écran :", error);
+      this.showCallToast(error && error.name === "NotAllowedError" ? "Partage d'écran annulé" : "Impossible de partager l'écran en groupe");
+    }
+  };
+
   startScreenShare = async () => {
     console.log("[SCREEN] startScreenShare()");
+    if (this.groupRoomId || this.groupCreating) return this.startGroupScreenShare();
     if (!this.canStartScreenShare()) return;
 
     // ====================================================================
@@ -4932,6 +5145,10 @@ showLocalStorageOnScreen = () => {
     // ====================================================================
     // Sur Android Cordova, getDisplayMedia est absent dans la WebView
     // On utilise le plugin cordova-plugin-screenshare-live avec MediaProjection
+    console.log("[SCREEN] DEBUG: window.cordova =", !!window.cordova);
+    console.log("[SCREEN] DEBUG: window.ScreenShareLive =", !!window.ScreenShareLive);
+    console.log("[SCREEN] DEBUG: cordova.platformId =", window.cordova ? window.cordova.platformId : 'N/A');
+
     if (window.ScreenShareLive) {
       console.log("[SCREEN] path=native (plugin ScreenShareLive)");
 
@@ -4956,26 +5173,27 @@ showLocalStorageOnScreen = () => {
       try {
         console.log("[SCREEN] Démarrage capture natif...");
 
-        // Démarrer la capture via le plugin natif
+        // 1) Créer le flux canvas AVANT de démarrer (les frames natives y seront dessinées)
+        const cs = ScreenShareLive.createCanvasStream(10);
+        this._screenCanvasStream = cs;
+
+        // 2) Démarrer la capture native. Le même callback reçoit "started" puis toutes les frames.
         await new Promise((resolve, reject) => {
+          let started = false;
           ScreenShareLive.start(
-            {
-              maxWidth: 1280,
-              maxHeight: 720,
-              maxFps: 10,
-              jpegQuality: 0.7
+            { maxWidth: 720, maxFps: 10, jpegQuality: 60 }, // qualité JPEG en 0-100
+            (msg) => {
+              if (msg === "started") { started = true; resolve(); return; }
+              if (msg && msg.type === "frame") cs.pushJpegBase64(msg.jpeg);
             },
-            resolve,
-            reject
+            (err) => { if (!started) reject(err); }
           );
         });
 
         console.log("[SCREEN] Capture natif démarrée");
 
-        // Créer le MediaStream depuis les frames reçues du natif
-        // Le plugin dessine les frames sur un canvas, puis canvas.captureStream()
-        // crée un MediaStream compatible WebRTC
-        const screenStream = await ScreenShareLive.createStreamFromFrames({ fps: 10 });
+        // 3) MediaStream WebRTC issu du canvas
+        const screenStream = cs.stream;
         const screenTrack = screenStream.getVideoTracks()[0];
 
         if (!screenTrack) {
@@ -5033,9 +5251,41 @@ showLocalStorageOnScreen = () => {
     this.showCallToast("Partage d'écran non supporté sur cet appareil");
   };
 
-  stopScreenShare = () => {
+  stopScreenShare = async () => {
     console.log("[SCREEN] stopScreenShare()");
     if (!this.isScreenSharing) return;
+
+    // Arrêt spécifique au maillage de groupe : restaurer la piste vidéo de chaque pair.
+    if (this.groupRoomId || this.groupCreating) {
+      for (const [peerId, peer] of this.groupPeers.entries()) {
+        if (!peer || !peer.pc) continue;
+        const sender = peer.pc.getSenders().find((item) => item.track && item.track.kind === "video");
+        if (!sender) continue;
+        const backup = this._groupScreenBackups.get(peerId);
+        try { await sender.replaceTrack(backup || null); } catch (e) { console.warn("[SCREEN][GROUP] Restauration piste impossible", peerId, e); }
+      }
+      if (window.ScreenShareLive && this._screenCanvasStream) {
+        try { ScreenShareLive.stop(() => {}, () => {}); } catch (e) {}
+        try { this._screenCanvasStream.destroy(); } catch (e) {}
+        this._screenCanvasStream = null;
+      }
+      if (this.screenStream) this.screenStream.getTracks().forEach((track) => track.stop());
+      this.screenStream = null;
+      this._groupScreenTrack = null;
+      this._groupScreenBackups.clear();
+      this.isScreenSharing = false;
+      // Mettre à jour mon propre état de partage d'écran
+      this.groupPeerStates.set(this.myId, {
+        micMuted: this.groupIsMuted,
+        camOff: this.groupIsCamOff,
+        screenSharing: false
+      });
+      this.sendGroupSignalToAll({ kind: "state", micMuted: this.groupIsMuted, camOff: this.groupIsCamOff, screenSharing: false });
+      this.updateScreenShareUI(false);
+      this.renderGroupGrid(); // Recharger la grille pour revenir au layout normal
+      this.showCallToast("Partage d'écran de groupe arrêté");
+      return;
+    }
 
     // ====================================================================
     // Arrêter le plugin natif si actif (chemin Android Cordova)
@@ -5046,6 +5296,10 @@ showLocalStorageOnScreen = () => {
         () => console.log("[SCREEN] Plugin natif arrêté avec succès"),
         (err) => console.error("[SCREEN] Erreur arrêt plugin natif:", err)
       );
+      if (this._screenCanvasStream) {
+        this._screenCanvasStream.destroy();
+        this._screenCanvasStream = null;
+      }
     }
 
     // ====================================================================
@@ -5119,8 +5373,10 @@ showLocalStorageOnScreen = () => {
     const btnAudio = document.getElementById("btn-screen-share-audio");
     const iconAudio = document.getElementById("screen-share-icon-audio");
     const labelAudio = document.getElementById("screen-share-label-audio");
+    const btnGroup = document.getElementById("btn-screen-share-group");
 
     if (active) {
+      if (btnGroup) btnGroup.classList.add("active");
       if (btn) btn.classList.add("active");
       if (icon) icon.className = "fa-solid fa-desktop";
       if (label) label.textContent = "Arrêter";
@@ -5128,6 +5384,7 @@ showLocalStorageOnScreen = () => {
       if (iconAudio) iconAudio.className = "fa-solid fa-desktop";
       if (labelAudio) labelAudio.textContent = "Arrêter";
     } else {
+      if (btnGroup) btnGroup.classList.remove("active");
       if (btn) btn.classList.remove("active");
       if (icon) icon.className = "fa-solid fa-desktop";
       if (label) label.textContent = "Écran";
@@ -5886,6 +6143,14 @@ showLocalStorageOnScreen = () => {
     this.groupIsMuted = false;
     this.groupIsCamOff = false;
     this.groupIsFrontCamera = true;
+    this.isScreenSharing = false;
+
+    // Initialiser mon propre état de partage d'écran
+    this.groupPeerStates.set(this.myId, {
+      micMuted: this.groupIsMuted,
+      camOff: this.groupIsCamOff,
+      screenSharing: false
+    });
 
     // Route audio par défaut : haut-parleur en vidéo, écouteur en audio.
     if (this.isAndroid()) {
@@ -6935,7 +7200,8 @@ showLocalStorageOnScreen = () => {
         // Micro / caméra coupés chez l'autre : badge + avatar sur sa tuile.
         const oldState = this.groupPeerStates.get(from) || {};
         const newCamOff = !!p.camOff;
-        this.groupPeerStates.set(from, { micMuted: !!p.micMuted, camOff: newCamOff });
+        const newScreenSharing = !!p.screenSharing;
+        this.groupPeerStates.set(from, { micMuted: !!p.micMuted, camOff: newCamOff, screenSharing: newScreenSharing });
         this.updateGroupTile(from);
 
         // Si la caméra vient d'être activée (camOff passe de true à false),
@@ -6948,6 +7214,12 @@ showLocalStorageOnScreen = () => {
               console.warn(`⚠️ [GROUPE] Erreur renégociation avec ${from}:`, err);
             });
           }
+        }
+
+        // Si le partage d'écran change, recharger la grille pour appliquer le layout WhatsApp
+        if (oldState.screenSharing !== newScreenSharing) {
+          console.log(`🖥️ [GROUPE] Partage d'écran ${newScreenSharing ? 'activé' : 'désactivé'} par ${from}`);
+          this.renderGroupGrid();
         }
         break;
     }
@@ -7105,18 +7377,41 @@ showLocalStorageOnScreen = () => {
     this.startGroupSpeakerDetection();
   };
 
-  // Liste des participants à afficher : moi d'abord, puis les autres
+  // Liste des participants à afficher : celui qui partage son écran en premier, puis les autres
   // IMPORTANT : Affiche UNIQUEMENT JOINED (pas RINGING)
   // Les participants en RINGING ne doivent pas apparaître dans la grille
   // Style WhatsApp : dès qu'un participant quitte, sa tuile disparaît
+  // Style WhatsApp partage d'écran : celui qui partage prend le grand cadre en haut
   getGroupDisplayIds = () => {
-    const others = this.groupRoster
+    const joined = this.groupRoster
       .filter(
-        (r) =>
-          r.userId !== this.myId &&
-          r.state === "JOINED", // Uniquement JOINED, pas RINGING
+        (r) => r.state === "JOINED", // Uniquement JOINED, pas RINGING
       )
       .map((r) => r.userId);
+
+    // Si je ne suis pas dans la liste, m'ajouter (pour mon propre affichage)
+    if (!joined.includes(this.myId)) {
+      joined.push(this.myId);
+    }
+
+    // Trouver celui qui partage son écran
+    let screenSharerId = null;
+    for (const userId of joined) {
+      const state = this.groupPeerStates.get(userId);
+      if (state && state.screenSharing) {
+        screenSharerId = userId;
+        break;
+      }
+    }
+
+    // Si quelqu'un partage son écran, le mettre en premier
+    if (screenSharerId) {
+      const others = joined.filter(id => id !== screenSharerId);
+      return [screenSharerId, ...others].slice(0, CallManager.GROUP_MAX_PARTICIPANTS);
+    }
+
+    // Sinon, ordre normal : moi d'abord, puis les autres
+    const others = joined.filter(id => id !== this.myId);
     return [this.myId, ...others].slice(0, CallManager.GROUP_MAX_PARTICIPANTS);
   };
 
@@ -7128,6 +7423,23 @@ showLocalStorageOnScreen = () => {
     const ids = this.getGroupDisplayIds();
 
     console.log(`🔧 [GROUPE] renderGroupGrid - Tuiles à afficher: [${ids.join(", ")}]`);
+
+    // Déterminer si quelqu'un partage son écran
+    let screenSharerId = null;
+    for (const userId of ids) {
+      const state = this.groupPeerStates.get(userId);
+      if (state && state.screenSharing) {
+        screenSharerId = userId;
+        break;
+      }
+    }
+
+    // Appliquer la classe de layout selon le partage d'écran
+    if (screenSharerId && ids.length > 1) {
+      grid.className = `group-grid count-${Math.max(1, Math.min(ids.length, 6))} screen-share-mode`;
+    } else {
+      grid.className = `group-grid count-${Math.max(1, Math.min(ids.length, 6))}`;
+    }
 
     // Tuiles qui ne doivent plus exister
     Array.from(this.groupTiles.keys()).forEach((id) => {
@@ -7154,7 +7466,6 @@ showLocalStorageOnScreen = () => {
       this.updateGroupTile(id);
     });
 
-    grid.className = `group-grid count-${Math.max(1, Math.min(ids.length, 6))}`;
     this.updateGroupHeader();
   };
 
@@ -7191,6 +7502,7 @@ showLocalStorageOnScreen = () => {
     const stream = isSelf ? this.groupLocalStream : peer && peer.stream;
     const micMuted = isSelf ? this.groupIsMuted : !!remoteState.micMuted;
     const camOff = isSelf ? this.groupIsCamOff : !!remoteState.camOff;
+    const screenSharing = isSelf ? this.isScreenSharing : !!remoteState.screenSharing;
     const hasVideoTrack = !!stream && stream.getVideoTracks().length > 0;
     // Afficher la vidéo si : JOINED + piste vidéo présente + caméra non coupée
     // Indépendamment de groupIsVideo (pour permettre réception vidéo même si appel démarré en audio)
@@ -7204,6 +7516,9 @@ showLocalStorageOnScreen = () => {
     if (state === "JOINED" && !isSelf && (!peer || peer.connState !== "connected")) {
       statusText = "Connexion…";
     }
+    if (screenSharing) {
+      statusText = "Partage d'écran";
+    }
     tile.querySelector(".group-tile-status").textContent = statusText;
 
     // Classes d'état
@@ -7211,6 +7526,7 @@ showLocalStorageOnScreen = () => {
     tile.classList.toggle("is-muted", state === "JOINED" && micMuted);
     tile.classList.toggle("is-speaking", this.groupActiveSpeakerId === userId);
     tile.classList.toggle("has-video", showVideo);
+    tile.classList.toggle("is-screen-sharing", screenSharing);
 
     // Vidéo (toujours muette : le son passe par les <audio>)
     const video = tile.querySelector("video");

@@ -14,6 +14,7 @@
   "author": "Apache Cordova Team",
   "license": "Apache-2.0",
   "dependencies": {
+    "cordova-plugin-screenshare-live": "file:local_plugins/cordova-plugin-screenshare-live",
     "express": "^4.18.2",
     "firebase-admin": "^11.11.0",
     "ws": "^8.14.2"
@@ -43,7 +44,8 @@
         "FCM_VERSION": "24.1.0"
       },
       "cordova-plugin-advanced-websocket": {},
-      "cordova-plugin-audioroute": {}
+      "cordova-plugin-audioroute": {},
+      "cordova-plugin-screenshare-live": {}
     }
   }
 }

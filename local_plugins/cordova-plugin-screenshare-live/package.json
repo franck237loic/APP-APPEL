@@ -1,0 +1,12 @@
+{
+  "name": "cordova-plugin-screenshare-live",
+  "version": "1.0.0",
+  "description": "Live Android screen capture via MediaProjection for WebRTC",
+  "cordova": {
+    "id": "cordova-plugin-screenshare-live",
+    "platforms": ["android"]
+  },
+  "keywords": ["cordova", "android", "screenshare", "mediaprojection", "webrtc"],
+  "author": "app-appel",
+  "license": "MIT"
+}
