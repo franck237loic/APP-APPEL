@@ -5009,25 +5009,81 @@ showLocalStorageOnScreen = () => {
     return hasGetDisplayMedia || hasNativePlugin;
   };
 
-  // Cordova Android/iOS : la WebView n'a pas de getDisplayMedia utilisable -> plugin natif.
-  // (Sur iOS, WKWebView peut exposer getDisplayMedia mais le rejette : il ne faut pas le préférer.)
+  /**
+   * ==========================================================================
+   * _useNativeScreenShare - Détermine si on doit utiliser le plugin natif
+   * ==========================================================================
+   *
+   * Vérifie si l'application tourne sur Android ou iOS avec le plugin ScreenShareLive.
+   *
+   * POURQUOI PAS UTILISER getDisplayMedia ?
+   * ----------------------------------------
+   * • ANDROID : La WebView Cordova n'expose pas getDisplayMedia (API navigateur)
+   * • iOS : WKWebView peut exposer getDisplayMedia mais le rejette (restriction Apple)
+   * • Le plugin natif est donc nécessaire sur mobile
+   *
+   * @returns {boolean} true si on doit utiliser le plugin natif
+   */
   _useNativeScreenShare = () =>
     !!(window.ScreenShareLive &&
        window.cordova &&
        (window.cordova.platformId === "android" || window.cordova.platformId === "ios"));
 
-  // Démarre la capture native et renvoie le MediaStream (canvas) alimenté par les frames JPEG.
-  // iOS : « started » n'arrive qu'à la première frame de l'extension Broadcast, donc après le choix
-  // dans le sheet système ; sans frame au bout de 60 s on considère le partage annulé.
+  /**
+   * ==========================================================================
+   * _startNativeScreenCapture - Démarre la capture d'écran native
+   * ==========================================================================
+   *
+   * Démarre la capture d'écran via le plugin natif (Android MediaProjection ou iOS ReplayKit)
+   * et renvoie un MediaStream prêt pour WebRTC.
+   *
+   * PROCESSUS :
+   * ----------
+   * 1. Créer un canvas stream via ScreenShareLive.createCanvasStream()
+   * 2. Démarrer la capture native via ScreenShareLive.start()
+   * 3. Attendre le message "started" (iOS : après choix dans le sélecteur système)
+   * 4. Chaque frame JPEG reçue est dessinée sur le canvas
+   * 5. Le canvas captureStream crée un MediaStream
+   * 6. Renvoyer le MediaStream pour WebRTC replaceTrack()
+   *
+   * GESTION DES MESSAGES :
+   * ---------------------
+   * • "started" - La capture a démarré (résoudre la Promise)
+   * • "stopped" - La capture a été arrêtée (appeler stopScreenShare)
+   * • {type: "frame", jpeg: "..."} - Nouvelle frame disponible (dessiner sur canvas)
+   *
+   * SPÉCIFICITÉS iOS :
+   * -----------------
+   * • "started" n'arrive qu'à la PREMIÈRE frame de l'extension Broadcast
+   * • Cela se produit APRÈS que l'utilisateur a choisi dans le sélecteur système
+   * • Timeout de 60 secondes si aucune frame n'est reçue (utilisateur a annulé)
+   * • Message toast guide l'utilisateur ("Choisissez CallApp Screen Share...")
+   *
+   * CONFIGURATION :
+   * --------------
+   * • maxWidth: 720 - Réduire la résolution pour réduire la bande passante
+   * • maxFps: 10 - Limiter à 10 FPS pour réduire la charge CPU
+   * • jpegQuality: 60 - Qualité JPEG 60% (bon compromis qualité/taille)
+   *
+   * @returns {Promise<MediaStream>} MediaStream alimenté par les frames d'écran
+   * @throws {Error} Si la capture échoue ou est annulée
+   */
   _startNativeScreenCapture = async () => {
+    // Créer un canvas stream (10 FPS)
     const cs = ScreenShareLive.createCanvasStream(10);
     this._screenCanvasStream = cs;
+
+    // iOS : guider l'utilisateur dans le sélecteur système
     if (window.cordova.platformId === "ios") {
       this.showCallToast("Choisissez « CallApp Screen Share » puis « Démarrer la diffusion »");
     }
+
     try {
+      // Démarrer la capture native et attendre "started"
       await new Promise((resolve, reject) => {
         let started = false;
+
+        // Fonction d'annulation (timeout ou erreur)
         const cancel = (reason) => {
           clearTimeout(timer);
           try { ScreenShareLive.stop(() => {}, () => {}); } catch (e) {}
@@ -5035,26 +5091,56 @@ showLocalStorageOnScreen = () => {
           err.name = "NotAllowedError";
           reject(err);
         };
-        const timer = setTimeout(() => { if (!started) cancel("Aucune diffusion démarrée"); }, 60000);
+
+        // Timeout de 60 secondes (iOS : utilisateur n'a pas choisi dans le sélecteur)
+        const timer = setTimeout(() => {
+          if (!started) cancel("Aucune diffusion démarrée");
+        }, 60000);
+
+        // Démarrer la capture native
         ScreenShareLive.start(
-          { maxWidth: 720, maxFps: 10, jpegQuality: 60 }, // qualité JPEG en 0-100
+          { maxWidth: 720, maxFps: 10, jpegQuality: 60 }, // Configuration
           (msg) => {
-            if (msg === "started") { started = true; clearTimeout(timer); resolve(); return; }
-            if (msg === "stopped") {
-              if (!started) { cancel("Diffusion arrêtée avant démarrage"); return; }
-              if (this.isScreenSharing) this.stopScreenShare(); // arrêt depuis la notification / la barre rouge
+            // Callback pour les messages du plugin natif
+            if (msg === "started") {
+              started = true;
+              clearTimeout(timer);
+              resolve();  // La capture a démarré avec succès
               return;
             }
-            if (msg && msg.type === "frame") cs.pushJpegBase64(msg.jpeg);
+            if (msg === "stopped") {
+              // La capture a été arrêtée (par l'utilisateur ou le système)
+              if (!started) {
+                cancel("Diffusion arrêtée avant démarrage");
+                return;
+              }
+              if (this.isScreenSharing) {
+                this.stopScreenShare();  // Arrêt depuis la notification/barre rouge
+              }
+              return;
+            }
+            if (msg && msg.type === "frame") {
+              // Nouvelle frame disponible : dessiner sur le canvas
+              cs.pushJpegBase64(msg.jpeg);
+            }
           },
-          (err) => { if (!started) { clearTimeout(timer); reject(err); } }
+          (err) => {
+            // Erreur du plugin natif
+            if (!started) {
+              clearTimeout(timer);
+              reject(err);
+            }
+          }
         );
       });
     } catch (error) {
+      // En cas d'erreur, nettoyer le canvas stream
       try { cs.destroy(); } catch (e) {}
       this._screenCanvasStream = null;
       throw error;
     }
+
+    // Renvoyer le MediaStream pour WebRTC
     return cs.stream;
   };
 
