@@ -1,28 +1,45 @@
 /**
- * ScreenShareLive — API JS du plugin de partage d'écran Android (MediaProjection).
- *
- * Sur navigateur : isAvailable() = false → CallManager utilise getDisplayMedia.
- * Sur Android Cordova : start() lance le dialogue système puis envoie des frames JPEG
- * au JS pour construire un MediaStream via canvas.captureStream (replaceTrack).
+ * ScreenShareLive — API JS du plugin de partage d'écran
+ * Android : MediaProjection (écran complet)
+ * iOS     : ReplayKit Broadcast Extension (écran complet comme WhatsApp)
  */
 var exec = require("cordova/exec");
 
 var ScreenShareLive = {
   /**
-   * true si on est sur Android avec le plugin natif chargé.
+   * Vérifie si le plugin natif est disponible.
+   * Sur iOS appelle le natif (ReplayKit.isAvailable).
+   * Sur Android retourne true si on est bien sur la plateforme.
    */
   isAvailable: function (success, error) {
-    var ok =
-      typeof window !== "undefined" &&
-      window.cordova &&
-      window.cordova.platformId === "android";
-    if (typeof success === "function") success(ok);
-    return ok;
+    if (typeof window === "undefined" || !window.cordova) {
+      if (typeof success === "function") success(false);
+      return false;
+    }
+    // Appelle toujours le natif pour avoir la vraie réponse (surtout iOS)
+    exec(
+      function (available) {
+        if (typeof success === "function") success(!!available);
+      },
+      function (err) {
+        // Classe native absente (plugin non compilé dans la plateforme) : ne pas prétendre que ça marche
+        console.warn("[ScreenShareLive] isAvailable natif en échec :", err);
+        if (typeof success === "function") success(false);
+      },
+      "ScreenShareLive",
+      "isAvailable",
+      []
+    );
   },
 
   /**
-   * Démarre la capture d'écran native (dialogue système Android).
-   * options: { maxWidth?: number, maxFps?: number, jpegQuality?: number }
+   * Démarre la capture d'écran native.
+   * options: {
+   *   maxWidth?: number,      // défaut 720
+   *   maxFps?: number,        // défaut 10
+   *   jpegQuality?: number,   // 0-100 ou 0-1, défaut 55
+   *   useBroadcast?: boolean  // iOS seulement, défaut true (mode WhatsApp)
+   * }
    */
   start: function (options, success, error) {
     var opts = options || {};
@@ -30,7 +47,7 @@ var ScreenShareLive = {
   },
 
   /**
-   * Arrête la capture et le service foreground.
+   * Arrête la capture.
    */
   stop: function (success, error) {
     exec(success, error, "ScreenShareLive", "stop", []);
@@ -38,7 +55,7 @@ var ScreenShareLive = {
 
   /**
    * Crée un MediaStream à partir des frames JPEG reçues du natif.
-   * Utilise un canvas + captureStream pour replaceTrack WebRTC.
+   * Utilisé pour replaceTrack WebRTC.
    *
    * @returns {{ stream: MediaStream, pushJpegBase64: function(string), destroy: function() }}
    */

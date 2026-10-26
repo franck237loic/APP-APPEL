@@ -3,6 +3,7 @@ package com.callapp.screenshare;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
@@ -42,6 +43,8 @@ public class ScreenShareService extends Service {
     public static final String TAG = "ScreenShareService";
     public static final String ACTION_START = "com.callapp.screenshare.START";
     public static final String ACTION_STOP = "com.callapp.screenshare.STOP";
+    /** Arrêt demandé par l'utilisateur depuis la notification : le JS doit être prévenu. */
+    public static final String ACTION_STOP_USER = "com.callapp.screenshare.STOP_USER";
     public static final String EXTRA_RESULT_CODE = "resultCode";
     public static final String EXTRA_RESULT_DATA = "resultData";
     public static final String EXTRA_MAX_FPS = "maxFps";
@@ -64,6 +67,15 @@ public class ScreenShareService extends Service {
     private int jpegQuality = 55;
     private int maxWidth = 720;
     private long lastFrameMs = 0;
+    /** true une fois le JS prévenu (ou si c'est lui qui a demandé l'arrêt) : évite les doublons. */
+    private volatile boolean stopNotified = false;
+
+    private void notifyJsStopped() {
+        if (stopNotified) return;
+        stopNotified = true;
+        ScreenShareLivePlugin plugin = pluginRef;
+        if (plugin != null) plugin.sendStoppedToJs();
+    }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -73,7 +85,16 @@ public class ScreenShareService extends Service {
         }
 
         String action = intent.getAction();
+        if (ACTION_STOP_USER.equals(action)) {
+            notifyJsStopped();
+            teardown();
+            stopForeground(true);
+            stopSelf();
+            return START_NOT_STICKY;
+        }
+
         if (ACTION_STOP.equals(action)) {
+            stopNotified = true; // arrêt demandé par le JS : inutile de le re-prévenir
             teardown();
             stopForeground(true);
             stopSelf();
@@ -81,6 +102,7 @@ public class ScreenShareService extends Service {
         }
 
         if (ACTION_START.equals(action)) {
+            stopNotified = false;
             maxFps = intent.getIntExtra(EXTRA_MAX_FPS, 8);
             jpegQuality = intent.getIntExtra(EXTRA_JPEG_QUALITY, 55);
             maxWidth = intent.getIntExtra(EXTRA_MAX_WIDTH, 720);
@@ -109,6 +131,7 @@ public class ScreenShareService extends Service {
                 @Override
                 public void onStop() {
                     Log.i(TAG, "MediaProjection stopped by system");
+                    notifyJsStopped();
                     teardown();
                     stopForeground(true);
                     stopSelf();
@@ -132,12 +155,30 @@ public class ScreenShareService extends Service {
             nm.createNotificationChannel(ch);
         }
 
-        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("Partage d'écran")
-                .setContentText("Votre écran est partagé pendant l'appel")
+        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= 23) piFlags |= PendingIntent.FLAG_IMMUTABLE;
+
+        // Bouton « Arrêter » (comme WhatsApp) : arrête le partage et prévient le JS
+        Intent stopIntent = new Intent(this, ScreenShareService.class);
+        stopIntent.setAction(ACTION_STOP_USER);
+        PendingIntent stopPi = PendingIntent.getService(this, 1, stopIntent, piFlags);
+
+        // Toucher la notification ramène dans l'appel
+        PendingIntent openPi = null;
+        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (launch != null) {
+            launch.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+            openPi = PendingIntent.getActivity(this, 2, launch, piFlags);
+        }
+
+        NotificationCompat.Builder nb = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Vous partagez votre écran")
+                .setContentText("Touchez pour revenir à l'appel")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setOngoing(true)
-                .build();
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Arrêter", stopPi);
+        if (openPi != null) nb.setContentIntent(openPi);
+        Notification notification = nb.build();
 
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);

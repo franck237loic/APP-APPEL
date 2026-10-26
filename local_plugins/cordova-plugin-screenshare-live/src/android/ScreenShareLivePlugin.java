@@ -59,6 +59,15 @@ public class ScreenShareLivePlugin extends CordovaPlugin {
             return true;
         }
 
+        if ("isAvailable".equals(action)) {
+            // MediaProjection existe depuis Android 5.0 (API 21)
+            boolean available = Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP;
+            // Better: use PluginResult
+            PluginResult r = new PluginResult(PluginResult.Status.OK, available);
+            callbackContext.sendPluginResult(r);
+            return true;
+        }
+
         return false;
     }
 
@@ -163,6 +172,18 @@ public class ScreenShareLivePlugin extends CordovaPlugin {
         } catch (JSONException e) {
             Log.e(TAG, "sendFrameToJs", e);
         }
+    }
+
+    /**
+     * Appelé par ScreenShareService quand le partage est arrêté côté natif
+     * (bouton « Arrêter » de la notification, ou arrêt par le système) : le JS doit
+     * repasser en affichage normal et remettre la caméra.
+     */
+    public void sendStoppedToJs() {
+        if (startCallback == null) return;
+        PluginResult r = new PluginResult(PluginResult.Status.OK, "stopped");
+        r.setKeepCallback(true);
+        startCallback.sendPluginResult(r);
     }
 
     @Override

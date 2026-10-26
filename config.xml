@@ -135,7 +135,37 @@
         <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
         <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
         <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-        </config-file> 
+        </config-file>
 
     </platform>
+
+    <!-- 3. CONFIGURATION SPÉCIFIQUE iOS -->
+    <platform name="ios">
+        <!-- Sans ça, WKWebView ouvre chaque <video> en plein écran natif (ignore playsinline) :
+             la caméra locale prenait tout l'écran au lancement de l'appel -->
+        <preference name="AllowInlineMediaPlayback" value="true" />
+
+        <!-- Garder l'appel (micro + WebRTC) vivant quand l'app passe en arrière-plan,
+             indispensable pendant un partage d'écran ReplayKit (on quitte l'app) -->
+        <config-file target="*-Info.plist" parent="UIBackgroundModes">
+            <array>
+                <string>audio</string>
+                <string>remote-notification</string>
+            </array>
+        </config-file>
+
+        <!-- Permissions pour ReplayKit (capture d'écran) -->
+        <config-file target="*-Info.plist" parent="NSMicrophoneUsageDescription">
+            <string>Le microphone est nécessaire pour les appels audio et vidéo</string>
+        </config-file>
+        <config-file target="*-Info.plist" parent="NSCameraUsageDescription">
+            <string>La caméra est nécessaire pour les appels vidéo</string>
+        </config-file>
+
+        <!-- Feature pour ScreenShareLive -->
+        <feature name="ScreenShareLive">
+            <param name="ios-package" value="ScreenShareLivePlugin"/>
+        </feature>
+    </platform>
+
 </widget>
