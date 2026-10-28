@@ -2908,6 +2908,31 @@ button, [role="button"] { cursor: pointer; }
       case "video-upgrade-response":
         this.handleVideoUpgradeResponse(data);
         break;
+
+      // ===== RÉUNIONS PLANIFIÉES : tous les messages "meeting-*" du serveur =====
+      case "meeting-created":
+        this.handleMeetingCreated(data);
+        break;
+
+      case "meeting-joined":
+        this.handleMeetingJoined(data);
+        break;
+
+      case "meeting-waiting":
+        this.handleMeetingWaiting(data);
+        break;
+
+      case "meeting-error":
+        this.handleMeetingError(data);
+        break;
+
+      case "meeting-cancelled":
+        this.handleMeetingCancelled(data);
+        break;
+
+      case "meeting-list":
+        this.handleMeetingList(data);
+        break;
     }
   };
 
@@ -8529,6 +8554,19 @@ window.showLocalStorageOnScreen = callManager.showLocalStorageOnScreen;
 window.toggleIncomingCamera = callManager.toggleIncomingCamera;
 window.toggleScreenShare = callManager.toggleScreenShare;
 window.toggleShareFit = callManager.toggleShareFit;
+
+// ===== RÉUNIONS PLANIFIÉES : fonctions globales =====
+window.showMeetingCreateView = callManager.showMeetingCreateView;
+window.closeMeetingCreateView = callManager.closeMeetingCreateView;
+window.selectMeetingType = callManager.selectMeetingType;
+window.confirmCreateMeeting = callManager.confirmCreateMeeting;
+window.closeMeetingCreatedView = callManager.closeMeetingCreatedView;
+window.copyMeetingCode = callManager.copyMeetingCode;
+window.shareMeetingLink = callManager.shareMeetingLink;
+window.joinMeetingFromCreated = callManager.joinMeetingFromCreated;
+window.showMeetingJoinView = callManager.showMeetingJoinView;
+window.closeMeetingJoinView = callManager.closeMeetingJoinView;
+window.confirmJoinMeeting = callManager.confirmJoinMeeting;
 
 // Helpers écran d'accueil (index.html)
 window.copyMyId = () => {

@@ -920,8 +920,8 @@ class MeetingManager {
     // Persister dans Firestore
     await db.collection("meetings").doc(meetingId).set(meeting);
 
-    // Programmer la transition scheduled→live automatique
-    this._scheduleMeetingTransition(meetingId, scheduledAt);
+    // ❌ PLUS de transition automatique - la salle sera créée quand le premier participant rejoint
+    // C'est le comportement de Google Meet et Zoom : le premier participant "démarre" la réunion
 
     console.log(`📅 Réunion créée : ${meetingId} (${code}) pour ${scheduledAt}`);
     return meeting;
@@ -1007,12 +1007,35 @@ class MeetingManager {
     // Dans la fenêtre d'accès : ouvrir ou utiliser la salle live
     if (meeting.status === "scheduled") {
       // Transition scheduled → live : créer la salle RoomManager
-      const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
-
-      // Mettre à jour Firestore
-      await db.collection("meetings").doc(meeting.id).update({
-        status: "live",
-        roomId: room.roomId,
+      // Utiliser une transaction pour éviter que plusieurs personnes ne créent plusieurs salles
+      const roomRef = db.collection("meetings").doc(meeting.id);
+      
+      let room;
+      await db.runTransaction(async (transaction) => {
+        const freshMeeting = await transaction.get(roomRef);
+        if (!freshMeeting.exists) {
+          throw "Réunion introuvable";
+        }
+        
+        const freshData = freshMeeting.data();
+        
+        // Si quelqu'un d'autre a déjà créé la salle, l'utiliser
+        if (freshData.status === "live" && freshData.roomId) {
+          const existingRoom = roomManager.rooms.get(freshData.roomId);
+          if (existingRoom) {
+            room = existingRoom;
+            return;
+          }
+        }
+        
+        // Sinon, créer la salle
+        room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
+        
+        // Mettre à jour Firestore dans la transaction
+        transaction.update(roomRef, {
+          status: "live",
+          roomId: room.roomId,
+        });
       });
 
       // Annuler le timer de transition automatique (déjà fait manuellement)
@@ -1156,28 +1179,15 @@ class MeetingManager {
    *   PROGRAMMER LA TRANSITION SCHEDULED→LIVE
    * =========================================================
    *
-   * Programme un timer pour passer automatiquement la réunion à live
-   * à l'heure programmée
+   * ❌ PLUS UTILISÉ - La salle est créée quand le premier participant rejoint
+   * (comportement Google Meet/Zoom)
    *
    * @param {string} meetingId - ID de la réunion
    * @param {number} scheduledAt - Timestamp de l'heure programmée
    */
   _scheduleMeetingTransition(meetingId, scheduledAt) {
-    const now = Date.now();
-    const delay = scheduledAt - now;
-
-    if (delay <= 0) {
-      // L'heure est déjà passée, transition immédiate
-      this._transitionToLive(meetingId);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this._transitionToLive(meetingId);
-    }, delay);
-
-    this.scheduleTimers.set(meetingId, timer);
-    console.log(`⏰ Timer programmé pour réunion ${meetingId} dans ${delay}ms`);
+    // Plus de transition automatique
+    console.log(`ℹ️ Réunion ${meetingId} : pas de transition automatique (salle créée au premier join)`);
   }
 
   /**
@@ -1185,43 +1195,13 @@ class MeetingManager {
    *   TRANSITION AUTOMATIQUE SCHEDULED→LIVE
    * =========================================================
    *
-   * Passe une réunion de scheduled à live automatiquement
+   * ❌ PLUS UTILISÉ - La salle est créée dans join() quand le premier participant arrive
    *
    * @param {string} meetingId - ID de la réunion
    */
   async _transitionToLive(meetingId) {
-    try {
-      const doc = await db.collection("meetings").doc(meetingId).get();
-
-      if (!doc.exists) {
-        console.warn(`⚠️ Réunion ${meetingId} introuvable pour transition`);
-        return;
-      }
-
-      const meeting = doc.data();
-
-      // Ne pas transitionner si déjà live/ended/cancelled
-      if (meeting.status !== "scheduled") {
-        console.log(`ℹ️ Réunion ${meetingId} déjà ${meeting.status}, pas de transition`);
-        return;
-      }
-
-      // Créer la salle live
-      const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
-
-      // Mettre à jour Firestore
-      await db.collection("meetings").doc(meetingId).update({
-        status: "live",
-        roomId: room.roomId,
-      });
-
-      console.log(`📅 Réunion ${meetingId} passée automatiquement à live (salle ${room.roomId})`);
-    } catch (error) {
-      console.error(`❌ Erreur transition réunion ${meetingId}:`, error);
-    } finally {
-      // Nettoyer le timer
-      this.scheduleTimers.delete(meetingId);
-    }
+    // Plus utilisé
+    console.log(`ℹ️ _transitionToLive appelé mais plus utilisé`);
   }
 
   /**

@@ -15,6 +15,12 @@ CallManager.prototype.handleMeetingCreated = function(data) {
   this.showMeetingCreatedView(data);
 };
 
+CallManager.prototype.handleMeetingLiveReady = function(data) {
+  console.log("📅 [MEETING] Réunion maintenant live:", data);
+  // Plus besoin de rejoindre automatiquement - le créateur rejoint comme les autres
+  // en utilisant son code ou lien
+};
+
 CallManager.prototype.handleMeetingJoined = function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
   this.closeMeetingWaitingView();
@@ -55,26 +61,32 @@ CallManager.prototype.handleMeetingList = function(data) {
 // ===== MÉTHODES DE RÉUNION =====
 
 CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants) {
-  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+  console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
+  
+  // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
+  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  
+  if (!isConnected) {
     // Tenter de connecter automatiquement
     this.showCallToast("Connexion en cours...");
-    this.connectWebSocket();
+    console.log("📅 [MEETING] WebSocket non connecté, tentative de connexion...");
     
-    // Attendre la connexion et réessayer
-    const retryInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        clearInterval(retryInterval);
-        this.createMeeting(title, scheduledAt, durationMin, isVideo, participants);
-      }
-    }, 500);
+    this.connectWebSocket().then(() => {
+      console.log("📅 [MEETING] Connexion terminée, nouvel état wsReadyState:", this.wsReadyState);
+      
+      // Attendre un peu pour s'assurer que la connexion est stable
+      setTimeout(() => {
+        const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+        if (nowConnected) {
+          console.log("📅 [MEETING] WebSocket maintenant connecté, création de réunion");
+          this.createMeeting(title, scheduledAt, durationMin, isVideo, participants);
+        } else {
+          console.error("📅 [MEETING] WebSocket toujours non connecté après tentative");
+          this.showCallToast("Impossible de se connecter au serveur (timeout)");
+        }
+      }, 1000);
+    });
     
-    // Timeout après 10 secondes
-    setTimeout(() => {
-      clearInterval(retryInterval);
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.showCallToast("Impossible de se connecter au serveur");
-      }
-    }, 10000);
     return;
   }
   
@@ -102,26 +114,32 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
 };
 
 CallManager.prototype.joinMeeting = function(code) {
-  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+  console.log("📅 [MEETING] joinMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
+  
+  // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
+  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  
+  if (!isConnected) {
     // Tenter de connecter automatiquement
     this.showCallToast("Connexion en cours...");
-    this.connectWebSocket();
+    console.log("📅 [MEETING] WebSocket non connecté, tentative de connexion...");
     
-    // Attendre la connexion et réessayer
-    const retryInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        clearInterval(retryInterval);
-        this.joinMeeting(code);
-      }
-    }, 500);
+    this.connectWebSocket().then(() => {
+      console.log("📅 [MEETING] Connexion terminée, nouvel état wsReadyState:", this.wsReadyState);
+      
+      // Attendre un peu pour s'assurer que la connexion est stable
+      setTimeout(() => {
+        const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+        if (nowConnected) {
+          console.log("📅 [MEETING] WebSocket maintenant connecté, tentative de rejoindre");
+          this.joinMeeting(code);
+        } else {
+          console.error("📅 [MEETING] WebSocket toujours non connecté après tentative");
+          this.showCallToast("Impossible de se connecter au serveur (timeout)");
+        }
+      }, 1000);
+    });
     
-    // Timeout après 10 secondes
-    setTimeout(() => {
-      clearInterval(retryInterval);
-      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this.showCallToast("Impossible de se connecter au serveur");
-      }
-    }, 10000);
     return;
   }
   
@@ -146,7 +164,8 @@ CallManager.prototype.joinMeeting = function(code) {
 };
 
 CallManager.prototype.cancelMeeting = function(meetingId) {
-  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  if (!isConnected) {
     this.showCallToast("Connexion requise");
     return;
   }
@@ -160,7 +179,8 @@ CallManager.prototype.cancelMeeting = function(meetingId) {
 };
 
 CallManager.prototype.listMeetings = function() {
-  if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  if (!isConnected) {
     this.showCallToast("Connexion requise");
     return;
   }
@@ -390,9 +410,16 @@ CallManager.prototype.showMeetingCreatedView = function(data) {
             <button onclick="window.shareMeetingLink('${data.link}')" 
                     style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px; 
                            color: white; font-size: 16px; font-weight: 500; cursor: pointer; display: flex; 
-                           align-items: center; justify-content: center; gap: 10px;">
+                           align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px;">
               <i class="fa-solid fa-share-nodes"></i>
               Partager
+            </button>
+            <button onclick="window.joinMeetingFromCreated('${data.code}')" 
+                    style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px; 
+                           color: white; font-size: 16px; font-weight: 500; cursor: pointer; display: flex; 
+                           align-items: center; justify-content: center; gap: 10px;">
+              <i class="fa-solid fa-right-to-bracket"></i>
+              Rejoindre maintenant
             </button>
           </div>
         </div>
@@ -443,6 +470,11 @@ CallManager.prototype.shareMeetingLink = function(link) {
   } else {
     prompt("Copiez le lien:", link);
   }
+};
+
+CallManager.prototype.joinMeetingFromCreated = function(code) {
+  this.closeMeetingCreatedView();
+  this.joinMeeting(code);
 };
 
 CallManager.prototype.showMeetingJoinView = function(prefillCode) {
