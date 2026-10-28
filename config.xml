@@ -12,6 +12,44 @@
     </author>
     <content src="index.html" />
 
+    <!-- Deep Links - Android & iOS -->
+    <preference name="AndroidLaunchMode" value="singleTask" />
+
+    <!-- Android: Intent Filters pour deep links -->
+    <platform name="android">
+        <config-file target="AndroidManifest.xml" parent="/manifest/application/activity[@android:name='MainActivity']">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="callapp" />
+                <data android:host="join" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="app-appel.onrender.com" android:pathPrefix="/join" />
+            </intent-filter>
+        </config-file>
+    </platform>
+
+    <!-- iOS: URL Scheme -->
+    <platform name="ios">
+        <config-file target="*-Info.plist" parent="CFBundleURLTypes">
+            <array>
+                <dict>
+                    <key>CFBundleURLSchemes</key>
+                    <array>
+                        <string>callapp</string>
+                    </array>
+                    <key>CFBundleURLName</key>
+                    <string>com.callapp.terminal</string>
+                </dict>
+            </array>
+        </config-file>
+    </platform>
+
     <!-- 1. RÈGLES DE SÉCURITÉ RESEAU (WHITELIST) -->
     <!-- Autorise l'application à communiquer avec n'importe quelle adresse IP/domaine -->
     <access origin="*" />

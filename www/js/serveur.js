@@ -5,6 +5,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 // Imports Firebase Admin v10+ / v11+
 const { initializeApp, cert } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
+const { getFirestore } = require("firebase-admin/firestore");
 
 // Initialisation de Firebase
 // Essayer de lire depuis une variable d'environnement (Render) ou depuis un fichier local
@@ -25,6 +26,9 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 initializeApp({
   credential: cert(serviceAccount),
 });
+
+// Initialisation de Firestore pour la persistance des réunions
+const db = getFirestore();
 
 const app = express();
 
@@ -658,16 +662,17 @@ class RoomManager {
    * =========================================================
    *   FERMER UNE SALLE
    * =========================================================
-   * 
+   *
    * Ferme une salle et notifie tous les participants
-   * 
+   *
    * EFFETS :
    * - Annule tous les timers d'invitation
    * - Notifie tous les participants (y compris LEFT, DECLINED, MISSED)
    * - Supprime la salle de la Map globale
-   * 
+   * - Notifie le MeetingManager si c'est une salle de réunion
+   *
    * MESSAGE : { type: "group-ended", roomId, reason }
-   * 
+   *
    * @param {string} roomId - Identifiant de la salle
    * @param {string} reason - Raison de la fermeture
    */
@@ -702,6 +707,11 @@ class RoomManager {
 
     // Supprimer la salle de la Map globale
     this.rooms.delete(roomId);
+
+    // Notifier le MeetingManager si c'est une salle de réunion
+    if (typeof meetingManager !== 'undefined') {
+      meetingManager.markEndedByRoom(roomId);
+    }
   }
 
   /**
@@ -793,8 +803,466 @@ class RoomManager {
   }
 }
 
+// =========================================================
+// RÉUNIONS PLANIFIÉES — MeetingManager
+// =========================================================
+/**
+ * =========================================================
+ *   GESTION DES RÉUNIONS PLANIFIÉES - SERVEUR
+ * =========================================================
+ *
+ * Classe MeetingManager : Gère les réunions planifiées (type Google Meet)
+ *
+ * ARCHITECTURE :
+ * - Les réunions sont persistées dans Firebase Firestore (collection "meetings")
+ * - À l'heure programmée, la réunion ouvre une salle live via RoomManager
+ * - Les participants rejoignent via un code court unique (ex: ABC-123-XYZ)
+ *
+ * ÉTATS D'UNE RÉUNION :
+ * - scheduled : Réunion programmée, pas encore commencée
+ * - live : Réunion en cours (salle live ouverte)
+ * - ended : Réunion terminée (tous partis ou time-out)
+ * - cancelled : Réunion annulée par l'hôte
+ *
+ * RÈGLES MÉTIER :
+ * - Fenêtre d'accès : 15 minutes avant scheduledAt jusqu'à endsAt
+ * - Host = créateur (seul peut annuler)
+ * - Code unique non devinable (9 caractères alphanumériques)
+ * - MAX participants = 6 (comme les groupes actuels)
+ * - Transition scheduled→live automatique à l'heure ou premier join
+ */
+class MeetingManager {
+  constructor() {
+    // Fenêtre d'accès avant l'heure programmée (15 minutes)
+    this.ACCESS_WINDOW_BEFORE_MS = 15 * 60 * 1000;
+
+    // Code unique déjà utilisés (éviter collisions)
+    this.usedCodes = new Set();
+
+    // Map en RAM pour les timers de transition scheduled→live
+    this.scheduleTimers = new Map();
+  }
+
+  /**
+   * =========================================================
+   *   GÉNÉRER UN CODE COURT UNIQUE
+   * =========================================================
+   *
+   * Génère un code court de 9 caractères (format: XXX-XXX-XXX)
+   * Utilise des caractères alphanumériques majuscules pour éviter les ambiguïtés
+   *
+   * @returns {string} Code unique (ex: "ABC-123-XYZ")
+   */
+  _generateCode() {
+    const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let code;
+    let attempts = 0;
+    const maxAttempts = 100;
+
+    do {
+      code = "";
+      for (let i = 0; i < 9; i++) {
+        if (i === 3 || i === 6) {
+          code += "-";
+        } else {
+          code += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+      }
+      attempts++;
+    } while (this.usedCodes.has(code) && attempts < maxAttempts);
+
+    if (attempts >= maxAttempts) {
+      throw new Error("Impossible de générer un code unique après 100 tentatives");
+    }
+
+    this.usedCodes.add(code);
+    return code;
+  }
+
+  /**
+   * =========================================================
+   *   CRÉER UNE RÉUNION
+   * =========================================================
+   *
+   * Crée une nouvelle réunion planifiée et la persiste dans Firestore
+   *
+   * @param {object} params - Paramètres de la réunion
+   * @param {string} params.title - Titre de la réunion
+   * @param {number} params.scheduledAt - Timestamp de l'heure programmée
+   * @param {number} params.durationMin - Durée en minutes
+   * @param {boolean} params.isVideo - true = vidéo, false = audio
+   * @param {string} params.createdBy - ID du créateur (host)
+   * @param {Array<string>} params.participants - Liste des participants invités
+   * @returns {Promise<object>} Réunion créée avec meetingId, code, link
+   */
+  async create({ title, scheduledAt, durationMin, isVideo, createdBy, participants }) {
+    const meetingId = `meeting_${Date.now()}_${createdBy}`;
+    const code = this._generateCode();
+    const endsAt = scheduledAt + (durationMin * 60 * 1000);
+    const link = `https://app-appel.onrender.com/join/${code}`;
+
+    const meeting = {
+      meetingId,
+      code,
+      title,
+      scheduledAt,
+      durationMin,
+      endsAt,
+      isVideo,
+      createdBy,
+      participants: participants || [],
+      status: "scheduled",
+      roomId: null,
+      createdAt: Date.now(),
+      link,
+    };
+
+    // Persister dans Firestore
+    await db.collection("meetings").doc(meetingId).set(meeting);
+
+    // Programmer la transition scheduled→live automatique
+    this._scheduleMeetingTransition(meetingId, scheduledAt);
+
+    console.log(`📅 Réunion créée : ${meetingId} (${code}) pour ${scheduledAt}`);
+    return meeting;
+  }
+
+  /**
+   * =========================================================
+   *   RÉCUPÉRER UNE RÉUNION PAR CODE
+   * =========================================================
+   *
+   * @param {string} code - Code de la réunion
+   * @returns {Promise<object|null>} Réunion ou null si introuvable
+   */
+  async getByCode(code) {
+    const snapshot = await db.collection("meetings").where("code", "==", code).limit(1).get();
+
+    if (snapshot.empty) {
+      return null;
+    }
+
+    const doc = snapshot.docs[0];
+    return { id: doc.id, ...doc.data() };
+  }
+
+  /**
+   * =========================================================
+   *   REJOINDRE UNE RÉUNION
+   * =========================================================
+   *
+   * Valide l'accès à une réunion et ouvre la salle live si nécessaire
+   *
+   * VALIDATIONS :
+   * - La réunion doit exister
+   * - Statut doit être scheduled ou live
+   * - Doit être dans la fenêtre d'accès (15 min avant → endsAt)
+   *
+   * TRANSITION :
+   * - Si status=scheduled et dans la fenêtre → passer à live, créer salle RoomManager
+   * - Si status=live → retourner roomId existant
+   *
+   * @param {string} code - Code de la réunion
+   * @param {string} userId - ID de l'utilisateur qui rejoint
+   * @returns {Promise<object>} Résultat (waiting, joined, error)
+   */
+  async join(code, userId) {
+    const meeting = await this.getByCode(code);
+
+    if (!meeting) {
+      return { success: false, reason: "Code invalide" };
+    }
+
+    if (meeting.status === "cancelled") {
+      return { success: false, reason: "Réunion annulée" };
+    }
+
+    if (meeting.status === "ended") {
+      return { success: false, reason: "Réunion terminée" };
+    }
+
+    const now = Date.now();
+    const windowStart = meeting.scheduledAt - this.ACCESS_WINDOW_BEFORE_MS;
+
+    // Trop tôt : retourner waiting avec temps restant
+    if (now < windowStart) {
+      const waitTimeMs = windowStart - now;
+      const waitTimeMin = Math.ceil(waitTimeMs / 60000);
+      return {
+        success: false,
+        status: "waiting",
+        reason: "Trop tôt",
+        waitTimeMs,
+        waitTimeMin,
+        scheduledAt: meeting.scheduledAt,
+      };
+    }
+
+    // Trop tard : réunion expirée
+    if (now > meeting.endsAt) {
+      await this._updateStatus(meeting.id, "ended");
+      return { success: false, reason: "Réunion expirée" };
+    }
+
+    // Dans la fenêtre d'accès : ouvrir ou utiliser la salle live
+    if (meeting.status === "scheduled") {
+      // Transition scheduled → live : créer la salle RoomManager
+      const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
+
+      // Mettre à jour Firestore
+      await db.collection("meetings").doc(meeting.id).update({
+        status: "live",
+        roomId: room.roomId,
+      });
+
+      // Annuler le timer de transition automatique (déjà fait manuellement)
+      const timer = this.scheduleTimers.get(meeting.id);
+      if (timer) {
+        clearTimeout(timer);
+        this.scheduleTimers.delete(meeting.id);
+      }
+
+      console.log(`📅 Réunion ${meeting.id} passée à live (salle ${room.roomId})`);
+
+      return {
+        success: true,
+        meetingId: meeting.id,
+        roomId: room.roomId,
+        isVideo: meeting.isVideo,
+        title: meeting.title,
+      };
+    }
+
+    // Status déjà live : retourner roomId existant
+    if (meeting.status === "live" && meeting.roomId) {
+      return {
+        success: true,
+        meetingId: meeting.id,
+        roomId: meeting.roomId,
+        isVideo: meeting.isVideo,
+        title: meeting.title,
+      };
+    }
+
+    return { success: false, reason: "État invalide" };
+  }
+
+  /**
+   * =========================================================
+   *   ANNULER UNE RÉUNION
+   * =========================================================
+   *
+   * Annule une réunion (réservé à l'hôte)
+   *
+   * @param {string} meetingId - ID de la réunion
+   * @param {string} userId - ID de l'utilisateur qui demande l'annulation
+   * @returns {Promise<object>} Résultat
+   */
+  async cancel(meetingId, userId) {
+    const doc = await db.collection("meetings").doc(meetingId).get();
+
+    if (!doc.exists) {
+      return { success: false, reason: "Réunion introuvable" };
+    }
+
+    const meeting = doc.data();
+
+    // Vérifier que l'utilisateur est l'hôte
+    if (meeting.createdBy !== userId) {
+      return { success: false, reason: "Non autorisé (seul l'hôte peut annuler)" };
+    }
+
+    // Vérifier que la réunion n'est pas déjà terminée
+    if (meeting.status === "ended" || meeting.status === "cancelled") {
+      return { success: false, reason: "Réunion déjà terminée" };
+    }
+
+    // Annuler le timer de transition si existant
+    const timer = this.scheduleTimers.get(meetingId);
+    if (timer) {
+      clearTimeout(timer);
+      this.scheduleTimers.delete(meetingId);
+    }
+
+    // Fermer la salle live si elle existe
+    if (meeting.status === "live" && meeting.roomId) {
+      roomManager.closeRoom(meeting.roomId, "Réunion annulée");
+    }
+
+    // Mettre à jour Firestore
+    await db.collection("meetings").doc(meetingId).update({
+      status: "cancelled",
+    });
+
+    console.log(`📅 Réunion ${meetingId} annulée par ${userId}`);
+    return { success: true };
+  }
+
+  /**
+   * =========================================================
+   *   LISTER LES RÉUNIONS D'UN UTILISATEUR
+   * =========================================================
+   *
+   * @param {string} userId - ID de l'utilisateur
+   * @returns {Promise<Array>} Liste des réunions (à venir et passées)
+   */
+  async listForUser(userId) {
+    const now = Date.now();
+
+    // Réunions créées par l'utilisateur
+    const createdSnapshot = await db
+      .collection("meetings")
+      .where("createdBy", "==", userId)
+      .orderBy("scheduledAt", "desc")
+      .get();
+
+    // Réunions où l'utilisateur est participant
+    const participatedSnapshot = await db
+      .collection("meetings")
+      .where("participants", "array-contains", userId)
+      .orderBy("scheduledAt", "desc")
+      .get();
+
+    const meetings = new Map();
+
+    // Fusionner les résultats (éviter les doublons)
+    createdSnapshot.forEach((doc) => {
+      meetings.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+
+    participatedSnapshot.forEach((doc) => {
+      if (!meetings.has(doc.id)) {
+        meetings.set(doc.id, { id: doc.id, ...doc.data() });
+      }
+    });
+
+    // Séparer en à venir et passées
+    const upcoming = [];
+    const past = [];
+
+    for (const meeting of meetings.values()) {
+      if (meeting.scheduledAt > now && meeting.status !== "cancelled" && meeting.status !== "ended") {
+        upcoming.push(meeting);
+      } else {
+        past.push(meeting);
+      }
+    }
+
+    return { upcoming, past };
+  }
+
+  /**
+   * =========================================================
+   *   PROGRAMMER LA TRANSITION SCHEDULED→LIVE
+   * =========================================================
+   *
+   * Programme un timer pour passer automatiquement la réunion à live
+   * à l'heure programmée
+   *
+   * @param {string} meetingId - ID de la réunion
+   * @param {number} scheduledAt - Timestamp de l'heure programmée
+   */
+  _scheduleMeetingTransition(meetingId, scheduledAt) {
+    const now = Date.now();
+    const delay = scheduledAt - now;
+
+    if (delay <= 0) {
+      // L'heure est déjà passée, transition immédiate
+      this._transitionToLive(meetingId);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this._transitionToLive(meetingId);
+    }, delay);
+
+    this.scheduleTimers.set(meetingId, timer);
+    console.log(`⏰ Timer programmé pour réunion ${meetingId} dans ${delay}ms`);
+  }
+
+  /**
+   * =========================================================
+   *   TRANSITION AUTOMATIQUE SCHEDULED→LIVE
+   * =========================================================
+   *
+   * Passe une réunion de scheduled à live automatiquement
+   *
+   * @param {string} meetingId - ID de la réunion
+   */
+  async _transitionToLive(meetingId) {
+    try {
+      const doc = await db.collection("meetings").doc(meetingId).get();
+
+      if (!doc.exists) {
+        console.warn(`⚠️ Réunion ${meetingId} introuvable pour transition`);
+        return;
+      }
+
+      const meeting = doc.data();
+
+      // Ne pas transitionner si déjà live/ended/cancelled
+      if (meeting.status !== "scheduled") {
+        console.log(`ℹ️ Réunion ${meetingId} déjà ${meeting.status}, pas de transition`);
+        return;
+      }
+
+      // Créer la salle live
+      const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
+
+      // Mettre à jour Firestore
+      await db.collection("meetings").doc(meetingId).update({
+        status: "live",
+        roomId: room.roomId,
+      });
+
+      console.log(`📅 Réunion ${meetingId} passée automatiquement à live (salle ${room.roomId})`);
+    } catch (error) {
+      console.error(`❌ Erreur transition réunion ${meetingId}:`, error);
+    } finally {
+      // Nettoyer le timer
+      this.scheduleTimers.delete(meetingId);
+    }
+  }
+
+  /**
+   * =========================================================
+   *   METTRE À JOUR LE STATUT D'UNE RÉUNION
+   * =========================================================
+   *
+   * @param {string} meetingId - ID de la réunion
+   * @param {string} status - Nouveau statut
+   */
+  async _updateStatus(meetingId, status) {
+    await db.collection("meetings").doc(meetingId).update({ status });
+  }
+
+  /**
+   * =========================================================
+   *   MARQUER UNE RÉUNION COMME TERMINÉE
+   * =========================================================
+   *
+   * Appelé quand la salle live est fermée (plus de participants)
+   *
+   * @param {string} roomId - ID de la salle live
+   */
+  async markEndedByRoom(roomId) {
+    const snapshot = await db.collection("meetings").where("roomId", "==", roomId).limit(1).get();
+
+    if (!snapshot.empty) {
+      const doc = snapshot.docs[0];
+      await db.collection("meetings").doc(doc.id).update({
+        status: "ended",
+      });
+      console.log(`📅 Réunion ${doc.id} marquée ended (salle ${roomId} fermée)`);
+    }
+  }
+}
+
 // Instance globale du RoomManager
 const roomManager = new RoomManager();
+
+// Instance globale du MeetingManager
+const meetingManager = new MeetingManager();
 
 app.get("/", (req, res) => {
   res.send("Serveur WebSocket actif");
@@ -1546,6 +2014,257 @@ wss.on("connection", (ws) => {
               roomId,
               from: ws.userId,
               payload,
+            }),
+          );
+        }
+        return;
+      }
+
+      // =========================================================
+      // RÉUNIONS PLANIFIÉES — Gestion des messages meeting-*
+      // =========================================================
+
+      // 16. Créer une réunion planifiée
+      // Envoyé par : Utilisateur -> Reçu par : Utilisateur (confirmation)
+      // Pourquoi : Créer une réunion planifiée avec un code partageable
+      if (type === "meeting-create") {
+        try {
+          const { title, scheduledAt, durationMin, isVideo, participants } = data;
+
+          console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"}`);
+
+          if (!ws.userId) {
+            console.error(`[MEETING] meeting-create refusé : utilisateur non enregistré`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Non enregistré",
+              }),
+            );
+            return;
+          }
+
+          // Valider les champs obligatoires
+          if (!title || !scheduledAt || !durationMin) {
+            console.error(`[MEETING] meeting-create refusé : champs manquants`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Champs manquants (title, scheduledAt, durationMin)",
+              }),
+            );
+            return;
+          }
+
+          // Créer la réunion
+          const meeting = await meetingManager.create({
+            title,
+            scheduledAt,
+            durationMin,
+            isVideo: !!isVideo,
+            createdBy: ws.userId,
+            participants: participants || [],
+          });
+
+          ws.send(
+            JSON.stringify({
+              type: "meeting-created",
+              meetingId: meeting.meetingId,
+              code: meeting.code,
+              link: meeting.link,
+              title: meeting.title,
+              scheduledAt: meeting.scheduledAt,
+              endsAt: meeting.endsAt,
+              isVideo: meeting.isVideo,
+            }),
+          );
+          console.log(`[MEETING] meeting-created envoyé à ${ws.userId}`);
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-create :`, error);
+          ws.send(
+            JSON.stringify({
+              type: "meeting-error",
+              reason: error.message || "Erreur serveur",
+            }),
+          );
+        }
+        return;
+      }
+
+      // 17. Rejoindre une réunion par code
+      // Envoyé par : Utilisateur -> Reçu par : Utilisateur (waiting/joined/error)
+      // Pourquoi : Rejoindre une réunion planifiée via son code
+      if (type === "meeting-join") {
+        try {
+          const { code } = data;
+
+          console.log(`[MEETING] meeting-join reçu de ${ws.userId || "?"} pour code ${code}`);
+
+          if (!ws.userId) {
+            console.error(`[MEETING] meeting-join refusé : utilisateur non enregistré`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Non enregistré",
+              }),
+            );
+            return;
+          }
+
+          if (!code) {
+            console.error(`[MEETING] meeting-join refusé : code manquant`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Code manquant",
+              }),
+            );
+            return;
+          }
+
+          const result = await meetingManager.join(code, ws.userId);
+
+          if (result.success) {
+            // Réunion live : retourner roomId pour enchaîner sur group-join
+            ws.send(
+              JSON.stringify({
+                type: "meeting-joined",
+                meetingId: result.meetingId,
+                roomId: result.roomId,
+                isVideo: result.isVideo,
+                title: result.title,
+              }),
+            );
+            console.log(`[MEETING] meeting-joined envoyé à ${ws.userId} (salle ${result.roomId})`);
+          } else if (result.status === "waiting") {
+            // Trop tôt : afficher compte à rebours
+            ws.send(
+              JSON.stringify({
+                type: "meeting-waiting",
+                waitTimeMs: result.waitTimeMs,
+                waitTimeMin: result.waitTimeMin,
+                scheduledAt: result.scheduledAt,
+              }),
+            );
+            console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
+          } else {
+            // Erreur (code invalide, expiré, etc.)
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: result.reason,
+              }),
+            );
+            console.log(`[MEETING] meeting-error envoyé à ${ws.userId} (${result.reason})`);
+          }
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-join :`, error);
+          ws.send(
+            JSON.stringify({
+              type: "meeting-error",
+              reason: error.message || "Erreur serveur",
+            }),
+          );
+        }
+        return;
+      }
+
+      // 18. Annuler une réunion
+      // Envoyé par : Host -> Reçu par : Host (confirmation)
+      // Pourquoi : Annuler une réunion planifiée (réservé à l'hôte)
+      if (type === "meeting-cancel") {
+        try {
+          const { meetingId } = data;
+
+          console.log(`[MEETING] meeting-cancel reçu de ${ws.userId || "?"} pour ${meetingId}`);
+
+          if (!ws.userId) {
+            console.error(`[MEETING] meeting-cancel refusé : utilisateur non enregistré`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Non enregistré",
+              }),
+            );
+            return;
+          }
+
+          if (!meetingId) {
+            console.error(`[MEETING] meeting-cancel refusé : meetingId manquant`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "meetingId manquant",
+              }),
+            );
+            return;
+          }
+
+          const result = await meetingManager.cancel(meetingId, ws.userId);
+
+          if (result.success) {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-cancelled",
+                meetingId,
+              }),
+            );
+            console.log(`[MEETING] meeting-cancelled envoyé à ${ws.userId}`);
+          } else {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: result.reason,
+              }),
+            );
+            console.log(`[MEETING] meeting-error envoyé à ${ws.userId} (${result.reason})`);
+          }
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-cancel :`, error);
+          ws.send(
+            JSON.stringify({
+              type: "meeting-error",
+              reason: error.message || "Erreur serveur",
+            }),
+          );
+        }
+        return;
+      }
+
+      // 19. Lister les réunions d'un utilisateur
+      // Envoyé par : Utilisateur -> Reçu par : Utilisateur (liste)
+      // Pourquoi : Récupérer les réunions à venir et passées
+      if (type === "meeting-list") {
+        try {
+          console.log(`[MEETING] meeting-list reçu de ${ws.userId || "?"}`);
+
+          if (!ws.userId) {
+            console.error(`[MEETING] meeting-list refusé : utilisateur non enregistré`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Non enregistré",
+              }),
+            );
+            return;
+          }
+
+          const { upcoming, past } = await meetingManager.listForUser(ws.userId);
+
+          ws.send(
+            JSON.stringify({
+              type: "meeting-list",
+              upcoming,
+              past,
+            }),
+          );
+          console.log(`[MEETING] meeting-list envoyé à ${ws.userId} (${upcoming.length} à venir, ${past.length} passées)`);
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-list :`, error);
+          ws.send(
+            JSON.stringify({
+              type: "meeting-error",
+              reason: error.message || "Erreur serveur",
             }),
           );
         }
