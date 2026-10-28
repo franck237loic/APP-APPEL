@@ -7277,7 +7277,13 @@ showLocalStorageOnScreen = () => {
 
   // Si on est le dernier dans l'appel (plus personne ne sonne), on quitte
   // après un court délai, comme WhatsApp.
+  // EXCEPTION : Pour les réunions planifiées (groupIsMeeting), on ne quitte pas
   checkGroupAlone = () => {
+    // Ne pas quitter si c'est une réunion planifiée (le créateur peut attendre)
+    if (this.groupIsMeeting) {
+      return;
+    }
+    
     const others = this.groupRoster.filter(
       (r) => r.userId !== this.myId && (r.state === "JOINED" || r.state === "RINGING"),
     );
@@ -8324,6 +8330,7 @@ showLocalStorageOnScreen = () => {
     this.groupEverHadPeer = false;
     this.groupAcceptInProgress = false;
     this._groupSwitching = false;
+    this.groupIsMeeting = false; // Réinitialiser le flag de réunion planifiée
     this.stopVibration();
   };
 

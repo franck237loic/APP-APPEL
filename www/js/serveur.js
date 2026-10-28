@@ -1024,18 +1024,23 @@ class MeetingManager {
           const existingRoom = roomManager.rooms.get(freshData.roomId);
           if (existingRoom) {
             room = existingRoom;
+            console.log(`📅 Salle existante réutilisée: ${freshData.roomId}`);
             return;
           }
         }
         
         // Sinon, créer la salle
         room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
+        console.log(`📅 Nouvelle salle créée: ${room.roomId} par ${meeting.createdBy}, participants JOINED: ${roomManager.countJoined(room.roomId)}`);
         
         // Mettre à jour Firestore dans la transaction
         transaction.update(roomRef, {
           status: "live",
           roomId: room.roomId,
         });
+      }).catch((error) => {
+        console.error(`❌ Erreur transaction Firestore:`, error);
+        throw error;
       });
 
       // Annuler le timer de transition automatique (déjà fait manuellement)

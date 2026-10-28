@@ -25,6 +25,12 @@ CallManager.prototype.handleMeetingJoined = function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
   this.closeMeetingWaitingView();
   
+  // Marquer que c'est une réunion planifiée pour désactiver le timer "alone grace"
+  this.groupIsMeeting = true;
+  
+  // Préparer le roster temporaire
+  this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
+  
   // Enchaîner sur l'appel de groupe existant
   this.sendSignal({
     type: "group-join",
@@ -33,7 +39,7 @@ CallManager.prototype.handleMeetingJoined = function(data) {
   
   this.groupRoomId = data.roomId;
   this.groupIsVideo = data.isVideo;
-  this.showGroupView();
+  this.showGroupScreen();
 };
 
 CallManager.prototype.handleMeetingWaiting = function(data) {
