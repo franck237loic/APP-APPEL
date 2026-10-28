@@ -2057,28 +2057,29 @@ wss.on("connection", (ws) => {
           }
 
           // Créer la réunion
-          const meeting = await meetingManager.create({
-            title,
-            scheduledAt,
-            durationMin,
-            isVideo: !!isVideo,
-            createdBy: ws.userId,
-            participants: participants || [],
-          });
+        const meeting = await meetingManager.create({
+          title,
+          scheduledAt,
+          durationMin,
+          isVideo: !!isVideo,
+          createdBy: ws.userId,
+          participants: participants || [],
+        });
 
-          ws.send(
-            JSON.stringify({
-              type: "meeting-created",
-              meetingId: meeting.meetingId,
-              code: meeting.code,
-              link: meeting.link,
-              title: meeting.title,
-              scheduledAt: meeting.scheduledAt,
-              endsAt: meeting.endsAt,
-              isVideo: meeting.isVideo,
-            }),
-          );
-          console.log(`[MEETING] meeting-created envoyé à ${ws.userId}`);
+        ws.send(
+          JSON.stringify({
+            type: "meeting-created",
+            meetingId: meeting.meetingId,
+            code: meeting.code,
+            link: meeting.link,
+            title: meeting.title,
+            scheduledAt: meeting.scheduledAt,
+            endsAt: meeting.endsAt,
+            durationMin: meeting.durationMin,  // ← ici, dans l’objet
+            isVideo: meeting.isVideo,
+          }),
+        );
+        console.log(`[MEETING] meeting-created envoyé à ${ws.userId}`);
         } catch (error) {
           console.error(`[MEETING] Erreur dans meeting-create :`, error);
           ws.send(
