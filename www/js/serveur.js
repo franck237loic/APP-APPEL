@@ -948,6 +948,74 @@ class MeetingManager {
 
   /**
    * =========================================================
+   *   DÉMARRER FORCÉMENT UNE RÉUNION (CRÉATEUR)
+   * =========================================================
+   *
+   * Permet au créateur de démarrer la réunion avant l'heure programmée
+   * (comme Google Meet)
+   *
+   * IMPORTANT : Recalculate endsAt = now + duration (Google Meet behaviour)
+   *
+   * @param {string} code - Code de la réunion
+   * @param {string} userId - ID du créateur
+   * @returns {Promise<object>} Résultat
+   */
+  async forceStart(code, userId) {
+    const meeting = await this.getByCode(code);
+
+    if (!meeting) {
+      return { success: false, reason: "Code invalide" };
+    }
+
+    if (meeting.createdBy !== userId) {
+      return { success: false, reason: "Non autorisé" };
+    }
+
+    if (meeting.status === "cancelled") {
+      return { success: false, reason: "Réunion annulée" };
+    }
+
+    if (meeting.status === "ended") {
+      return { success: false, reason: "Réunion terminée" };
+    }
+
+    if (meeting.status === "live" && meeting.roomId) {
+      // Déjà live, retourner la salle existante
+      return {
+        success: true,
+        meetingId: meeting.id,
+        roomId: meeting.roomId,
+        isVideo: meeting.isVideo,
+        title: meeting.title,
+      };
+    }
+
+    // Recalculer endsAt = maintenant + durée (comportement Google Meet)
+    const newEndsAt = Date.now() + (meeting.durationMin * 60 * 1000);
+
+    // Créer la salle live immédiatement
+    const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
+
+    // Mettre à jour Firestore avec le nouveau endsAt
+    await db.collection("meetings").doc(meeting.id).update({
+      status: "live",
+      roomId: room.roomId,
+      endsAt: newEndsAt,
+    });
+
+    console.log(`📅 Réunion ${meeting.id} démarrée manuellement (salle ${room.roomId}), fin à ${new Date(newEndsAt).toISOString()}`);
+
+    return {
+      success: true,
+      meetingId: meeting.id,
+      roomId: room.roomId,
+      isVideo: meeting.isVideo,
+      title: meeting.title,
+    };
+  }
+
+  /**
+   * =========================================================
    *   REJOINDRE UNE RÉUNION
    * =========================================================
    *
@@ -2077,7 +2145,94 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      // 17. Rejoindre une réunion par code
+      // 17. Démarrer une réunion (créateur)
+      // Envoyé par : Créateur -> Reçu par : Créateur (joined)
+      // Pourquoi : Le créateur démarre la réunion avant l'heure programmée
+      if (type === "meeting-start") {
+        try {
+          const { code } = data;
+
+          console.log(`[MEETING] meeting-start reçu de ${ws.userId || "?"} pour code ${code}`);
+
+          if (!ws.userId) {
+            console.error(`[MEETING] meeting-start refusé : utilisateur non enregistré`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Non enregistré",
+              }),
+            );
+            return;
+          }
+
+          if (!code) {
+            console.error(`[MEETING] meeting-start refusé : code manquant`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Code manquant",
+              }),
+            );
+            return;
+          }
+
+          // Vérifier que l'utilisateur est bien le créateur
+          const meeting = await meetingManager.getByCode(code);
+          if (!meeting) {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Code invalide",
+              }),
+            );
+            return;
+          }
+
+          if (meeting.createdBy !== ws.userId) {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Seul le créateur peut démarrer la réunion",
+              }),
+            );
+            return;
+          }
+
+          // Force le démarrage de la réunion (ignorer l'heure programmée)
+          const result = await meetingManager.forceStart(code, ws.userId);
+
+          if (result.success) {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-joined",
+                meetingId: result.meetingId,
+                roomId: result.roomId,
+                isVideo: result.isVideo,
+                title: result.title,
+              }),
+            );
+            console.log(`[MEETING] meeting-start réussi, salle ${result.roomId} créée`);
+          } else {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: result.reason,
+              }),
+            );
+          }
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-start :`, error);
+          ws.send(
+            JSON.stringify({
+              type: "meeting-error",
+              reason: error.message || "Erreur serveur",
+            }),
+          );
+        }
+        return;
+      }
+
+      // 18. Rejoindre une réunion par code
       // Envoyé par : Utilisateur -> Reçu par : Utilisateur (waiting/joined/error)
       // Pourquoi : Rejoindre une réunion planifiée via son code
       if (type === "meeting-join") {

@@ -420,12 +420,12 @@ CallManager.prototype.showMeetingCreatedView = function(data) {
               <i class="fa-solid fa-share-nodes"></i>
               Partager
             </button>
-            <button onclick="window.joinMeetingFromCreated('${data.code}')" 
+            <button onclick="window.startMeetingFromCreated('${data.code}')" 
                     style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px; 
                            color: white; font-size: 16px; font-weight: 500; cursor: pointer; display: flex; 
                            align-items: center; justify-content: center; gap: 10px;">
-              <i class="fa-solid fa-right-to-bracket"></i>
-              Rejoindre maintenant
+              <i class="fa-solid fa-play"></i>
+              Commencer
             </button>
           </div>
         </div>
@@ -478,9 +478,33 @@ CallManager.prototype.shareMeetingLink = function(link) {
   }
 };
 
-CallManager.prototype.joinMeetingFromCreated = function(code) {
+CallManager.prototype.startMeetingFromCreated = function(code) {
   this.closeMeetingCreatedView();
-  this.joinMeeting(code);
+  this.startMeeting(code);
+};
+
+CallManager.prototype.startMeeting = function(code) {
+  console.log("📅 [MEETING] startMeeting appelé pour code:", code);
+  
+  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  if (!isConnected) {
+    this.showCallToast("Connexion requise");
+    return;
+  }
+  
+  if (!code || code.trim().length === 0) {
+    this.showCallToast("Code requis");
+    return;
+  }
+  
+  const cleanCode = code.trim().toUpperCase();
+  
+  this.sendSignal({
+    type: "meeting-start",
+    code: cleanCode,
+  });
+  
+  console.log("📅 [MEETING] Demande de démarrage de réunion envoyée pour code:", cleanCode);
 };
 
 CallManager.prototype.showMeetingJoinView = function(prefillCode) {
