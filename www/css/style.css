@@ -99,6 +99,22 @@ button:disabled {
     color: white;
 }
 
+/* Style WhatsApp : bouton "Rejoindre l'appel" */
+.btn-rejoin-group {
+    background-color: #25D366; /* Couleur WhatsApp */
+    margin-top: 8px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
 #btn-copy {
     background-color: #3a86ff;
     color: white;

@@ -1858,6 +1858,11 @@ button, [role="button"] { cursor: pointer; }
     this.remoteScreenSharing = false; // l'interlocuteur (1-à-1) partage son écran
     this.shareFillMode = false;       // récepteur : false = écran entier (contain), true = remplir (cover)
 
+    // Style WhatsApp : sauvegarder l'appel de groupe pour permettre de revenir
+    this.leftGroupRoomId = null;      // ID de la salle qu'on a quittée
+    this.leftGroupIsVideo = false;    // Type d'appel (audio/vidéo)
+    this.leftGroupParticipants = 0;   // Nombre de participants actuels
+
     this.mountUI();
     this.interfaceReceiver = document.getElementById("interface-2");
     this.interfaceSender = document.getElementById("interface-1");
@@ -2074,6 +2079,9 @@ button, [role="button"] { cursor: pointer; }
       // si myId n'est pas déjà défini.
       if (!this.myId) this.initializeUserId();
       this.initPushNotifications();
+
+      // Style WhatsApp : restaurer le bouton "Rejoindre l'appel" si on a quitté un appel
+      setTimeout(() => this.showRejoinGroupButton(), 1000);
 
       const idElement = document.getElementById("my-id-display");
       if (idElement) idElement.innerText = this.myId;
@@ -3002,6 +3010,10 @@ button, [role="button"] { cursor: pointer; }
       alert("Un appel de groupe est déjà en cours.");
       return;
     }
+
+    // Style WhatsApp : masquer le bouton "Rejoindre l'appel" quand on lance un nouvel appel
+    this.clearRejoinGroupInfo();
+
     // GROUPE : plusieurs IDs saisis (séparés par virgule/espace) -> appel de groupe
     const groupIds = this.parseGroupIds(targetId);
     if (groupIds.length > 1) {
@@ -6451,7 +6463,7 @@ showLocalStorageOnScreen = () => {
      fonctionnement.  
   ========================================================= */
 
-  static GROUP_MAX_PARTICIPANTS = 6; // Maximum de participants (vous inclus) - limite du maillage WebRTC
+  static GROUP_MAX_PARTICIPANTS = 15; // Maximum de participants (vous inclus) - limite du maillage WebRTC
   static GROUP_INVITE_TIMEOUT_MS = 45000; // Délai d'expiration d'une invitation (45s) - identique au serveur
   static GROUP_ALONE_GRACE_MS = 6000; // Délai de grâce avant de quitter un appel où l'on est seul (6s)
   static GROUP_REQUEST_TIMEOUT_MS = 12000; // Délai maximum pour créer ou rejoindre une salle (12s)
@@ -6836,6 +6848,9 @@ showLocalStorageOnScreen = () => {
       return;
     }
 
+    // Style WhatsApp : masquer le bouton "Rejoindre l'appel" quand on lance un nouvel appel
+    this.clearRejoinGroupInfo();
+
     this.groupIsVideo = !!video;
     this.groupCreating = true;
     this.groupIsLeaving = false;
@@ -7007,6 +7022,9 @@ showLocalStorageOnScreen = () => {
       this.groupRoster = [{ userId: this.myId, state: "JOINED" }, ...known];
       this.groupPendingInvite = null;
 
+      // Style WhatsApp : masquer le bouton "Rejoindre l'appel" quand on rejoint un appel
+      this.clearRejoinGroupInfo();
+
       this.showGroupScreen();
       this.sendSignal({ type: "group-join", roomId: inv.roomId });
 
@@ -7112,12 +7130,33 @@ showLocalStorageOnScreen = () => {
         this.handleGroupInvite(data);
         break;
 
-      // Réponse à group-get-info (ouverture via notification).
+      // Réponse à group-get-info (ouverture via notification ou bouton "Rejoindre").
       case "group-info":
         if (this.groupPendingInvite && this.groupPendingInvite.roomId === data.roomId) {
           this.groupPendingInvite.isVideo = data.isVideo === true || data.isVideo === "true";
           this.groupPendingInvite.roster = data.roster || [];
           this.showGroupIncoming();
+        } else if (this.leftGroupRoomId === data.roomId && this.groupJoinPending) {
+          // Style WhatsApp : rejoin via bouton "Rejoindre l'appel"
+          this.groupIsVideo = data.isVideo === true || data.isVideo === "true";
+          this.groupRoomId = this.leftGroupRoomId;
+
+          // Afficher l'écran de groupe
+          this.showGroupScreen();
+
+          // Envoyer group-join
+          this.sendSignal({ type: "group-join", roomId: this.leftGroupRoomId });
+
+          // Garde-fou : si le serveur ne confirme pas, on abandonne
+          this.groupJoinPending = true;
+          clearTimeout(this.groupRequestTimer);
+          this.groupRequestTimer = setTimeout(() => {
+            if (this.groupJoinPending) {
+              this.finishGroupCall("Impossible de rejoindre l'appel");
+            }
+          }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
+
+          this.clearRejoinGroupInfo();
         }
         break;
 
@@ -7141,6 +7180,8 @@ showLocalStorageOnScreen = () => {
         clearTimeout(this.groupRequestTimer);
         // Pendant une reconnexion on attend "group-joined" pour toucher aux pairs.
         this.applyGroupRoster(data.roster, !this.groupRejoining);
+        // Style WhatsApp : mettre à jour le compteur sur le bouton rejoindre
+        this.updateRejoinButtonParticipantCount();
         break;
 
       // Signalisation WebRTC d'un autre participant.
@@ -7154,6 +7195,10 @@ showLocalStorageOnScreen = () => {
           this.dismissGroupInvite("Appel de groupe terminé");
         } else if (data.roomId === this.groupRoomId) {
           this.finishGroupCall("Appel de groupe terminé");
+        }
+        // Style WhatsApp : masquer le bouton rejoindre si la salle quittée est terminée
+        if (this.leftGroupRoomId === data.roomId) {
+          this.clearRejoinGroupInfo();
         }
         break;
 
@@ -8252,7 +8297,14 @@ showLocalStorageOnScreen = () => {
   // Quitter l'appel : on sort, les autres continuent (comme WhatsApp).
   leaveGroupCall = (message) => {
     this.groupIsLeaving = true;
+
+    // Style WhatsApp : sauvegarder l'info de l'appel pour permettre de revenir
     if (this.groupRoomId) {
+      this.leftGroupRoomId = this.groupRoomId;
+      this.leftGroupIsVideo = this.groupIsVideo;
+      this.leftGroupParticipants = this.groupRoster.filter(r => r.state === "JOINED").length;
+      console.log(`📱 [WHATSAPP] Sauvegarde appel de groupe - roomId: ${this.groupRoomId}, participants: ${this.leftGroupParticipants}`);
+
       this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
     }
     this.finishGroupCall(typeof message === "string" ? message : undefined);
@@ -8260,6 +8312,11 @@ showLocalStorageOnScreen = () => {
 
   // Fin d'appel côté écran : nettoie l'état, ferme les écrans, libère l'audio.
   finishGroupCall = (message) => {
+    // Nettoyer mais PAS leftGroupRoomId (style WhatsApp : garder pour revenir)
+    const savedRoomId = this.leftGroupRoomId;
+    const savedIsVideo = this.leftGroupIsVideo;
+    const savedParticipants = this.leftGroupParticipants;
+
     this.cleanGroupState();
     this.closeInterfaces();
     this.updateStatus("En ligne");
@@ -8276,6 +8333,14 @@ showLocalStorageOnScreen = () => {
       cordova.exec(() => {}, () => {}, "AudioRoutePlugin", "clearRoute", []);
     }
     if (message) this.showCallToast(message);
+
+    // Restaurer les infos de l'appel quitté (style WhatsApp)
+    this.leftGroupRoomId = savedRoomId;
+    this.leftGroupIsVideo = savedIsVideo;
+    this.leftGroupParticipants = savedParticipants;
+
+    // Afficher le bouton "Rejoindre l'appel" sur l'écran d'accueil
+    this.showRejoinGroupButton();
   };
 
   // Remet à zéro TOUT l'état de groupe (aucune minuterie ne reste active).
@@ -8320,6 +8385,7 @@ showLocalStorageOnScreen = () => {
     this.groupRetryCount.clear();
     this.groupPendingInvite = null;
     this.groupSelectedIds = [];
+
     this.groupIsMuted = false;
     this.groupIsCamOff = false;
     this.groupIsFrontCamera = true;
@@ -8332,6 +8398,93 @@ showLocalStorageOnScreen = () => {
     this._groupSwitching = false;
     this.groupIsMeeting = false; // Réinitialiser le flag de réunion planifiée
     this.stopVibration();
+
+    // NE PAS effacer leftGroupRoomId (style WhatsApp : garder pour revenir)
+  };
+
+  /* =========================================================
+     STYLE WHATSAPP : BOUTON "REJOINDRE L'APPEL"
+  ========================================================= */
+
+  // Afficher le bouton "Rejoindre l'appel" sur l'écran d'accueil
+  showRejoinGroupButton = () => {
+    if (!this.leftGroupRoomId) {
+      this.hideRejoinGroupButton();
+      return;
+    }
+
+    const container = document.querySelector(".container");
+    if (!container) return;
+
+    // Supprimer le bouton s'il existe déjà
+    this.hideRejoinGroupButton();
+
+    // Créer le bouton
+    const rejoinBtn = document.createElement("button");
+    rejoinBtn.id = "btn-rejoin-group";
+    rejoinBtn.className = "btn-green btn-rejoin-group";
+    rejoinBtn.innerHTML = `🔙 Rejoindre l'appel (${this.leftGroupParticipants} participants)`;
+    rejoinBtn.onclick = () => this.rejoinGroupCall();
+
+    // Insérer après les boutons d'appel
+    const actionsDiv = container.querySelector(".actions");
+    if (actionsDiv) {
+      actionsDiv.appendChild(rejoinBtn);
+    }
+
+    console.log(`📱 [WHATSAPP] Bouton rejoindre affiché - ${this.leftGroupParticipants} participants`);
+  };
+
+  // Masquer le bouton "Rejoindre l'appel"
+  hideRejoinGroupButton = () => {
+    const btn = document.getElementById("btn-rejoin-group");
+    if (btn) {
+      btn.remove();
+      console.log("📱 [WHATSAPP] Bouton rejoindre masqué");
+    }
+  };
+
+  // Rejoindre l'appel de groupe quitté (style WhatsApp)
+  rejoinGroupCall = async () => {
+    if (!this.leftGroupRoomId) {
+      console.warn("⚠️ [WHATSAPP] Aucun appel de groupe à rejoindre");
+      return;
+    }
+
+    console.log(`📱 [WHATSAPP] Rejoindre l'appel - roomId: ${this.leftGroupRoomId}, isVideo: ${this.leftGroupIsVideo}`);
+
+    // Vérifier si la salle existe encore
+    await this.ensureSocketReady();
+    this.sendSignal({
+      type: "group-get-info",
+      roomId: this.leftGroupRoomId,
+    });
+
+    // Attendre la réponse et rejoindre
+    this.groupJoinPending = true;
+    this.groupIsVideo = this.leftGroupIsVideo;
+    this.updateStatus("Rejoindre l'appel...");
+  };
+
+  // Mettre à jour le nombre de participants sur le bouton (quand on reçoit group-roster)
+  updateRejoinButtonParticipantCount = () => {
+    if (!this.leftGroupRoomId || this.groupRoomId !== this.leftGroupRoomId) return;
+
+    const joinedCount = this.groupRoster.filter(r => r.state === "JOINED").length;
+    this.leftGroupParticipants = joinedCount;
+
+    const btn = document.getElementById("btn-rejoin-group");
+    if (btn) {
+      btn.innerHTML = `🔙 Rejoindre l'appel (${joinedCount} participants)`;
+    }
+  };
+
+  // Nettoyer les infos quand on rejoint vraiment l'appel
+  clearRejoinGroupInfo = () => {
+    this.leftGroupRoomId = null;
+    this.leftGroupIsVideo = false;
+    this.leftGroupParticipants = 0;
+    this.hideRejoinGroupButton();
   };
 
   /* =========================================================
@@ -8575,6 +8728,9 @@ window.startMeeting = callManager.startMeeting;
 window.showMeetingJoinView = callManager.showMeetingJoinView;
 window.closeMeetingJoinView = callManager.closeMeetingJoinView;
 window.confirmJoinMeeting = callManager.confirmJoinMeeting;
+
+// ===== STYLE WHATSAPP : bouton "Rejoindre l'appel" =====
+window.rejoinGroupCall = callManager.rejoinGroupCall;
 
 // Helpers écran d'accueil (index.html)
 window.copyMyId = () => {

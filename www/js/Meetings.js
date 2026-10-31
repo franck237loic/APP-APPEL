@@ -363,67 +363,66 @@ CallManager.prototype.showMeetingCreatedView = function(data) {
           <div style="width: 40px;"></div>
         </div>
         
-        <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 16px;">
-          <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #00a884, #008f6f); 
-                     display: flex; align-items: center; justify-content: center;">
-            <i class="fa-solid fa-calendar-check" style="font-size: 50px; color: white;"></i>
+        <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 15px; padding: 0 16px; overflow-y: auto;">
+          <div style="width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(145deg, #00a884, #008f6f); 
+                     display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+            <i class="fa-solid fa-calendar-check" style="font-size: 35px; color: white;"></i>
           </div>
           
           <div style="text-align: center;">
-            <div style="font-size: 22px; font-weight: 500; color: white; margin-bottom: 8px;">${data.title}</div>
-            <div style="font-size: 14px; color: #8696a0;">
+            <div style="font-size: 18px; font-weight: 500; color: white; margin-bottom: 4px;">${data.title}</div>
+            <div style="font-size: 12px; color: #8696a0;">
               ${new Date(data.scheduledAt).toLocaleString('fr-FR', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
+                weekday: 'short', 
                 day: 'numeric', 
+                month: 'short', 
                 hour: '2-digit', 
                 minute: '2-digit' 
               })}
             </div>
-            <div style="font-size: 14px; color: #8696a0; margin-top: 4px;">
+            <div style="font-size: 12px; color: #8696a0; margin-top: 2px;">
               Durée: ${data.durationMin} min • ${data.isVideo ? 'Vidéo' : 'Audio'}
             </div>
           </div>
           
-          <div style="background: #222d34; padding: 20px; border-radius: 12px; width: 100%; text-align: center;">
-            <div style="font-size: 13px; color: #8696a0; margin-bottom: 8px;">Code de la réunion</div>
-            <div style="font-size: 28px; font-weight: 600; color: #00a884; letter-spacing: 2px; margin-bottom: 12px;">
+          <div style="background: #222d34; padding: 12px; border-radius: 10px; width: 100%; text-align: center;">
+            <div style="font-size: 11px; color: #8696a0; margin-bottom: 6px;">Code de la réunion</div>
+            <div style="font-size: 22px; font-weight: 600; color: #00a884; letter-spacing: 2px; margin-bottom: 8px;">
               ${data.code}
             </div>
             <button onclick="window.copyMeetingCode('${data.code}')" 
-                    style="padding: 10px 20px; background: #374045; border: none; border-radius: 20px; 
-                           color: white; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                    style="padding: 8px 16px; background: #374045; border: none; border-radius: 16px; 
+                           color: white; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
               <i class="fa-solid fa-copy"></i>
-              Copier le code
+              Copier
             </button>
           </div>
           
-          <div style="background: #222d34; padding: 20px; border-radius: 12px; width: 100%; text-align: center;">
-            <div style="font-size: 13px; color: #8696a0; margin-bottom: 8px;">Lien de partage</div>
-            <div style="font-size: 14px; color: white; word-break: break-all; margin-bottom: 12px; padding: 8px; background: #1f2c33; border-radius: 8px;">
+          <div style="background: #222d34; padding: 12px; border-radius: 10px; width: 100%; text-align: center;">
+            <div style="font-size: 11px; color: #8696a0; margin-bottom: 6px;">Lien de partage</div>
+            <div style="font-size: 12px; color: white; word-break: break-all; margin-bottom: 8px; padding: 6px; background: #1f2c33; border-radius: 6px;">
               ${data.link}
             </div>
             <button onclick="window.copyMeetingCode('${data.link}')" 
-                    style="padding: 10px 20px; background: #374045; border: none; border-radius: 20px; 
-                           color: white; font-size: 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                    style="padding: 8px 16px; background: #374045; border: none; border-radius: 16px; 
+                           color: white; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
               <i class="fa-solid fa-copy"></i>
-              Copier le lien
+              Copier
             </button>
           </div>
           
-          <div style="width: 100%;">
+          <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
             <button onclick="window.shareMeetingLink('${data.link}')" 
-                    style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px; 
-                           color: white; font-size: 16px; font-weight: 500; cursor: pointer; display: flex; 
-                           align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px;">
+                    style="width: 100%; padding: 12px; background: #00a884; border: none; border-radius: 20px; 
+                           color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex; 
+                           align-items: center; justify-content: center; gap: 8px;">
               <i class="fa-solid fa-share-nodes"></i>
               Partager
             </button>
             <button onclick="window.startMeetingFromCreated('${data.code}')" 
-                    style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px; 
-                           color: white; font-size: 16px; font-weight: 500; cursor: pointer; display: flex; 
-                           align-items: center; justify-content: center; gap: 10px;">
+                    style="width: 100%; padding: 12px; background: #374045; border: none; border-radius: 20px; 
+                           color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex; 
+                           align-items: center; justify-content: center; gap: 8px;">
               <i class="fa-solid fa-play"></i>
               Commencer
             </button>

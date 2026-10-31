@@ -98,7 +98,7 @@ class RoomManager {
     this.rooms = new Map();
     
     // Maximum de participants par salle (JOINED + RINGING)
-    this.MAX_PARTICIPANTS = 6;
+    this.MAX_PARTICIPANTS = 15;
     
     // Délai d'expiration d'une invitation (45 secondes comme WhatsApp)
     this.INVITE_TIMEOUT_MS = 45000;
@@ -828,7 +828,7 @@ class RoomManager {
  * - Fenêtre d'accès : 15 minutes avant scheduledAt jusqu'à endsAt
  * - Host = créateur (seul peut annuler)
  * - Code unique non devinable (9 caractères alphanumériques)
- * - MAX participants = 6 (comme les groupes actuels)
+ * - MAX participants = 15 (comme les groupes actuels)
  * - Transition scheduled→live automatique à l'heure ou premier join
  */
 class MeetingManager {
