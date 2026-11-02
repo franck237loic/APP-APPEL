@@ -688,12 +688,11 @@ CallManager.prototype.startMeeting = function(code) {
   
   const cleanCode = code.trim().toUpperCase();
   
-  this.sendSignal({
-    type: "meeting-start",
-    code: cleanCode,
-  });
+  // Le créateur rejoint simplement la réunion
+  // Le serveur créera la salle automatiquement si c'est le créateur avant l'heure
+  this.joinMeeting(cleanCode);
   
-  console.log("📅 [MEETING] Demande de démarrage de réunion envoyée pour code:", cleanCode);
+  console.log("📅 [MEETING] Demande de rejoindre pour démarrer:", cleanCode);
 };
 
 CallManager.prototype.showMeetingJoinView = function(prefillCode) {
@@ -781,6 +780,7 @@ CallManager.prototype.confirmJoinMeeting = function() {
 
 CallManager.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingCode = data.code;
+  this.meetingPendingMeetingId = data.meetingId;
   
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.add("active");
@@ -796,7 +796,7 @@ CallManager.prototype.showMeetingWaitingView = function(data) {
             <i class="fa-solid fa-arrow-left"></i>
           </button>
           <div class="contact-info">
-            <div class="contact-name">En attente</div>
+            <div class="contact-name">Salle d'attente</div>
           </div>
           <div style="width: 40px;"></div>
         </div>
@@ -804,21 +804,28 @@ CallManager.prototype.showMeetingWaitingView = function(data) {
         <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 16px;">
           <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #2a3942, #1f2c33); 
                      display: flex; align-items: center; justify-content: center;">
-            <i class="fa-solid fa-clock" style="font-size: 50px; color: #8696a0;"></i>
+            <i class="fa-solid fa-hourglass-half" style="font-size: 50px; color: #8696a0;"></i>
           </div>
           
           <div style="text-align: center;">
-            <div style="font-size: 18px; color: white; margin-bottom: 8px;">La réunion commence dans</div>
-            <div id="meeting-countdown" style="font-size: 36px; font-weight: 600; color: #00a884;">
+            <div style="font-size: 16px; color: #8696a0; margin-bottom: 8px;">La réunion commence bientôt</div>
+            <div style="font-size: 24px; font-weight: 500; color: white; margin-bottom: 16px;">
+              Temps restant
+            </div>
+            <div id="meeting-countdown" style="font-size: 42px; font-weight: 600; color: #00a884;">
               --
             </div>
+          </div>
+          
+          <div style="width: 100%; max-width: 300px; text-align: center; color: #8696a0; font-size: 13px; line-height: 1.5;">
+            Vous serez rejoint automatiquement lorsque la réunion commencera. Le créateur peut également la démarrer avant l'heure prévue.
           </div>
           
           <div style="width: 100%;">
             <button onclick="window.closeMeetingWaitingView()" 
                     style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px; 
                            color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
-              Annuler
+              Quitter
             </button>
           </div>
         </div>

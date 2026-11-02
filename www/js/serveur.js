@@ -1314,8 +1314,12 @@ class MeetingManager {
     const now = Date.now();
     const windowStart = meeting.scheduledAt - this.ACCESS_WINDOW_BEFORE_MS;
 
-    // Trop tôt : retourner waiting avec temps restant
-    if (now < windowStart) {
+    // Si c'est le créateur et que c'est avant l'heure, permettre de démarrer
+    const isCreator = meeting.createdBy === userId;
+    const canStartEarly = isCreator && now < windowStart;
+
+    // Trop tôt (sauf créateur qui peut démarrer) : retourner waiting avec temps restant
+    if (now < windowStart && !canStartEarly) {
       const waitTimeMs = windowStart - now;
       const waitTimeMin = Math.ceil(waitTimeMs / 60000);
       return {
@@ -1340,6 +1344,13 @@ class MeetingManager {
 
     // Dans la fenêtre d'accès : ouvrir ou utiliser la salle live
     if (meeting.status === "scheduled") {
+      // Si le créateur démarre tôt, recalculer endsAt
+      let finalEndsAt = meeting.endsAt;
+      if (canStartEarly) {
+        finalEndsAt = Date.now() + (meeting.durationMin * 60 * 1000);
+        console.log(`📅 Créateur démarre tôt, endsAt recalculé à ${new Date(finalEndsAt).toISOString()}`);
+      }
+      
       // Déterminer le roomId de manière déterministe
       const roomId = `room_meeting_${meeting.id}`;
       
@@ -1366,12 +1377,13 @@ class MeetingManager {
         }
         
         // Sinon, créer la salle vide pour réunion
-        room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, meeting.endsAt);
+        room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, finalEndsAt);
         
         // Mettre à jour Firestore dans la transaction
         transaction.update(roomRef, {
           status: "live",
           roomId: room.roomId,
+          endsAt: finalEndsAt,
         });
       }).catch((error) => {
         console.error(`❌ Erreur transaction Firestore:`, error);
@@ -2697,94 +2709,7 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      // 17. Démarrer une réunion (créateur)
-      // Envoyé par : Créateur -> Reçu par : Créateur (joined)
-      // Pourquoi : Le créateur démarre la réunion avant l'heure programmée
-      if (type === "meeting-start") {
-        try {
-          const { code } = data;
-
-          console.log(`[MEETING] meeting-start reçu de ${ws.userId || "?"} pour code ${code}`);
-
-          if (!ws.userId) {
-            console.error(`[MEETING] meeting-start refusé : utilisateur non enregistré`);
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "Non enregistré",
-              }),
-            );
-            return;
-          }
-
-          if (!code) {
-            console.error(`[MEETING] meeting-start refusé : code manquant`);
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "Code manquant",
-              }),
-            );
-            return;
-          }
-
-          // Vérifier que l'utilisateur est bien le créateur
-          const meeting = await meetingManager.getByCode(code);
-          if (!meeting) {
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "Code invalide",
-              }),
-            );
-            return;
-          }
-
-          if (meeting.createdBy !== ws.userId) {
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "Seul le créateur peut démarrer la réunion",
-              }),
-            );
-            return;
-          }
-
-          // Force le démarrage de la réunion (ignorer l'heure programmée)
-          const result = await meetingManager.forceStart(code, ws.userId);
-
-          if (result.success) {
-            ws.send(
-              JSON.stringify({
-                type: "meeting-joined",
-                meetingId: result.meetingId,
-                roomId: result.roomId,
-                isVideo: result.isVideo,
-                title: result.title,
-              }),
-            );
-            console.log(`[MEETING] meeting-start réussi, salle ${result.roomId} créée`);
-          } else {
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: result.reason,
-              }),
-            );
-          }
-        } catch (error) {
-          console.error(`[MEETING] Erreur dans meeting-start :`, error);
-          ws.send(
-            JSON.stringify({
-              type: "meeting-error",
-              reason: error.message || "Erreur serveur",
-            }),
-          );
-        }
-        return;
-      }
-
-      // 18. Rejoindre une réunion par code
+      // 17. Rejoindre une réunion par code
       // Envoyé par : Utilisateur -> Reçu par : Utilisateur (waiting/joined/error)
       // Pourquoi : Rejoindre une réunion planifiée via son code
       if (type === "meeting-join") {
@@ -2837,6 +2762,10 @@ wss.on("connection", (ws) => {
                 waitTimeMs: result.waitTimeMs,
                 waitTimeMin: result.waitTimeMin,
                 scheduledAt: result.scheduledAt,
+                code: result.code,
+                meetingId: result.meetingId,
+                serverNow: result.serverNow,
+                opensAt: result.opensAt,
               }),
             );
             console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
