@@ -44,6 +44,17 @@ CallManager.prototype.handleMeetingJoined = function(data) {
 
 CallManager.prototype.handleMeetingWaiting = function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
+  
+  // Stocker les données pour l'auto-join
+  this.meetingPendingCode = data.code;
+  this.meetingPendingMeetingId = data.meetingId;
+  
+  // Calculer le décalage d'horloge
+  if (data.serverNow) {
+    this.clockOffset = data.serverNow - Date.now();
+    console.log("🕐 Décalage d'horloge:", this.clockOffset, "ms");
+  }
+  
   this.showMeetingWaitingView(data);
 };
 
@@ -62,6 +73,184 @@ CallManager.prototype.handleMeetingCancelled = function(data) {
 
 CallManager.prototype.handleMeetingList = function(data) {
   console.log("📅 [MEETING] Liste reçue:", data.upcoming.length, "à venir,", data.past.length, "passées");
+  this.showMeetingListView(data);
+};
+
+CallManager.prototype.handleMeetingEnded = function(data) {
+  console.log("📅 [MEETING] Réunion terminée:", data.meetingId, "raison:", data.reason);
+  this.showCallToast("Réunion terminée: " + data.reason);
+  this.closeMeetingWaitingView();
+  this.closeMeetingCreatedView();
+  // Fermer l'écran d'appel de groupe si actif
+  if (this.groupRoomId) {
+    this.endGroupCall();
+  }
+};
+
+// ===== UI LISTE DES RÉUNIONS =====
+
+CallManager.prototype.showMeetingListView = function(data) {
+  if (this.meetingListView) {
+    this.meetingListView.classList.add("active");
+    this._renderMeetingList(data);
+    return;
+  }
+
+  const html = `
+    <div class="view-container meeting-list-view" id="meeting-list-view">
+      <div class="app-container">
+        <div class="header">
+          <button class="icon-btn-top" onclick="window.closeMeetingListView()">
+            <i class="fa-solid fa-arrow-left"></i>
+          </button>
+          <div class="contact-info">
+            <div class="contact-name">Mes réunions</div>
+          </div>
+          <button class="icon-btn-top" onclick="window.createMeetingFromList()">
+            <i class="fa-solid fa-plus"></i>
+          </button>
+        </div>
+
+        <div style="flex: 1; width: 100%; overflow-y: auto; padding: 0 16px;">
+          <div id="meeting-list-content"></div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML("beforeend", html);
+  this.meetingListView = document.getElementById("meeting-list-view");
+  this.meetingListView.classList.add("active");
+
+  this._renderMeetingList(data);
+};
+
+CallManager.prototype._renderMeetingList = function(data) {
+  const content = document.getElementById("meeting-list-content");
+  if (!content) return;
+
+  let html = "";
+
+  // Réunions à venir
+  if (data.upcoming && data.upcoming.length > 0) {
+    html += `<div style="margin-top: 16px;">
+      <div style="color: #8696a0; font-size: 13px; margin-bottom: 12px; padding-left: 8px;">À venir</div>`;
+
+    data.upcoming.forEach(meeting => {
+      const date = new Date(meeting.scheduledAt);
+      const dateStr = date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+      html += `
+        <div style="background: #222d34; border-radius: 12px; padding: 16px; margin-bottom: 12px; cursor: pointer;"
+             onclick="window.openMeetingDetails('${meeting.id}')">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <div style="font-size: 16px; font-weight: 500; color: white; margin-bottom: 4px;">${meeting.title}</div>
+              <div style="font-size: 13px; color: #8696a0;">${dateStr} à ${timeStr}</div>
+            </div>
+            <div style="background: ${meeting.isVideo ? '#00a884' : '#374045'}; padding: 4px 8px; border-radius: 6px; font-size: 11px; color: white;">
+              ${meeting.isVideo ? 'Vidéo' : 'Audio'}
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <button onclick="event.stopPropagation(); window.startMeetingFromList('${meeting.code}')"
+                    style="flex: 1; padding: 10px; background: #00a884; border: none; border-radius: 8px; color: white; font-size: 14px; cursor: pointer;">
+              Démarrer
+            </button>
+            <button onclick="event.stopPropagation(); window.copyMeetingCode('${meeting.code}')"
+                    style="padding: 10px 16px; background: #374045; border: none; border-radius: 8px; color: white; font-size: 14px; cursor: pointer;">
+              <i class="fa-solid fa-copy"></i>
+            </button>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+  }
+
+  // Réunions passées
+  if (data.past && data.past.length > 0) {
+    html += `<div style="margin-top: 16px;">
+      <div style="color: #8696a0; font-size: 13px; margin-bottom: 12px; padding-left: 8px;">Passées</div>`;
+
+    data.past.forEach(meeting => {
+      const date = new Date(meeting.scheduledAt);
+      const dateStr = date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      const timeStr = date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+      const statusColors = {
+        ended: '#8696a0',
+        cancelled: '#ef5350'
+      };
+      const statusLabels = {
+        ended: 'Terminée',
+        cancelled: 'Annulée'
+      };
+
+      html += `
+        <div style="background: #1f2c33; border-radius: 12px; padding: 16px; margin-bottom: 12px; opacity: 0.7;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+            <div style="flex: 1;">
+              <div style="font-size: 16px; font-weight: 500; color: white; margin-bottom: 4px;">${meeting.title}</div>
+              <div style="font-size: 13px; color: #8696a0;">${dateStr} à ${timeStr}</div>
+            </div>
+            <div style="background: ${statusColors[meeting.status] || '#374045'}; padding: 4px 8px; border-radius: 6px; font-size: 11px; color: white;">
+              ${statusLabels[meeting.status] || meeting.status}
+            </div>
+          </div>
+        </div>
+      `;
+    });
+
+    html += `</div>`;
+  }
+
+  // Liste vide
+  if (!data.upcoming || data.upcoming.length === 0) {
+    html += `
+      <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 40px 16px;">
+        <i class="fa-solid fa-calendar-plus" style="font-size: 48px; color: #374045;"></i>
+        <div style="text-align: center; color: #8696a0; font-size: 14px;">
+          Aucune réunion à venir
+        </div>
+        <button onclick="window.createMeetingFromList()"
+                style="padding: 12px 24px; background: #00a884; border: none; border-radius: 20px; color: white; font-size: 15px; cursor: pointer;">
+          Créer une réunion
+        </button>
+      </div>
+    `;
+  }
+
+  content.innerHTML = html;
+};
+
+CallManager.prototype.closeMeetingListView = function() {
+  if (this.meetingListView) {
+    this.meetingListView.classList.remove("active");
+    setTimeout(() => {
+      if (this.meetingListView) {
+        this.meetingListView.remove();
+        this.meetingListView = null;
+      }
+    }, 300);
+  }
+};
+
+CallManager.prototype.createMeetingFromList = function() {
+  this.closeMeetingListView();
+  this.showMeetingCreateView();
+};
+
+CallManager.prototype.startMeetingFromList = function(code) {
+  this.closeMeetingListView();
+  this.startMeeting(code);
+};
+
+CallManager.prototype.openMeetingDetails = function(meetingId) {
+  // Pour l'instant, afficher le code
+  this.showCallToast("Détails: " + meetingId);
 };
 
 // ===== MÉTHODES DE RÉUNION =====
@@ -122,6 +311,9 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
 CallManager.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] joinMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
   
+  // Stocker le code pour les réessais
+  this.meetingPendingCode = code.trim().toUpperCase();
+  
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
   
@@ -138,7 +330,7 @@ CallManager.prototype.joinMeeting = function(code) {
         const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
         if (nowConnected) {
           console.log("📅 [MEETING] WebSocket maintenant connecté, tentative de rejoindre");
-          this.joinMeeting(code);
+          this.joinMeeting(this.meetingPendingCode);
         } else {
           console.error("📅 [MEETING] WebSocket toujours non connecté après tentative");
           this.showCallToast("Impossible de se connecter au serveur (timeout)");
@@ -154,19 +346,17 @@ CallManager.prototype.joinMeeting = function(code) {
     return;
   }
   
-  if (!code || code.trim().length === 0) {
+  if (!this.meetingPendingCode) {
     this.showCallToast("Code requis");
     return;
   }
   
-  const cleanCode = code.trim().toUpperCase();
-  
   this.sendSignal({
     type: "meeting-join",
-    code: cleanCode,
+    code: this.meetingPendingCode,
   });
   
-  console.log("📅 [MEETING] Demande de rejoindre réunion envoyée pour code:", cleanCode);
+  console.log("📅 [MEETING] Demande de rejoindre réunion envoyée pour code:", this.meetingPendingCode);
 };
 
 CallManager.prototype.cancelMeeting = function(meetingId) {
@@ -648,9 +838,13 @@ CallManager.prototype._updateMeetingCountdown = function(data) {
     clearInterval(this.meetingTimer);
   }
   
+  // Utiliser opensAt (début de fenêtre) au lieu de scheduledAt
+  const opensAt = data.opensAt || data.scheduledAt;
+  
   const update = () => {
-    const now = Date.now();
-    const remaining = data.scheduledAt - now;
+    // Utiliser le décalage d'horloge si disponible
+    const now = this.clockOffset ? Date.now() + this.clockOffset : Date.now();
+    const remaining = opensAt - now;
     
     if (remaining <= 0) {
       if (this.meetingTimer) {
@@ -658,7 +852,9 @@ CallManager.prototype._updateMeetingCountdown = function(data) {
         this.meetingTimer = null;
       }
       
+      // Auto-join quand la fenêtre s'ouvre
       if (this.meetingPendingCode) {
+        console.log("📅 [MEETING] Fenêtre ouverte, auto-join...");
         this.joinMeeting(this.meetingPendingCode);
         this.meetingPendingCode = null;
       }
@@ -785,6 +981,11 @@ window.closeMeetingWaitingView = function() { window.callManager.closeMeetingWai
 window.closeMeetingCreatedView = function() { window.callManager.closeMeetingCreatedView(); };
 window.copyMeetingCode = function(code) { window.callManager.copyMeetingCode(code); };
 window.shareMeetingLink = function(link) { window.callManager.shareMeetingLink(link); };
+window.showMeetingListView = function() { window.callManager.listMeetings(); };
+window.closeMeetingListView = function() { window.callManager.closeMeetingListView(); };
+window.createMeetingFromList = function() { window.callManager.createMeetingFromList(); };
+window.startMeetingFromList = function(code) { window.callManager.startMeetingFromList(code); };
+window.openMeetingDetails = function(meetingId) { window.callManager.openMeetingDetails(meetingId); };
 
 // ===== HANDLE DEEP LINK AU DÉMARRAGE =====
 if (document.readyState === 'complete') {

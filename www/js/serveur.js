@@ -7,6 +7,32 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getFirestore } = require("firebase-admin/firestore");
 
+// Configuration TURN depuis variables d'environnement
+const TURN_CONFIG = {
+  iceServers: [
+    {
+      urls: "stun:stun.relay.metered.ca:80"
+    },
+    {
+      urls: process.env.TURN_URL || "turn:socialstatus.furthermarket.com:80",
+      username: process.env.TURN_USERNAME || "coturn",
+      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
+    },
+    {
+      urls: process.env.TURN_URL_UDP || "turn:socialstatus.furthermarket.com:443?transport=udp",
+      username: process.env.TURN_USERNAME || "coturn",
+      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
+    },
+    {
+      urls: process.env.TURN_URL_TCP || "turn:socialstatus.furthermarket.com:443?transport=tcp",
+      username: process.env.TURN_USERNAME || "coturn",
+      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
+    }
+  ],
+  iceTransportPolicy: "relay",
+  bundlePolicy: "max-bundle"
+};
+
 // Initialisation de Firebase
 // Essayer de lire depuis une variable d'environnement (Render) ou depuis un fichier local
 let serviceAccount;
@@ -48,6 +74,21 @@ const wss = new WebSocketServer({ server });
 
 // Carte globale persistante (RAM) pour conserver les utilisateurs et leurs tokens FCM
 const users = new Map();
+
+// Carte des tokens d'authentification utilisateur (userId → token)
+// Permet d'empêcher l'usurpation d'identité
+const userAuthTokens = new Map();
+
+/**
+ * Génère un token d'authentification unique pour un utilisateur
+ * Format sécurisé : 32 caractères hexadécimaux
+ */
+function generateAuthToken(userId) {
+  const timestamp = Date.now().toString(16);
+  const random = Math.random().toString(16).substring(2, 10);
+  const userHash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0).toString(16), '').substring(0, 16);
+  return `${timestamp}-${random}-${userHash}`.substring(0, 32);
+}
 
 // Stockage temporaire en mémoire RAM pour les offres d'appel (évite de surcharger FCM)
 const pendingCalls = new Map();
@@ -94,7 +135,7 @@ class RoomManager {
   constructor() {
     // Map globale de toutes les salles actives
     // Clé : roomId (identifiant unique de la salle)
-    // Valeur : { roomId, creatorId, isVideo, createdAt, participants: Map<userId, {state, invitedBy, inviteTimer}> }
+    // Valeur : { roomId, creatorId, isVideo, createdAt, participants: Map<userId, {state, invitedBy, inviteTimer}>, isMeeting: boolean }
     this.rooms = new Map();
     
     // Maximum de participants par salle (JOINED + RINGING)
@@ -102,6 +143,12 @@ class RoomManager {
     
     // Délai d'expiration d'une invitation (45 secondes comme WhatsApp)
     this.INVITE_TIMEOUT_MS = 45000;
+    
+    // Délai de grâce avant de marquer un utilisateur LEFT lors d'une déconnexion (30 secondes)
+    this.DISCONNECT_GRACE_MS = 30000;
+    
+    // Map des timers de grâce pour les déconnexions (userId → timer)
+    this.disconnectGraceTimers = new Map();
   }
 
   /**
@@ -119,7 +166,7 @@ class RoomManager {
    * @param {boolean} isVideo - Type d'appel (true = vidéo, false = audio uniquement)
    * @returns {object} La salle créée avec tous ses détails
    */
-  createRoom(creatorId, isVideo) {
+  createRoom(creatorId, isVideo, isMeeting = false) {
     // Génération d'un ID unique pour la salle
     const roomId = `room_${Date.now()}_${creatorId}`;
     
@@ -128,22 +175,25 @@ class RoomManager {
       roomId,           // Identifiant unique de la salle
       creatorId,        // ID de l'utilisateur qui a créé la salle
       isVideo,          // true = appel vidéo, false = appel audio
+      isMeeting,        // true = salle de réunion planifiée (ne ferme pas quand vide)
       createdAt: Date.now(),  // Timestamp de création
-      participants: new Map([
-        [
-          creatorId,
-          {
-            state: "JOINED",        // Le créateur est immédiatement JOINED
-            invitedBy: creatorId,   // S'est invité lui-même
-            inviteTimer: null,      // Pas de timer pour le créateur
-          },
-        ],
-      ]),
+      endsAt: null,     // Timestamp de fin (pour les réunions)
+      participants: new Map(), // Pour les réunions, salle vide au départ
     };
+    
+    // Pour les appels de groupe instantanés, le créateur est JOINED immédiatement
+    // Pour les réunions, la salle est vide et chacun JOINED via group-join
+    if (!isMeeting) {
+      room.participants.set(creatorId, {
+        state: "JOINED",
+        invitedBy: creatorId,
+        inviteTimer: null,
+      });
+    }
     
     // Ajout de la salle à la Map globale
     this.rooms.set(roomId, room);
-    console.log(`🏠 Salle créée : ${roomId} par ${creatorId} (${isVideo ? "vidéo" : "audio"})`);
+    console.log(`🏠 Salle créée : ${roomId} par ${creatorId} (${isVideo ? "vidéo" : "audio"}) ${isMeeting ? "[RÉUNION]" : "[GROUPE]"}`);
     return room;
   }
 
@@ -638,8 +688,8 @@ class RoomManager {
    * Vérifie si une salle doit être fermée et la ferme si nécessaire
    * 
    * CONDITION DE FERMETURE :
-   * - countJoined === 0 ET countRinging === 0
-   * - C'est-à-dire : plus personne n'est actif ou en attente
+   * - Pour les salles de groupe instantanés : countJoined === 0 ET countRinging === 0
+   * - Pour les salles de réunion : endsAt dépassé
    * 
    * @param {string} roomId - Identifiant de la salle
    */
@@ -651,8 +701,17 @@ class RoomManager {
 
     const joinedCount = this.countJoined(roomId);
     const ringingCount = this.countRinging(roomId);
+    const now = Date.now();
 
-    // Fermer la salle si plus personne n'est actif ou en attente
+    // Pour les réunions : fermer seulement si endsAt est dépassé
+    if (room.isMeeting) {
+      if (room.endsAt && now > room.endsAt) {
+        this.closeRoom(roomId, "Durée de réunion expirée");
+      }
+      return;
+    }
+
+    // Pour les groupes instantanés : fermer si vide
     if (joinedCount === 0 && ringingCount === 0) {
       this.closeRoom(roomId, "Plus aucun participant");
     }
@@ -712,6 +771,36 @@ class RoomManager {
     if (typeof meetingManager !== 'undefined') {
       meetingManager.markEndedByRoom(roomId);
     }
+  }
+
+  /**
+   * =========================================================
+   *   CRÉER UNE SALLE DE RÉUNION (VIDE)
+   * =========================================================
+   * 
+   * Crée une salle vide pour une réunion planifiée
+   * 
+   * @param {string} meetingId - ID de la réunion
+   * @param {boolean} isVideo - Type d'appel
+   * @param {number} endsAt - Timestamp de fin
+   * @returns {object} La salle créée
+   */
+  createMeetingRoom(meetingId, isVideo, endsAt) {
+    const roomId = `room_meeting_${meetingId}`;
+    
+    const room = {
+      roomId,
+      creatorId: null, // Pas de créateur pour les réunions
+      isVideo,
+      isMeeting: true,
+      createdAt: Date.now(),
+      endsAt,
+      participants: new Map(), // Salle vide
+    };
+    
+    this.rooms.set(roomId, room);
+    console.log(`🏠 Salle de réunion créée : ${roomId} (fin à ${new Date(endsAt).toISOString()})`);
+    return room;
   }
 
   /**
@@ -788,7 +877,7 @@ class RoomManager {
    *   MARQUER UTILISATEUR PARTI TOUTES LES SALLES
    * =========================================================
    * 
-   * Marque un utilisateur comme LEFT dans toutes ses salles
+   * Marque un utilisateur comme LEFT dans toutes ses salles AVEC un délai de grâce
    * 
    * UTILISATION : Appelé automatiquement lors d'une déconnexion WebSocket
    *             pour nettoyer proprement l'état de l'utilisateur
@@ -797,8 +886,41 @@ class RoomManager {
    */
   markLeftInAllRooms(userId) {
     const userRooms = this.getUserRooms(userId);
-    for (const roomId of userRooms) {
-      this.leave(roomId, userId);
+    
+    // Annuler le timer de grâce existant si présent
+    const existingTimer = this.disconnectGraceTimers.get(userId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    
+    // Démarrer un nouveau timer de grâce
+    const graceTimer = setTimeout(() => {
+      console.log(`⏰ Délai de grâce expiré pour ${userId}, marquage LEFT dans toutes les salles`);
+      for (const roomId of userRooms) {
+        this.leave(roomId, userId);
+      }
+      this.disconnectGraceTimers.delete(userId);
+    }, this.DISCONNECT_GRACE_MS);
+    
+    this.disconnectGraceTimers.set(userId, graceTimer);
+    console.log(`⏰ Délai de grâce de ${this.DISCONNECT_GRACE_MS / 1000}s démarré pour ${userId}`);
+  }
+
+  /**
+   * =========================================================
+   *   ANNULER LE DÉLAI DE GRÂCE
+   * =========================================================
+   * 
+   * Annule le timer de grâce si l'utilisateur se reconnecte
+   * 
+   * @param {string} userId - Identifiant de l'utilisateur
+   */
+  cancelGracePeriod(userId) {
+    const timer = this.disconnectGraceTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      this.disconnectGraceTimers.delete(userId);
+      console.log(`✅ Délai de grâce annulé pour ${userId} (reconnexion)`);
     }
   }
 }
@@ -849,34 +971,37 @@ class MeetingManager {
    * =========================================================
    *
    * Génère un code court de 9 caractères (format: XXX-XXX-XXX)
-   * Utilise des caractères alphanumériques majuscules pour éviter les ambiguïtés
+   * Utilise Math.random() pour simplifier (suffisant pour ce cas d'usage)
+   * Caractères sans ambiguïté : pas de 0/O/1/I
    *
    * @returns {string} Code unique (ex: "ABC-123-XYZ")
    */
   _generateCode() {
-    const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const chars = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 32 caractères, sans 0/O/1/I
     let code;
     let attempts = 0;
     const maxAttempts = 100;
 
     do {
-      code = "";
-      for (let i = 0; i < 9; i++) {
-        if (i === 3 || i === 6) {
-          code += "-";
-        } else {
-          code += chars.charAt(Math.floor(Math.random() * chars.length));
+      const parts = [];
+      for (let i = 0; i < 3; i++) {
+        let part = "";
+        for (let j = 0; j < 3; j++) {
+          part += chars.charAt(Math.floor(Math.random() * chars.length));
         }
+        parts.push(part);
       }
+      code = parts.join("-");
       attempts++;
-    } while (this.usedCodes.has(code) && attempts < maxAttempts);
+      
+      // Vérifier dans le set local (optimisation)
+      if (!this.usedCodes.has(code)) {
+        this.usedCodes.add(code);
+        return code;
+      }
+    } while (attempts < maxAttempts);
 
-    if (attempts >= maxAttempts) {
-      throw new Error("Impossible de générer un code unique après 100 tentatives");
-    }
-
-    this.usedCodes.add(code);
-    return code;
+    throw new Error("Impossible de générer un code unique après 100 tentatives");
   }
 
   /**
@@ -896,19 +1021,40 @@ class MeetingManager {
    * @returns {Promise<object>} Réunion créée avec meetingId, code, link
    */
   async create({ title, scheduledAt, durationMin, isVideo, createdBy, participants }) {
+    // Validation des paramètres
+    if (!title || title.trim().length === 0) {
+      return { success: false, reason: "Le titre est requis" };
+    }
+    
+    if (title.length > 100) {
+      return { success: false, reason: "Le titre ne peut pas dépasser 100 caractères" };
+    }
+    
+    if (!scheduledAt || scheduledAt <= Date.now() + 60000) {
+      return { success: false, reason: "L'heure doit être dans le futur (au moins 1 minute)" };
+    }
+    
+    if (!durationMin || durationMin < 15 || durationMin > 480) {
+      return { success: false, reason: "La durée doit être entre 15 et 480 minutes" };
+    }
+    
+    if (participants && (!Array.isArray(participants) || participants.length > 14)) {
+      return { success: false, reason: "Maximum 14 participants" };
+    }
+    
     const meetingId = `meeting_${Date.now()}_${createdBy}`;
-    const code = this._generateCode();
+    const code = await this._generateCode();
     const endsAt = scheduledAt + (durationMin * 60 * 1000);
     const link = `https://app-appel.onrender.com/join/${code}`;
 
     const meeting = {
       meetingId,
       code,
-      title,
+      title: title.trim(),
       scheduledAt,
       durationMin,
       endsAt,
-      isVideo,
+      isVideo: !!isVideo,
       createdBy,
       participants: participants || [],
       status: "scheduled",
@@ -920,11 +1066,112 @@ class MeetingManager {
     // Persister dans Firestore
     await db.collection("meetings").doc(meetingId).set(meeting);
 
-    // ❌ PLUS de transition automatique - la salle sera créée quand le premier participant rejoint
-    // C'est le comportement de Google Meet et Zoom : le premier participant "démarre" la réunion
+    // Programmer les notifications de rappel
+    this._scheduleMeetingNotifications(meetingId, scheduledAt, participants || []);
 
-    console.log(`📅 Réunion créée : ${meetingId} (${code}) pour ${scheduledAt}`);
+    console.log(`📅 Réunion créée: ${meetingId} avec code ${code}`);
+
     return meeting;
+  }
+
+  /**
+   * =========================================================
+   *   PROGRAMMER LES NOTIFICATIONS DE RAPPEL
+   * =========================================================
+   */
+  _scheduleMeetingNotifications(meetingId, scheduledAt, participants) {
+    const reminderTime = scheduledAt - (10 * 60 * 1000); // 10 min avant
+    const now = Date.now();
+    
+    // Rappel T-10 min
+    if (reminderTime > now) {
+      setTimeout(async () => {
+        const doc = await db.collection("meetings").doc(meetingId).get();
+        if (doc.exists && doc.data().status === "scheduled") {
+          const meeting = doc.data();
+          const message = {
+            type: "meeting-reminder",
+            meetingId,
+            code: meeting.code,
+            title: meeting.title,
+            scheduledAt: meeting.scheduledAt,
+          };
+          
+          for (const userId of participants) {
+            const user = users.get(userId);
+            if (user?.pushToken) {
+              await envoyerNotificationPush(
+                user.pushToken,
+                "Rappel de réunion",
+                `${meeting.title} commence dans 10 minutes`,
+                meeting.code,
+                null,
+                false,
+                null,
+                "meeting-reminder"
+              );
+            }
+          }
+        }
+      }, reminderTime - now);
+    }
+    
+    // Notification "commence maintenant" à l'heure H
+    if (scheduledAt > now) {
+      setTimeout(async () => {
+        const doc = await db.collection("meetings").doc(meetingId).get();
+        if (doc.exists && doc.data().status === "scheduled") {
+          const meeting = doc.data();
+          const message = {
+            type: "meeting-start",
+            meetingId,
+            code: meeting.code,
+            title: meeting.title,
+          };
+          
+          for (const userId of participants) {
+            const user = users.get(userId);
+            if (user?.pushToken) {
+              await envoyerNotificationPush(
+                user.pushToken,
+                "Réunion en cours",
+                `${meeting.title} commence maintenant`,
+                meeting.code,
+                null,
+                false,
+                null,
+                "meeting-start"
+              );
+            }
+          }
+        }
+      }, scheduledAt - now);
+    }
+  }
+
+  /**
+   * =========================================================
+   *   ENVOYER MEETING-ENDED À TOUS LES PARTICIPANTS
+   * =========================================================
+   */
+  async _sendMeetingEnded(meetingId, reason) {
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) return;
+    
+    const meeting = doc.data();
+    const message = {
+      type: "meeting-ended",
+      meetingId,
+      reason,
+    };
+    
+    // Envoyer à tous les participants enregistrés
+    for (const userId of meeting.participants) {
+      const user = users.get(userId);
+      if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+        user.ws.send(JSON.stringify(message));
+      }
+    }
   }
 
   /**
@@ -932,18 +1179,32 @@ class MeetingManager {
    *   RÉCUPÉRER UNE RÉUNION PAR CODE
    * =========================================================
    *
-   * @param {string} code - Code de la réunion
+   * @param {string} code - Code de la réunion (normalisé : majuscules, sans tirets)
    * @returns {Promise<object|null>} Réunion ou null si introuvable
    */
   async getByCode(code) {
-    const snapshot = await db.collection("meetings").where("code", "==", code).limit(1).get();
-
-    if (snapshot.empty) {
-      return null;
+    // Normaliser le code : majuscules, retirer les tirets
+    const normalizedCode = code.toUpperCase().replace(/-/g, "");
+    
+    // Utiliser une requête where pour optimiser (nécessite un index Firestore sur 'code')
+    // Fallback: si la requête échoue, utiliser la méthode get() complète
+    try {
+      const snapshot = await db.collection("meetings").where("code", "==", code).limit(1).get();
+      if (!snapshot.empty) {
+        const doc = snapshot.docs[0];
+        return { id: doc.id, ...doc.data() };
+      }
+    } catch (error) {
+      // Fallback si l'index n'existe pas encore
+      console.warn("⚠️ Index Firestore sur 'code' manquant, utilisation du fallback");
+      const snapshot = await db.collection("meetings").get();
+      const doc = snapshot.docs.find(d => d.data().code.replace(/-/g, "") === normalizedCode);
+      if (doc) {
+        return { id: doc.id, ...doc.data() };
+      }
     }
 
-    const doc = snapshot.docs[0];
-    return { id: doc.id, ...doc.data() };
+    return null;
   }
 
   /**
@@ -993,8 +1254,9 @@ class MeetingManager {
     // Recalculer endsAt = maintenant + durée (comportement Google Meet)
     const newEndsAt = Date.now() + (meeting.durationMin * 60 * 1000);
 
-    // Créer la salle live immédiatement
-    const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
+    // Créer la salle live immédiatement (isMeeting = true pour salle vide)
+    const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo, true);
+    room.endsAt = newEndsAt;
 
     // Mettre à jour Firestore avec le nouveau endsAt
     await db.collection("meetings").doc(meeting.id).update({
@@ -1028,7 +1290,7 @@ class MeetingManager {
    *
    * TRANSITION :
    * - Si status=scheduled et dans la fenêtre → passer à live, créer salle RoomManager
-   * - Si status=live → retourner roomId existant
+   * - Si status=live → retourner roomId existant (recréer salle si n'existe pas en RAM)
    *
    * @param {string} code - Code de la réunion
    * @param {string} userId - ID de l'utilisateur qui rejoint
@@ -1063,6 +1325,10 @@ class MeetingManager {
         waitTimeMs,
         waitTimeMin,
         scheduledAt: meeting.scheduledAt,
+        code: meeting.code,
+        meetingId: meeting.id,
+        serverNow: now,
+        opensAt: windowStart,
       };
     }
 
@@ -1074,8 +1340,10 @@ class MeetingManager {
 
     // Dans la fenêtre d'accès : ouvrir ou utiliser la salle live
     if (meeting.status === "scheduled") {
-      // Transition scheduled → live : créer la salle RoomManager
-      // Utiliser une transaction pour éviter que plusieurs personnes ne créent plusieurs salles
+      // Déterminer le roomId de manière déterministe
+      const roomId = `room_meeting_${meeting.id}`;
+      
+      // Réservation du roomId dans Firestore via transaction
       const roomRef = db.collection("meetings").doc(meeting.id);
       
       let room;
@@ -1097,9 +1365,8 @@ class MeetingManager {
           }
         }
         
-        // Sinon, créer la salle
-        room = roomManager.createRoom(meeting.createdBy, meeting.isVideo);
-        console.log(`📅 Nouvelle salle créée: ${room.roomId} par ${meeting.createdBy}, participants JOINED: ${roomManager.countJoined(room.roomId)}`);
+        // Sinon, créer la salle vide pour réunion
+        room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, meeting.endsAt);
         
         // Mettre à jour Firestore dans la transaction
         transaction.update(roomRef, {
@@ -1110,13 +1377,6 @@ class MeetingManager {
         console.error(`❌ Erreur transaction Firestore:`, error);
         throw error;
       });
-
-      // Annuler le timer de transition automatique (déjà fait manuellement)
-      const timer = this.scheduleTimers.get(meeting.id);
-      if (timer) {
-        clearTimeout(timer);
-        this.scheduleTimers.delete(meeting.id);
-      }
 
       console.log(`📅 Réunion ${meeting.id} passée à live (salle ${room.roomId})`);
 
@@ -1129,12 +1389,27 @@ class MeetingManager {
       };
     }
 
-    // Status déjà live : retourner roomId existant
+    // Status déjà live : vérifier si la salle existe en RAM
     if (meeting.status === "live" && meeting.roomId) {
+      // Vérifier si endsAt est dépassé
+      if (now > meeting.endsAt) {
+        await this._updateStatus(meeting.id, "ended");
+        return { success: false, reason: "Réunion expirée" };
+      }
+      
+      let room = roomManager.rooms.get(meeting.roomId);
+      
+      // Si la salle n'existe pas en RAM (redémarrage serveur), la recréer
+      if (!room) {
+        console.log(`📅 Salle ${meeting.roomId} introuvable en RAM, recréation...`);
+        room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, meeting.endsAt);
+        // roomId est déjà dans Firestore, pas besoin de mettre à jour
+      }
+      
       return {
         success: true,
         meetingId: meeting.id,
-        roomId: meeting.roomId,
+        roomId: room.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
       };
@@ -1205,10 +1480,11 @@ class MeetingManager {
   async listForUser(userId) {
     const now = Date.now();
 
-    // Réunions créées par l'utilisateur
+    // Réunions créées par l'utilisateur (filtrer par statut pour éviter cancelled/ended)
     const createdSnapshot = await db
       .collection("meetings")
       .where("createdBy", "==", userId)
+      .where("status", "in", ["scheduled", "live", "cancelled", "ended"])
       .orderBy("scheduledAt", "desc")
       .get();
 
@@ -1216,6 +1492,7 @@ class MeetingManager {
     const participatedSnapshot = await db
       .collection("meetings")
       .where("participants", "array-contains", userId)
+      .where("status", "in", ["scheduled", "live", "cancelled", "ended"])
       .orderBy("scheduledAt", "desc")
       .get();
 
@@ -1307,6 +1584,9 @@ class MeetingManager {
         status: "ended",
       });
       console.log(`📅 Réunion ${doc.id} marquée ended (salle ${roomId} fermée)`);
+
+      // Envoyer meeting-ended à tous les participants
+      await this._sendMeetingEnded(doc.id, "Salle fermée");
     }
   }
 }
@@ -1317,8 +1597,166 @@ const roomManager = new RoomManager();
 // Instance globale du MeetingManager
 const meetingManager = new MeetingManager();
 
+// =========================================================
+// CHARGEMENT DES RÉUNIONS AU DÉMARRAGE
+// =========================================================
+// Charger les réunions scheduled/live encore valides et reprogrammer leurs timers
+async function loadMeetingsOnStartup() {
+  try {
+    const now = Date.now();
+    const snapshot = await db.collection("meetings")
+      .where("status", "in", ["scheduled", "live"])
+      .get();
+    
+    console.log(`📅 Chargement de ${snapshot.size} réunions au démarrage...`);
+    
+    for (const doc of snapshot.docs) {
+      const meeting = { id: doc.id, ...doc.data() };
+      
+      // Charger les codes existants pour éviter les collisions
+      if (meeting.code) {
+        meetingManager.usedCodes.add(meeting.code);
+      }
+      
+      // Nettoyer les réunions expirées
+      if (meeting.endsAt && now > meeting.endsAt) {
+        await db.collection("meetings").doc(meeting.id).update({ status: "ended" });
+        console.log(`📅 Réunion expirée nettoyée: ${meeting.id}`);
+        continue;
+      }
+      
+      // Si live et roomId existe, recréer la salle en RAM
+      if (meeting.status === "live" && meeting.roomId) {
+        const existingRoom = roomManager.rooms.get(meeting.roomId);
+        if (!existingRoom) {
+          roomManager.createMeetingRoom(meeting.id, meeting.isVideo, meeting.endsAt);
+          console.log(`📅 Salle live recréée: ${meeting.roomId}`);
+        }
+      }
+      
+      // Programmer le timer de fin si endsAt existe
+      if (meeting.endsAt && now < meeting.endsAt) {
+        const timeUntilEnd = meeting.endsAt - now;
+        setTimeout(async () => {
+          const freshDoc = await db.collection("meetings").doc(meeting.id).get();
+          if (freshDoc.exists) {
+            const freshMeeting = freshDoc.data();
+            if (freshMeeting.status === "live" && freshMeeting.roomId) {
+              roomManager.closeRoom(freshMeeting.roomId, "Durée de réunion expirée");
+            }
+            await db.collection("meetings").doc(meeting.id).update({ status: "ended" });
+            // Envoyer meeting-ended si la réunion était live
+            if (freshMeeting.status === "live") {
+              await meetingManager._sendMeetingEnded(meeting.id, "Durée de réunion expirée");
+            }
+          }
+        }, timeUntilEnd);
+        console.log(`📅 Timer de fin programmé pour ${meeting.id} dans ${timeUntilEnd / 1000}s`);
+      }
+      
+      // Reprogrammer les notifications de rappel pour les réunions scheduled
+      if (meeting.status === "scheduled") {
+        meetingManager._scheduleMeetingNotifications(meeting.id, meeting.scheduledAt, meeting.participants || []);
+        console.log(`📅 Notifications reprogrammées pour ${meeting.id}`);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Erreur lors du chargement des réunions:", error);
+  }
+}
+
+// Lancer le chargement au démarrage
+loadMeetingsOnStartup();
+
 app.get("/", (req, res) => {
   res.send("Serveur WebSocket actif");
+});
+
+// Route pour les liens de partage de réunion
+app.get("/join/:code", (req, res) => {
+  const { code } = req.params;
+  const normalizedCode = code.toUpperCase().replace(/-/g, "");
+  
+  res.send(`
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rejoindre une réunion</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0b141a;
+      color: #fff;
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 400px;
+      text-align: center;
+      background: #1f2c34;
+      padding: 30px;
+      border-radius: 20px;
+    }
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 24px;
+    }
+    .code {
+      font-size: 32px;
+      font-weight: 600;
+      color: #00a884;
+      letter-spacing: 2px;
+      margin: 20px 0;
+    }
+    .btn {
+      display: inline-block;
+      padding: 14px 28px;
+      background: #00a884;
+      color: white;
+      text-decoration: none;
+      border-radius: 24px;
+      font-weight: 500;
+      margin: 10px;
+    }
+    .btn-secondary {
+      background: #374045;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📅 Réunion</h1>
+    <div class="code">${code}</div>
+    <p style="color: #8696a0; margin-bottom: 20px;">
+      Pour rejoindre cette réunion, ouvrez l'application App Appel
+    </p>
+    <a href="appappel://join/${code}" class="btn">Ouvrir dans l'application</a>
+    <br>
+    <a href="https://app-appel.onrender.com" class="btn btn-secondary">Télécharger l'application</a>
+  </div>
+</body>
+</html>
+  `);
+});
+
+// Assetlinks pour Android
+app.get("/.well-known/assetlinks.json", (req, res) => {
+  const assetlinks = process.env.ASSETLINKS_JSON || JSON.stringify([]);
+  res.set("Content-Type", "application/json");
+  res.send(assetlinks);
+});
+
+// Apple App Site Association
+app.get("/.well-known/apple-app-site-association", (req, res) => {
+  const aasa = process.env.AASA_JSON || JSON.stringify({});
+  res.set("Content-Type", "application/json");
+  res.send(aasa);
 });
 
 // =========================================================
@@ -1395,11 +1833,25 @@ wss.on("connection", (ws) => {
 
       // 1. Enregistrement / Reconnexion de l'utilisateur
       if (type === "register-user") {
-        ws.userId = userId;
+        const { authToken } = data;
 
         // VÉRIFICATION DE LA PRÉSENCE DANS LA MAP
         if (users.has(userId)) {
           const existingUser = users.get(userId);
+          const storedToken = userAuthTokens.get(userId);
+
+          // Vérifier le token d'authentification
+          if (storedToken && authToken !== storedToken) {
+            console.warn(`⚠️ Token invalide pour ${userId}, rejet de l'enregistrement`);
+            ws.send(
+              JSON.stringify({
+                type: "registration-error",
+                reason: "Token d'authentification invalide",
+              }),
+            );
+            return;
+          }
+
           console.log(
             `🔄 Utilisateur ${userId} déjà présent dans la Map. Mise à jour de la connexion...`,
           );
@@ -1416,9 +1868,12 @@ wss.on("connection", (ws) => {
             pushToken: pushToken || existingUser.pushToken || null,
           });
         } else {
-          // Nouvel utilisateur
+          // Nouvel utilisateur : générer un token
+          const newToken = generateAuthToken(userId);
+          userAuthTokens.set(userId, newToken);
+
           console.log(
-            `✨ Nouvel utilisateur enregistré dans la Map : ${userId}`,
+            `✨ Nouvel utilisateur enregistré dans la Map : ${userId} avec token`,
           );
           users.set(userId, {
             ws: ws,
@@ -1427,18 +1882,35 @@ wss.on("connection", (ws) => {
         }
 
         const currentUser = users.get(userId);
+        const currentToken = userAuthTokens.get(userId);
+
         console.log(
-          `👤 Statut : ${userId} | Token FCM : ${currentUser.pushToken || "Aucun"}`,
+          `👤 Statut : ${userId} | Token FCM : ${currentUser.pushToken || "Aucun"} | Token Auth : ${currentToken ? "existant" : "généré"}`,
         );
         console.log(
           "👥 Liste globale des utilisateurs enregistrés :",
           Array.from(users.keys()),
         );
 
+        // Annuler le délai de grâce si l'utilisateur se reconnecte
+        roomManager.cancelGracePeriod(userId);
+
         ws.send(
           JSON.stringify({
             type: "registered",
             userId: userId,
+            authToken: currentToken,
+          }),
+        );
+        return;
+      }
+
+      // 2. Fournir les iceServers TURN (credentials sécurisés)
+      if (type === "get-ice-servers") {
+        ws.send(
+          JSON.stringify({
+            type: "ice-servers",
+            iceServers: TURN_CONFIG.iceServers,
           }),
         );
         return;
@@ -2168,29 +2640,42 @@ wss.on("connection", (ws) => {
           }
 
           // Créer la réunion
-        const meeting = await meetingManager.create({
-          title,
-          scheduledAt,
-          durationMin,
-          isVideo: !!isVideo,
-          createdBy: ws.userId,
-          participants: participants || [],
-        });
+          const meeting = await meetingManager.create({
+            title,
+            scheduledAt,
+            durationMin,
+            isVideo: !!isVideo,
+            createdBy: ws.userId,
+            participants: participants || [],
+          });
 
-        ws.send(
-          JSON.stringify({
-            type: "meeting-created",
-            meetingId: meeting.meetingId,
-            code: meeting.code,
-            link: meeting.link,
-            title: meeting.title,
-            scheduledAt: meeting.scheduledAt,
-            endsAt: meeting.endsAt,
-            durationMin: meeting.durationMin,  // ← ici, dans l’objet
-            isVideo: meeting.isVideo,
-          }),
-        );
-        console.log(`[MEETING] meeting-created envoyé à ${ws.userId}`);
+          // Vérifier si la création a réussi
+          if (meeting.success === false) {
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: meeting.reason,
+              }),
+            );
+            console.log(`[MEETING] meeting-create refusé: ${meeting.reason}`);
+            return;
+          }
+
+
+          ws.send(
+            JSON.stringify({
+              type: "meeting-created",
+              meetingId: meeting.meetingId,
+              code: meeting.code,
+              link: meeting.link,
+              title: meeting.title,
+              scheduledAt: meeting.scheduledAt,
+              endsAt: meeting.endsAt,
+              durationMin: meeting.durationMin,
+              isVideo: meeting.isVideo,
+            }),
+          );
+          console.log(`[MEETING] meeting-created envoyé à ${ws.userId}`);
         } catch (error) {
           console.error(`[MEETING] Erreur dans meeting-create :`, error);
           ws.send(

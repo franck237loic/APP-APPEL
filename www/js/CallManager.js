@@ -9,43 +9,13 @@ class CallManager {
   static RECONNECT_DELAY = 5000;
 
   static RTC_CONFIG = {
-    // iceServers: [
-    //   { urls: "stun:stun.l.google.com:19302" },
-    //   { urls: "stun:stun1.l.google.com:19302" },
-    //   { urls: "stun:stun2.l.google.com:19302" },
-    //   {
-    //     urls: [
-    //       "turn:openrelay.metered.ca:80",
-    //       "turns:openrelay.metered.ca:443",
-    //     ],
-    //     username: "openrelayproject",
-    //     credential: "openrelayproject",
-    //   },
-    // ],
- 
-  "iceServers": [
-      {
-        "urls": "stun:stun.relay.metered.ca:80"
-      },
-      {
-        "urls": "turn:socialstatus.furthermarket.com:80",
-        "username": "coturn",
-        "credential": "Fm@camtel2026coturn"
-      },
-      {
-        "urls": "turn:socialstatus.furthermarket.com:443?transport=udp",
-        "username": "coturn",
-        "credential": "Fm@camtel2026coturn"
-      },
-      {
-        "urls": "turn:socialstatus.furthermarket.com:443?transport=tcp",
-        "username": "coturn",
-        "credential": "Fm@camtel2026coturn"
-      }
+    // iceServers seront récupérés dynamiquement depuis le serveur (message "get-ice-servers")
+    // pour éviter d'exposer les credentials TURN en clair dans le client
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }, // STUN public fallback
     ],
-    "iceTransportPolicy":"relay",
-    "bundlePolicy": "max-bundle"
-    
+    iceTransportPolicy: "relay",
+    bundlePolicy: "max-bundle"
   };
   
 // ajouter icônes et labels pour les routes audio (écouteur, haut-parleur, bluetooth)
@@ -1449,7 +1419,7 @@ button, [role="button"] { cursor: pointer; }
     display: flex;
     justify-content: center;
     align-items: flex-start;
-    gap: 14px;
+    gap: 8px;
     padding: 10px 8px 22px;
 }
 /* Les boutons caméra sont maintenant toujours visibles (peut activer caméra même en appel audio) */
@@ -1515,6 +1485,33 @@ button, [role="button"] { cursor: pointer; }
 }
 .group-sheet-cancel { background: #2a3942; color: #fff; }
 .group-sheet-confirm { background: #00a884; color: #fff; }
+
+/* Bouton Like flottant sur l'écran (style TikTok) */
+.group-float-like {
+  position: absolute;
+  bottom: 120px;
+  right: 20px;
+  width: 60px;
+  height: 60px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  color: #fff;
+  font-size: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s, background 0.2s;
+  z-index: 50;
+}
+.group-float-like:active {
+  transform: scale(0.9);
+}
+.group-float-like.liked {
+  background: #ea0038;
+}
 `;
   }
 
@@ -1728,6 +1725,12 @@ button, [role="button"] { cursor: pointer; }
           <span class="js-mic-label" data-label-on="Micro" data-label-muted="Muet">Micro</span>
         </div>
         <div class="video-control-wrapper">
+          <button class="video-control-btn btn-like" type="button" id="btn-like" onclick="sendVideoLike()" aria-label="Like">
+            <i class="fa-solid fa-heart"></i>
+          </button>
+          <span>Like</span>
+        </div>
+        <div class="video-control-wrapper">
           <button class="video-control-btn" type="button" id="btn-screen-share" onclick="toggleScreenShare()">
             <i class="fa-solid fa-desktop" id="screen-share-icon"></i>
           </button>
@@ -1825,6 +1828,12 @@ button, [role="button"] { cursor: pointer; }
         </div>
       </div>
 
+      <!-- Bouton Like flottant sur l'écran (style TikTok) -->
+      <button class="group-float-like" type="button" id="btn-group-like" onclick="sendGroupLike()" aria-label="Like">
+        <i class="fa-solid fa-heart"></i>
+      </button>
+      </div>
+
     </div>
   </div>
 
@@ -1852,6 +1861,7 @@ button, [role="button"] { cursor: pointer; }
 
   constructor() {
     this.myId = null;
+    this.authToken = null; // Token d'authentification pour register-user
     this.targetUserId = null;
     // Référence de connexion cordova-plugin-advanced-websocket (remplace
     // l'ancien objet natif WebSocket de cordova-plugin-websocket). Le plugin
@@ -2339,7 +2349,12 @@ button, [role="button"] { cursor: pointer; }
       this.myId = "ID-" + Math.floor(100000 + Math.random() * 900000);
       localStorage.setItem("app_user_id", this.myId);
     }
+    
+    // Charger le token d'authentification existant
+    this.authToken = localStorage.getItem("app_auth_token");
+    
     console.log("👤 Mon ID local :", this.myId);
+    console.log("🔐 Token d'authentification :", this.authToken ? "existant" : "aucun");
   };
 
   /* =========================================================
@@ -2793,6 +2808,7 @@ button, [role="button"] { cursor: pointer; }
           type: "register-user",
           userId: userId,
           pushToken: "browser",
+          authToken: this.authToken || null,
         }));
       }
     } else {
@@ -2805,6 +2821,7 @@ button, [role="button"] { cursor: pointer; }
             type: "register-user",
             userId: userId,
             pushToken: this.deviceToken || "android",
+            authToken: this.authToken || null,
           }),
         );
       }
@@ -2838,6 +2855,27 @@ button, [role="button"] { cursor: pointer; }
     this.heartbeatTimer = null;
   };
 
+  requestIceServers = () => {
+    const wsPlugin = window.CordovaWebsocketPlugin || cordova?.plugins?.CordovaWebsocketPlugin;
+    
+    if (!window.cordova || !wsPlugin) {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: "get-ice-servers" }));
+      }
+    } else {
+      if (this.wsId != null) {
+        wsPlugin.wsSend(this.wsId, JSON.stringify({ type: "get-ice-servers" }));
+      }
+    }
+  };
+
+  handleIceServers = (data) => {
+    if (data.iceServers && Array.isArray(data.iceServers)) {
+      CallManager.RTC_CONFIG.iceServers = data.iceServers;
+      console.log("🧊 IceServers TURN reçus et configurés :", data.iceServers.length, "serveurs");
+    }
+  };
+
   handleRegistered = (data) => {
     const status = (data && data.status) || "";
     if (status.startsWith("failed")) {
@@ -2845,9 +2883,21 @@ button, [role="button"] { cursor: pointer; }
       this.updateStatus("Inscription refusée par le serveur");
       return;
     }
+    
+    // Stocker le token d'authentification reçu du serveur
+    if (data.authToken) {
+      this.authToken = data.authToken;
+      localStorage.setItem("app_auth_token", data.authToken);
+      console.log("🔐 Token d'authentification stocké");
+    }
+    
     this.wsReadyState = WebSocket.OPEN;
     this.updateStatus("En ligne");
     console.log("✅ Inscription acceptée :", data);
+    
+    // Demander les iceServers TURN sécurisés au serveur
+    this.requestIceServers();
+    
     // Pour le navigateur, on marque comme connecté immédiatement
     if (!window.cordova || !window.CordovaWebsocketPlugin) {
       console.log("🌐 Mode navigateur : inscription réussie");
@@ -2878,6 +2928,15 @@ button, [role="button"] { cursor: pointer; }
       case "registered":
         this.handleRegistered(data);
         this.onGroupSocketRegistered(); // GROUPE : re-jonction éventuelle de la salle
+        break;
+
+      case "registration-error":
+        console.error("❌ Erreur d'inscription :", data.reason);
+        this.showCallToast("Erreur d'inscription: " + data.reason);
+        break;
+
+      case "ice-servers":
+        this.handleIceServers(data);
         break;
 
       case "incoming-call":
@@ -2922,6 +2981,10 @@ button, [role="button"] { cursor: pointer; }
         this.handleRemoteScreenShare(data);
         break;
 
+      case "call-like":
+        this.handleCallLike(data);
+        break;
+
       case "call-refused":
       case "call-end":
         // GROUPE : un message 1-à-1 ne doit jamais fermer un appel de groupe
@@ -2939,6 +3002,7 @@ button, [role="button"] { cursor: pointer; }
       case "group-ended":
       case "group-error":
       case "group-busy":
+      case "group-like":
         this.handleGroupMessage(action, data);
         break;
 
@@ -6910,6 +6974,80 @@ showLocalStorageOnScreen = () => {
     this.updateGroupSpeakerUI();
   };
 
+  // ===== SYSTÈME DE LIKE =====
+  // Envoyer un like à tous les participants de l'appel de groupe
+  sendGroupLike = () => {
+    if (!this.groupRoomId) return;
+    const likeEmoji = "❤️";
+    this.sendSignal({
+      type: "group-like",
+      roomId: this.groupRoomId,
+      emoji: likeEmoji,
+      userId: this.myId,
+    });
+    // Animation locale sur notre propre tuile
+    this.showLikeAnimation(this.myId, likeEmoji);
+  };
+
+  // Envoyer un like pour l'appel vidéo 1-à-1
+  sendVideoLike = () => {
+    if (!this.targetUserId) {
+      console.warn("⚠️ [LIKE-1TO1] targetUserId est null, impossible d'envoyer le like");
+      return;
+    }
+    const likeEmoji = "❤️";
+    this.sendSignal({
+      type: "call-like",
+      targetId: this.targetUserId,
+      emoji: likeEmoji,
+      userId: this.myId,
+    });
+    // Animation locale
+    this.showVideoLikeAnimation("local", likeEmoji);
+  };
+
+  // Animation de like sur la tuile d'un participant (groupe)
+  // NB : les tuiles sont stockées dans this.groupTiles (Map), elles n'ont pas d'id DOM.
+  showLikeAnimation = (userId, emoji) => {
+    const tile = this.groupTiles && this.groupTiles.get(userId);
+    if (!tile) {
+      console.warn(`⚠️ [LIKE] Tuile non trouvée pour ${userId}`);
+      return;
+    }
+    const like = document.createElement("div");
+    like.className = "like-animation";
+    like.textContent = emoji;
+    tile.appendChild(like);
+    setTimeout(() => like.remove(), 3000);
+  };
+
+  // Animation de like sur la vidéo (1-à-1) : "local" ou "remote"
+  showVideoLikeAnimation = (videoType, emoji) => {
+    const videoElement = document.getElementById(videoType === "local" ? "local-video" : "remote-video");
+    const host = videoElement && videoElement.closest(".video-call-container");
+    if (!host) {
+      console.warn(`⚠️ [LIKE-1TO1] Conteneur vidéo non trouvé pour ${videoType}`);
+      return;
+    }
+    const like = document.createElement("div");
+    like.className = "like-animation like-animation-video";
+    like.textContent = emoji;
+    host.appendChild(like);
+    setTimeout(() => like.remove(), 3000);
+  };
+
+  // Réception d'un like (groupe)
+  handleGroupLike = (data) => {
+    if (!data.userId || !data.emoji) return;
+    this.showLikeAnimation(data.userId, data.emoji);
+  };
+
+  // Réception d'un like (1-à-1)
+  handleCallLike = (data) => {
+    if (!data.userId || !data.emoji) return;
+    this.showVideoLikeAnimation("remote", data.emoji);
+  };
+
   // --- Mises à jour visuelles des boutons de la barre de contrôles ---
   updateGroupMicUI = () => {
     document
@@ -7309,6 +7447,11 @@ showLocalStorageOnScreen = () => {
         console.log(`[GROUPE] group-busy reçu : ${data.userId} est déjà en appel`);
         this.showCallToast(`${data.userId} est déjà en appel`);
         // NE PAS annuler toute la création si d'autres invités sont OK (la salle existe déjà)
+        break;
+
+      // ===== SYSTÈME DE LIKE =====
+      case "group-like":
+        this.handleGroupLike(data);
         break;
     }
   };
@@ -8317,17 +8460,35 @@ showLocalStorageOnScreen = () => {
   ========================================================= */
 
   openGroupAddSheet = () => {
-    // Autorisé : pendant un appel de groupe OU pendant un appel 1-à-1 connecté
+    console.log("🔧 openGroupAddSheet appelé");
+    console.log("  - groupRoomId:", this.groupRoomId);
+    console.log("  - targetUserId:", this.targetUserId);
+    console.log("  - Éléments avec 'group' dans le DOM:", document.querySelectorAll('[id*="group"]').length);
+    // Autorisé : pendant un appel de groupe OU pendant un appel 1-à-1 (connecté ou en cours de connexion)
     // (dans ce second cas, l'appel sera transformé en groupe à la validation).
-    if (!this.groupRoomId && !this.isOneToOneConnected()) {
-      this.showCallToast("Attendez que l'appel soit connecté");
+    if (!this.groupRoomId && !this.targetUserId) {
+      this.showCallToast("Aucun appel en cours");
       return;
     }
     this.groupSelectedIds = [];
     this.renderGroupInviteeChips();
     this.setGroupSheetHint("");
     const sheet = document.getElementById("group-add-sheet");
-    if (sheet) sheet.classList.add("show");
+    console.log("  - sheet trouvé:", !!sheet);
+    if (!sheet) {
+      console.log("  - ⚠️ Élément group-add-sheet introuvable, tentative de réinjection...");
+      const host = document.createElement("div");
+      host.innerHTML = CallManager.HTML;
+      const sheetFromHost = host.querySelector("#group-add-sheet");
+      if (sheetFromHost) {
+        document.body.appendChild(sheetFromHost);
+        console.log("  - ✅ Sheet réinjecté avec succès");
+      } else {
+        console.log("  - ❌ Sheet introuvable même dans le HTML template");
+      }
+    }
+    const sheet2 = document.getElementById("group-add-sheet");
+    if (sheet2) sheet2.classList.add("show");
     setTimeout(() => {
       const input = document.getElementById("group-add-input");
       if (input) input.focus();
@@ -8721,6 +8882,8 @@ window.closeInterfaces = callManager.closeInterface;
 window.connectWebSocket = callManager.connectWebSocket;
 window.toggleMicrophone = callManager.toggleMicrophone;
 window.makeVideoCall = callManager.makeVideoCall;
+window.sendVideoLike = callManager.sendVideoLike;
+window.sendGroupLike = callManager.sendGroupLike;
 
 // ===== APPEL DE GROUPE : fonctions appelées par les onclick du HTML =====
 window.startGroupCall = callManager.startGroupCall;
