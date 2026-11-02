@@ -1683,6 +1683,12 @@ button, [role="button"] { cursor: pointer; }
           <span class="js-mic-label" data-label-on="Micro" data-label-muted="Muet">Micro</span>
         </div>
         <div class="video-control-wrapper">
+          <button class="video-control-btn btn-like" type="button" id="btn-like" onclick="sendVideoLike()" aria-label="Like">
+            <i class="fa-solid fa-heart"></i>
+          </button>
+          <span>Like</span>
+        </div>
+        <div class="video-control-wrapper">
           <button class="video-control-btn" type="button" id="btn-screen-share" onclick="toggleScreenShare()">
             <i class="fa-solid fa-desktop" id="screen-share-icon"></i>
           </button>
@@ -1771,6 +1777,12 @@ button, [role="button"] { cursor: pointer; }
             <i class="fa-solid fa-microphone js-group-mic-icon"></i>
           </button>
           <span>Micro</span>
+        </div>
+        <div class="video-control-wrapper">
+          <button class="video-control-btn btn-like" type="button" onclick="sendGroupLike()" aria-label="Like">
+            <i class="fa-solid fa-heart"></i>
+          </button>
+          <span>Like</span>
         </div>
         <div class="video-control-wrapper">
           <button class="video-control-btn video-hangup" type="button" onclick="leaveGroupCall()" aria-label="Quitter l'appel">
@@ -2885,6 +2897,10 @@ button, [role="button"] { cursor: pointer; }
         this.handleRemoteScreenShare(data);
         break;
 
+      case "call-like":
+        this.handleCallLike(data);
+        break;
+
       case "call-refused":
       case "call-end":
         // GROUPE : un message 1-à-1 ne doit jamais fermer un appel de groupe
@@ -2902,6 +2918,7 @@ button, [role="button"] { cursor: pointer; }
       case "group-ended":
       case "group-error":
       case "group-busy":
+      case "group-like":
         this.handleGroupMessage(action, data);
         break;
 
@@ -6788,6 +6805,108 @@ showLocalStorageOnScreen = () => {
     this.updateGroupSpeakerUI();
   };
 
+  // ===== SYSTÈME DE LIKE =====
+  // Envoyer un like à tous les participants de l'appel de groupe
+  sendGroupLike = () => {
+    if (!this.groupRoomId) return;
+
+    const likeEmoji = "❤️";
+    console.log(`📱 [LIKE] Envoi like depuis ${this.myId}`);
+
+    this.sendSignal({
+      type: "group-like",
+      roomId: this.groupRoomId,
+      emoji: likeEmoji,
+      userId: this.myId,
+    });
+
+    // Afficher l'animation sur notre propre vidéo
+    this.showLikeAnimation(this.myId, likeEmoji);
+  };
+
+  // Envoyer un like pour l'appel vidéo 1-à-1
+  sendVideoLike = () => {
+    if (!this.targetUserId) return;
+
+    const likeEmoji = "❤️";
+    console.log(`📱 [LIKE-1TO1] Envoi like depuis ${this.myId} vers ${this.targetUserId}`);
+
+    this.sendSignal({
+      type: "call-like",
+      targetId: this.targetUserId,
+      emoji: likeEmoji,
+      userId: this.myId,
+    });
+
+    // Afficher l'animation sur notre propre vidéo locale
+    this.showVideoLikeAnimation("local", likeEmoji);
+  };
+
+  // Afficher l'animation de like sur la tuile vidéo d'un participant (groupe)
+  showLikeAnimation = (userId, emoji) => {
+    const tile = document.getElementById(`group-tile-${userId}`);
+    if (!tile) {
+      console.warn(`⚠️ [LIKE] Tuile non trouvée pour ${userId}`);
+      return;
+    }
+
+    const like = document.createElement("div");
+    like.className = "like-animation";
+    like.textContent = emoji;
+    tile.appendChild(like);
+
+    console.log(`✅ [LIKE] Animation affichée pour ${userId}`);
+
+    // Supprimer après 3 secondes
+    setTimeout(() => {
+      like.remove();
+      console.log(`🗑️ [LIKE] Animation supprimée pour ${userId}`);
+    }, 3000);
+  };
+
+  // Afficher l'animation de like sur la vidéo (1-à-1)
+  showVideoLikeAnimation = (videoType, emoji) => {
+    // videoType peut être "local" ou "remote"
+    const videoElement = document.getElementById(videoType === "local" ? "local-video" : "remote-video");
+    if (!videoElement) {
+      console.warn(`⚠️ [LIKE-1TO1] Vidéo non trouvée pour ${videoType}`);
+      return;
+    }
+
+    const like = document.createElement("div");
+    like.className = "like-animation like-animation-video";
+    like.textContent = emoji;
+    videoElement.parentElement.appendChild(like);
+
+    console.log(`✅ [LIKE-1TO1] Animation affichée sur vidéo ${videoType}`);
+
+    // Supprimer après 3 secondes
+    setTimeout(() => {
+      like.remove();
+      console.log(`🗑️ [LIKE-1TO1] Animation supprimée pour ${videoType}`);
+    }, 3000);
+  };
+
+  // Gérer la réception d'un like d'un autre participant (groupe)
+  handleGroupLike = (data) => {
+    if (!data.userId || !data.emoji) return;
+
+    console.log(`📱 [LIKE] Like reçu de ${data.userId}: ${data.emoji}`);
+
+    // Afficher l'animation sur la tuile vidéo de l'expéditeur
+    this.showLikeAnimation(data.userId, data.emoji);
+  };
+
+  // Gérer la réception d'un like pour l'appel 1-à-1
+  handleCallLike = (data) => {
+    if (!data.userId || !data.emoji) return;
+
+    console.log(`📱 [LIKE-1TO1] Like reçu de ${data.userId}: ${data.emoji}`);
+
+    // Afficher l'animation sur la vidéo distante
+    this.showVideoLikeAnimation("remote", data.emoji);
+  };
+
   // --- Mises à jour visuelles des boutons de la barre de contrôles ---
   updateGroupMicUI = () => {
     document
@@ -7220,6 +7339,11 @@ showLocalStorageOnScreen = () => {
         console.log(`[GROUPE] group-busy reçu : ${data.userId} est déjà en appel`);
         this.showCallToast(`${data.userId} est déjà en appel`);
         // NE PAS annuler toute la création si d'autres invités sont OK (la salle existe déjà)
+        break;
+
+      // ===== SYSTÈME DE LIKE =====
+      case "group-like":
+        this.handleGroupLike(data);
         break;
     }
   };
@@ -8702,6 +8826,8 @@ window.openGroupAddSheet = callManager.openGroupAddSheet;
 window.closeGroupAddSheet = callManager.closeGroupAddSheet;
 window.addGroupInviteeFromInput = callManager.addGroupInviteeFromInput;
 window.confirmGroupAdd = callManager.confirmGroupAdd;
+window.sendGroupLike = callManager.sendGroupLike;
+window.sendVideoLike = callManager.sendVideoLike;
 window.toggleCamera = callManager.toggleCamera;
 window.switchCamera = callManager.switchCamera;
 window.onNativeIncomingCall = callManager.onNativeIncomingCall;

@@ -1659,6 +1659,24 @@ wss.on("connection", (ws) => {
         return;
       }
 
+      // 10. Like pour appel vidéo 1-à-1
+      // Envoyé par : A ou B -> Reçu par : l'autre participant
+      // Pourquoi : Relayer les likes pendant les appels vidéo
+      if (type === "call-like") {
+        const targetWs = users.get(targetId)?.ws;
+        if (targetWs && targetWs.readyState === WebSocket.OPEN) {
+          targetWs.send(
+            JSON.stringify({
+              type: "call-like",
+              emoji: data.emoji,
+              userId: ws.userId,
+            }),
+          );
+          console.log(`[LIKE-1TO1] Like relayé de ${ws.userId} vers ${targetId}`);
+        }
+        return;
+      }
+
       // =========================================================
       // APPEL DE GROUPE — Gestion des messages de groupe (Style WhatsApp)
       // =========================================================
@@ -2069,6 +2087,46 @@ wss.on("connection", (ws) => {
               payload,
             }),
           );
+        }
+        return;
+      }
+
+      // 16. Like entre participants d'un groupe
+      // Envoyé par : Participant A JOINED -> Reçu par : Tous les participants JOINED (sauf expéditeur)
+      // Pourquoi : Permettre aux participants d'envoyer des likes (❤️) pendant l'appel
+      if (type === "group-like") {
+        const { roomId, emoji, userId } = data;
+
+        console.log(`[LIKE] group-like reçu de ${userId} dans salle ${roomId}: ${emoji}`);
+
+        // Vérifier que l'expéditeur est JOINED dans la salle
+        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) {
+          console.warn(`⚠️ [LIKE] Utilisateur ${ws.userId} n'est pas JOINED dans la salle ${roomId}`);
+          return;
+        }
+
+        // Relayer le like à tous les participants JOINED de la salle (sauf l'expéditeur)
+        const room = roomManager.rooms.get(roomId);
+        if (!room) {
+          console.warn(`⚠️ [LIKE] Salle ${roomId} introuvable`);
+          return;
+        }
+
+        for (const [participantId, participant] of room.participants) {
+          if (participantId !== userId && participant.state === "JOINED") {
+            const participantUser = users.get(participantId);
+            if (participantUser?.ws && participantUser.ws.readyState === WebSocket.OPEN) {
+              participantUser.ws.send(
+                JSON.stringify({
+                  type: "group-like",
+                  roomId,
+                  emoji,
+                  userId,
+                }),
+              );
+              console.log(`✅ [LIKE] Like relayé à ${participantId}`);
+            }
+          }
         }
         return;
       }
