@@ -1867,6 +1867,9 @@ wss.on("connection", (ws) => {
             ws: ws,
             pushToken: pushToken || existingUser.pushToken || null,
           });
+          
+          // IMPORTANT: Définir ws.userId pour les vérifications ultérieures
+          ws.userId = userId;
         } else {
           // Nouvel utilisateur : générer un token
           const newToken = generateAuthToken(userId);
@@ -1879,6 +1882,9 @@ wss.on("connection", (ws) => {
             ws: ws,
             pushToken: pushToken || null,
           });
+          
+          // IMPORTANT: Définir ws.userId pour les vérifications ultérieures
+          ws.userId = userId;
         }
 
         const currentUser = users.get(userId);
@@ -1894,6 +1900,9 @@ wss.on("connection", (ws) => {
 
         // Annuler le délai de grâce si l'utilisateur se reconnecte
         roomManager.cancelGracePeriod(userId);
+
+        // IMPORTANT: Définir ws.userId pour les vérifications ultérieures
+        ws.userId = userId;
 
         ws.send(
           JSON.stringify({
