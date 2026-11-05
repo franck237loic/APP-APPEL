@@ -74,18 +74,31 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
 
 CallManager.prototype.handleMeetingWaiting = function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
-  
+
   // Stocker les données pour l'auto-join
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
-  
+
   // Calculer le décalage d'horloge
   if (data.serverNow) {
     this.clockOffset = data.serverNow - Date.now();
     console.log("🕐 Décalage d'horloge:", this.clockOffset, "ms");
   }
-  
+
   this.showMeetingWaitingView(data);
+};
+
+CallManager.prototype.handleMeetingHostStarted = function(data) {
+  console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
+  this.showCallToast("L'hôte a démarré la réunion");
+
+  // Fermer la salle d'attente
+  this.closeMeetingWaitingView();
+
+  // Rejoindre automatiquement
+  if (this.meetingPendingCode) {
+    this.joinMeeting(this.meetingPendingCode);
+  }
 };
 
 CallManager.prototype.handleMeetingError = function(data) {
@@ -93,6 +106,19 @@ CallManager.prototype.handleMeetingError = function(data) {
   this.showCallToast("Erreur: " + data.reason);
   this.closeMeetingWaitingView();
   this.closeMeetingCreatedView();
+};
+
+CallManager.prototype.handleMeetingHostStarted = function(data) {
+  console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
+  this.showCallToast("L'hôte a démarré la réunion");
+
+  // Fermer la salle d'attente
+  this.closeMeetingWaitingView();
+
+  // Rejoindre automatiquement
+  if (this.meetingPendingCode) {
+    this.joinMeeting(this.meetingPendingCode);
+  }
 };
 
 CallManager.prototype.handleMeetingCancelled = function(data) {
@@ -778,19 +804,19 @@ CallManager.prototype.showMeetingCreatedView = function(data) {
           </div>
           
           <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
-            <button onclick="window.shareMeetingLink('${data.link}')" 
-                    style="width: 100%; padding: 12px; background: #00a884; border: none; border-radius: 20px; 
-                           color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex; 
+            <button onclick="window.startMeetingFromCreated('${data.code}')"
+                    style="width: 100%; padding: 12px; background: #00a884; border: none; border-radius: 20px;
+                           color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex;
+                           align-items: center; justify-content: center; gap: 8px;">
+              <i class="fa-solid fa-play"></i>
+              Démarrer maintenant
+            </button>
+            <button onclick="window.shareMeetingLink('${data.link}')"
+                    style="width: 100%; padding: 12px; background: #374045; border: none; border-radius: 20px;
+                           color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex;
                            align-items: center; justify-content: center; gap: 8px;">
               <i class="fa-solid fa-share-nodes"></i>
               Partager
-            </button>
-            <button onclick="window.startMeetingFromCreated('${data.code}')" 
-                    style="width: 100%; padding: 12px; background: #374045; border: none; border-radius: 20px; 
-                           color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex; 
-                           align-items: center; justify-content: center; gap: 8px;">
-              <i class="fa-solid fa-play"></i>
-              Commencer
             </button>
           </div>
         </div>
@@ -1213,13 +1239,15 @@ CallManager.prototype.confirmJoinMeeting = function() {
 CallManager.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
-  
+
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.add("active");
     this._updateMeetingCountdown(data);
     return;
   }
-  
+
+  const isCreator = data.createdBy === this.myId;
+
   const html = `
     <div class="view-container meeting-waiting-view" id="meeting-waiting-view">
       <div class="app-container">
@@ -1228,19 +1256,19 @@ CallManager.prototype.showMeetingWaitingView = function(data) {
             <i class="fa-solid fa-arrow-left"></i>
           </button>
           <div class="contact-info">
-            <div class="contact-name">Salle d'attente</div>
+            <div class="contact-name">${isCreator ? 'Vous êtes l\'hôte' : 'Salle d\'attente'}</div>
           </div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 16px;">
-          <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #2a3942, #1f2c33); 
+          <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #2a3942, #1f2c33);
                      display: flex; align-items: center; justify-content: center;">
             <i class="fa-solid fa-hourglass-half" style="font-size: 50px; color: #8696a0;"></i>
           </div>
-          
+
           <div style="text-align: center;">
-            <div style="font-size: 16px; color: #8696a0; margin-bottom: 8px;">La réunion commence bientôt</div>
+            <div style="font-size: 16px; color: #8696a0; margin-bottom: 8px;">${isCreator ? 'Vous pouvez démarrer maintenant' : 'La réunion commence bientôt'}</div>
             <div style="font-size: 24px; font-weight: 500; color: white; margin-bottom: 16px;">
               Temps restant
             </div>
@@ -1248,14 +1276,24 @@ CallManager.prototype.showMeetingWaitingView = function(data) {
               --
             </div>
           </div>
-          
+
           <div style="width: 100%; max-width: 300px; text-align: center; color: #8696a0; font-size: 13px; line-height: 1.5;">
-            Vous serez rejoint automatiquement lorsque la réunion commencera. Le créateur peut également la démarrer avant l'heure prévue.
+            ${isCreator
+              ? 'En tant qu\'hôte, vous pouvez démarrer la réunion avant l\'heure prévue. Les participants en attente seront notifiés.'
+              : 'Vous serez rejoint automatiquement lorsque la réunion commencera. L\'hôte peut également la démarrer avant l\'heure prévue.'}
           </div>
-          
-          <div style="width: 100%;">
-            <button onclick="window.closeMeetingWaitingView()" 
-                    style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px; 
+
+          <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
+            ${isCreator ? `
+              <button onclick="window.startMeeting('${data.code}')"
+                      style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px;
+                             color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
+                <i class="fa-solid fa-play" style="margin-right: 8px;"></i>
+                Démarrer maintenant
+              </button>
+            ` : ''}
+            <button onclick="window.closeMeetingWaitingView()"
+                    style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px;
                            color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
               Quitter
             </button>
@@ -1264,11 +1302,11 @@ CallManager.prototype.showMeetingWaitingView = function(data) {
       </div>
     </div>
   `;
-  
+
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingWaitingView = document.getElementById("meeting-waiting-view");
   this.meetingWaitingView.classList.add("active");
-  
+
   this._updateMeetingCountdown(data);
 };
 

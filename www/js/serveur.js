@@ -1380,6 +1380,20 @@ class MeetingManager {
     await this._removeWaitingUser(meeting.id, userId);
     await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
 
+    // Envoyer notification "hôte a démarré" aux participants en attente
+    for (const waitingUserId of waitingUsers) {
+      const user = users.get(waitingUserId);
+      if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+        user.ws.send(JSON.stringify({
+          type: "meeting-host-started",
+          meetingId: meeting.id,
+          roomId: room.roomId,
+          hostId: userId,
+          title: meeting.title,
+        }));
+      }
+    }
+
     console.log(`📅 Réunion ${meeting.id} démarrée manuellement (salle ${room.roomId}), fin à ${new Date(newEndsAt).toISOString()}`);
 
     return {
@@ -1458,6 +1472,7 @@ class MeetingManager {
         scheduledAt: meeting.scheduledAt,
         code: meeting.code,
         meetingId: meeting.id,
+        createdBy: meeting.createdBy,
         serverNow: now,
         opensAt: meetingStart,
         startsAt: meetingStart,

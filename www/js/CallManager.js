@@ -3129,6 +3129,13 @@ button, [role="button"] { cursor: pointer; }
         this.handleMeetingEnded(data);
         break;
 
+      case "meeting-host-started":
+        // Handler défini dans Meetings.js
+        if (window.callManager && window.callManager.handleMeetingHostStarted) {
+          window.callManager.handleMeetingHostStarted(data);
+        }
+        break;
+
       case "meeting-list":
         this.handleMeetingList(data);
         break;
