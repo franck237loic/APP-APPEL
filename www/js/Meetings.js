@@ -45,6 +45,10 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
   this.groupRoomId = data.roomId;
   this.groupIsVideo = !!data.isVideo;
 
+  // Stocker les infos de la réunion
+  this.currentMeetingTitle = data.title || "Réunion";
+  this.currentMeetingId = data.meetingId;
+
   // Le flux de réunion doit avoir les médias du groupe prêts avant d'ouvrir
   // la salle live et d'envoyer le group-join. Sans cela le client se retrouve
   // avec un roster mais sans peer WebRTC réel, ce qui provoque la fausse
@@ -69,7 +73,8 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
     roomId: data.roomId,
   });
 
-  this.showGroupScreen();
+  // Afficher l'écran de réunion spécifique (Google Meet style)
+  this.showMeetingScreen(data);
 };
 
 CallManager.prototype.handleMeetingWaiting = function(data) {
@@ -121,6 +126,253 @@ CallManager.prototype.handleMeetingHostStarted = function(data) {
   }
 };
 
+/**
+ * Afficher l'écran de réunion (Google Meet style)
+ */
+CallManager.prototype.showMeetingScreen = function(data) {
+  console.log("📅 [MEETING] Affichage écran de réunion:", data);
+
+  if (this.meetingScreen) {
+    this.meetingScreen.classList.add("active");
+    return;
+  }
+
+  const html = `
+    <div class="view-container meeting-screen" id="meeting-screen">
+      <div class="meeting-container">
+        <!-- Header de réunion -->
+        <div class="meeting-header">
+          <div class="meeting-info">
+            <h1 class="meeting-title">${this.currentMeetingTitle}</h1>
+            <div class="meeting-time">${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
+          </div>
+          <div class="meeting-actions">
+            <button class="meeting-action-btn" onclick="window.meetingParticipants.show('${this.currentMeetingId}', '${this.groupRoomId}', true)" title="Participants">
+              <i class="fa-solid fa-users"></i>
+              <span id="participant-count">1</span>
+            </button>
+            <button class="meeting-action-btn" onclick="window.meetingChat.show('${this.currentMeetingId}', '${this.groupRoomId}')" title="Chat">
+              <i class="fa-solid fa-comment"></i>
+            </button>
+            <button class="meeting-action-btn" onclick="window.copyMeetingCode('${this.meetingPendingCode || ''}')" title="Code">
+              <i class="fa-solid fa-key"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Zone vidéo principale -->
+        <div class="meeting-video-area" id="meeting-video-area">
+          <div class="video-grid" id="meeting-video-grid">
+            <!-- Votre vidéo -->
+            <div class="video-tile self" id="self-video-tile">
+              <video id="meeting-local-video" autoplay muted playsinline></video>
+              <div class="video-tile-info">
+                <span class="user-name">Vous</span>
+                <span class="user-badge">Hôte</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Barre de contrôle (bas) -->
+        <div class="meeting-controls">
+          <div class="meeting-time-display" id="meeting-time-display">
+            00:00:00
+          </div>
+          <div class="meeting-control-buttons">
+            <button class="meeting-control-btn" id="meeting-mic-btn" onclick="window.toggleMeetingMic()">
+              <i class="fa-solid fa-microphone"></i>
+            </button>
+            <button class="meeting-control-btn" id="meeting-cam-btn" onclick="window.toggleMeetingCam()">
+              <i class="fa-solid fa-video"></i>
+            </button>
+            <button class="meeting-control-btn" id="meeting-hand-btn" onclick="window.toggleMeetingHand()">
+              <i class="fa-solid fa-hand"></i>
+            </button>
+            <button class="meeting-control-btn" id="meeting-reaction-btn" onclick="window.showMeetingReactions()">
+              <i class="fa-solid fa-face-smile"></i>
+            </button>
+            <button class="meeting-control-btn meeting-hangup" onclick="window.leaveMeeting()">
+              <i class="fa-solid fa-phone-slash"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML("beforeend", html);
+  this.meetingScreen = document.getElementById("meeting-screen");
+  this.meetingScreen.classList.add("active");
+
+  // Attacher la vidéo locale
+  this.attachMeetingLocalVideo();
+
+  // Démarrer le timer de réunion
+  this.startMeetingTimer();
+};
+
+/**
+ * Attacher la vidéo locale à l'écran de réunion
+ */
+CallManager.prototype.attachMeetingLocalVideo = function() {
+  const localVideo = document.getElementById("meeting-local-video");
+  if (localVideo && this.groupLocalStream) {
+    localVideo.srcObject = this.groupLocalStream;
+  }
+};
+
+/**
+ * Démarrer le timer de réunion
+ */
+CallManager.prototype.startMeetingTimer = function() {
+  this.meetingStartTime = Date.now();
+
+  if (this.meetingTimerInterval) {
+    clearInterval(this.meetingTimerInterval);
+  }
+
+  this.meetingTimerInterval = setInterval(() => {
+    const elapsed = Date.now() - this.meetingStartTime;
+    const hours = Math.floor(elapsed / 3600000);
+    const minutes = Math.floor((elapsed % 3600000) / 60000);
+    const seconds = Math.floor((elapsed % 60000) / 1000);
+
+    const timeDisplay = document.getElementById("meeting-time-display");
+    if (timeDisplay) {
+      timeDisplay.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+  }, 1000);
+};
+
+/**
+ * Arrêter le timer de réunion
+ */
+CallManager.prototype.stopMeetingTimer = function() {
+  if (this.meetingTimerInterval) {
+    clearInterval(this.meetingTimerInterval);
+    this.meetingTimerInterval = null;
+  }
+};
+
+/**
+ * Fermer l'écran de réunion
+ */
+CallManager.prototype.closeMeetingScreen = function() {
+  this.stopMeetingTimer();
+
+  if (this.meetingScreen) {
+    this.meetingScreen.classList.remove("active");
+    setTimeout(() => {
+      if (this.meetingScreen) {
+        this.meetingScreen.remove();
+        this.meetingScreen = null;
+      }
+    }, 300);
+  }
+};
+
+/**
+ * Basculer le microphone (réunion)
+ */
+CallManager.prototype.toggleMeetingMic = function() {
+  const btn = document.getElementById("meeting-mic-btn");
+  if (!btn) return;
+
+  const isEnabled = this.isGroupMicEnabled !== false;
+
+  if (isEnabled) {
+    this.disableGroupMicrophone();
+    btn.classList.remove("active");
+    btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
+  } else {
+    this.enableGroupMicrophone();
+    btn.classList.add("active");
+    btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+  }
+  this.isGroupMicEnabled = !isEnabled;
+};
+
+/**
+ * Basculer la caméra (réunion)
+ */
+CallManager.prototype.toggleMeetingCam = function() {
+  const btn = document.getElementById("meeting-cam-btn");
+  if (!btn) return;
+
+  const isEnabled = this.isGroupCamEnabled !== false;
+
+  if (isEnabled) {
+    this.disableGroupCamera();
+    btn.classList.remove("active");
+    btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
+  } else {
+    this.enableGroupCamera();
+    btn.classList.add("active");
+    btn.innerHTML = '<i class="fa-solid fa-video"></i>';
+  }
+  this.isGroupCamEnabled = !isEnabled;
+};
+
+/**
+ * Lever la main
+ */
+CallManager.prototype.toggleMeetingHand = function() {
+  const btn = document.getElementById("meeting-hand-btn");
+  if (!btn) return;
+
+  if (this.handRaised) {
+    btn.classList.remove("active");
+    this.handRaised = false;
+    // TODO: Envoyer signal au serveur
+  } else {
+    btn.classList.add("active");
+    this.handRaised = true;
+    // TODO: Envoyer signal au serveur
+  }
+};
+
+/**
+ * Afficher les réactions
+ */
+CallManager.prototype.showMeetingReactions = function() {
+  // TODO: Implémenter le panel de réactions
+  this.showCallToast("Réactions bientôt disponibles");
+};
+
+/**
+ * Quitter la réunion
+ */
+CallManager.prototype.leaveMeeting = function() {
+  if (confirm("Voulez-vous vraiment quitter la réunion?")) {
+    this.closeMeetingScreen();
+    this.endGroupCall();
+  }
+};
+
+/**
+ * Ouvrir le panel participants
+ */
+window.showMeetingParticipants = function() {
+  if (window.callManager && window.meetingParticipants) {
+    const meetingId = window.callManager.currentMeetingId;
+    const roomId = window.callManager.groupRoomId;
+    const isHost = true; // TODO: Vérifier si l'utilisateur est l'hôte
+    window.meetingParticipants.show(meetingId, roomId, isHost);
+  }
+};
+
+/**
+ * Ouvrir le panel chat
+ */
+window.showMeetingChat = function() {
+  if (window.callManager && window.meetingChat) {
+    const meetingId = window.callManager.currentMeetingId;
+    const roomId = window.callManager.groupRoomId;
+    window.meetingChat.show(meetingId, roomId);
+  }
+};
+
 CallManager.prototype.handleMeetingCancelled = function(data) {
   console.log("📅 [MEETING] Réunion annulée:", data.meetingId);
   this.showCallToast("Réunion annulée");
@@ -137,6 +389,7 @@ CallManager.prototype.handleMeetingEnded = function(data) {
   this.showCallToast("Réunion terminée: " + data.reason);
   this.closeMeetingWaitingView();
   this.closeMeetingCreatedView();
+  this.closeMeetingScreen();
   // Fermer l'écran d'appel de groupe si actif
   if (this.groupRoomId) {
     this.endGroupCall();
