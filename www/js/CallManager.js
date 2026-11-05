@@ -3027,6 +3027,10 @@ button, [role="button"] { cursor: pointer; }
         this.handleMeetingCancelled(data);
         break;
 
+      case "meeting-ended":
+        this.handleMeetingEnded(data);
+        break;
+
       case "meeting-list":
         this.handleMeetingList(data);
         break;

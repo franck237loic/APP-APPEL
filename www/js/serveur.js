@@ -965,6 +965,19 @@ class MeetingManager {
     this.scheduleTimers = new Map();
   }
 
+  normalizeCode(code) {
+    if (!code && code !== 0) return "";
+    const cleaned = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!cleaned) return "";
+    if (cleaned.length === 9) {
+      return `${cleaned.slice(0, 3)}-${cleaned.slice(3, 6)}-${cleaned.slice(6, 9)}`;
+    }
+    if (cleaned.length === 11) {
+      return cleaned.replace(/(.{3})(?=.)/g, "$1-");
+    }
+    return cleaned;
+  }
+
   /**
    * =========================================================
    *   GÉNÉRER UN CODE COURT UNIQUE
@@ -1061,6 +1074,7 @@ class MeetingManager {
       roomId: null,
       createdAt: Date.now(),
       link,
+      success: true,
     };
 
     // Persister dans Firestore
@@ -1183,25 +1197,41 @@ class MeetingManager {
    * @returns {Promise<object|null>} Réunion ou null si introuvable
    */
   async getByCode(code) {
-    // Normaliser le code : majuscules, retirer les tirets
-    const normalizedCode = code.toUpperCase().replace(/-/g, "");
-    
+    const normalizedCode = this.normalizeCode(code);
+    const normalizedDigits = normalizedCode.replace(/-/g, "");
+    const candidateCodes = [...new Set([
+      normalizedCode,
+      normalizedDigits,
+      code ? String(code).trim() : "",
+      code ? String(code).trim().toUpperCase() : "",
+    ].filter(Boolean))];
+
     // Utiliser une requête where pour optimiser (nécessite un index Firestore sur 'code')
     // Fallback: si la requête échoue, utiliser la méthode get() complète
     try {
-      const snapshot = await db.collection("meetings").where("code", "==", code).limit(1).get();
-      if (!snapshot.empty) {
-        const doc = snapshot.docs[0];
-        return { id: doc.id, ...doc.data() };
+      for (const candidate of candidateCodes) {
+        const snapshot = await db.collection("meetings").where("code", "==", candidate).limit(1).get();
+        if (!snapshot.empty) {
+          const doc = snapshot.docs[0];
+          return { id: doc.id, ...doc.data() };
+        }
       }
     } catch (error) {
-      // Fallback si l'index n'existe pas encore
       console.warn("⚠️ Index Firestore sur 'code' manquant, utilisation du fallback");
+    }
+
+    try {
       const snapshot = await db.collection("meetings").get();
-      const doc = snapshot.docs.find(d => d.data().code.replace(/-/g, "") === normalizedCode);
+      const doc = snapshot.docs.find((d) => {
+        const currentCode = d.data().code;
+        if (!currentCode) return false;
+        return this.normalizeCode(currentCode).replace(/-/g, "") === normalizedDigits;
+      });
       if (doc) {
         return { id: doc.id, ...doc.data() };
       }
+    } catch (error) {
+      console.error("❌ Erreur fallback getByCode:", error);
     }
 
     return null;
@@ -1297,7 +1327,8 @@ class MeetingManager {
    * @returns {Promise<object>} Résultat (waiting, joined, error)
    */
   async join(code, userId) {
-    const meeting = await this.getByCode(code);
+    const normalizedCode = this.normalizeCode(code);
+    const meeting = await this.getByCode(normalizedCode);
 
     if (!meeting) {
       return { success: false, reason: "Code invalide" };
@@ -1312,27 +1343,38 @@ class MeetingManager {
     }
 
     const now = Date.now();
-    const windowStart = meeting.scheduledAt - this.ACCESS_WINDOW_BEFORE_MS;
+    const meetingStart = meeting.scheduledAt;
 
-    // Si c'est le créateur et que c'est avant l'heure, permettre de démarrer
+    console.log(`📅 [MEETING] join() - code: ${code}, userId: ${userId}`);
+    console.log(`📅 [MEETING] - scheduledAt: ${new Date(meeting.scheduledAt).toISOString()}`);
+    console.log(`📅 [MEETING] - now: ${new Date(now).toISOString()}`);
+    console.log(`📅 [MEETING] - status: ${meeting.status}`);
+    console.log(`📅 [MEETING] - isCreator: ${meeting.createdBy === userId}`);
+
+    // Si le créateur démarre la réunion avant l'heure prévue, on laisse le flux normal
+    // Même avant l'heure programmée, les participants peuvent entrer dans la salle d'attente
+    // et recevoir le compte à rebours jusqu'au démarrage réel de la réunion.
     const isCreator = meeting.createdBy === userId;
-    const canStartEarly = isCreator && now < windowStart;
+    const canStartEarly = isCreator && now < meetingStart;
 
-    // Trop tôt (sauf créateur qui peut démarrer) : retourner waiting avec temps restant
-    if (now < windowStart && !canStartEarly) {
-      const waitTimeMs = windowStart - now;
+    // TROP TÔT : les participants restent en salle d'attente, avec compte à rebours jusqu'à scheduledAt.
+    // Le créateur peut démarrer la réunion immédiatement, même avant l'heure prévue.
+    if (now < meetingStart && !isCreator) {
+      const waitTimeMs = meetingStart - now;
       const waitTimeMin = Math.ceil(waitTimeMs / 60000);
+      console.log(`📅 [MEETING] - En attente de démarrage : ${waitTimeMin}min restantes`);
       return {
         success: false,
         status: "waiting",
-        reason: "Trop tôt",
+        reason: "Réunion pas encore commencée",
         waitTimeMs,
         waitTimeMin,
         scheduledAt: meeting.scheduledAt,
         code: meeting.code,
         meetingId: meeting.id,
         serverNow: now,
-        opensAt: windowStart,
+        opensAt: meetingStart,
+        startsAt: meetingStart,
       };
     }
 

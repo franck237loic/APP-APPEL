@@ -10,6 +10,19 @@
 // ===== HANDLERS DES MESSAGES SERVEUR (réunions) =====
 // Ces méthodes sont ajoutées à CallManager.prototype
 
+CallManager.prototype.normalizeMeetingCode = function(code) {
+  if (!code && code !== 0) return "";
+  const cleaned = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!cleaned) return "";
+  if (cleaned.length === 9) {
+    return `${cleaned.slice(0, 3)}-${cleaned.slice(3, 6)}-${cleaned.slice(6, 9)}`;
+  }
+  if (cleaned.length === 11) {
+    return cleaned.replace(/(.{3})(?=.)/g, "$1-");
+  }
+  return cleaned;
+};
+
 CallManager.prototype.handleMeetingCreated = function(data) {
   console.log("📅 [MEETING] Réunion créée:", data);
   this.showMeetingCreatedView(data);
@@ -311,8 +324,14 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
 CallManager.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] joinMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
   
+  const normalizedCode = this.normalizeMeetingCode(code);
+  if (!normalizedCode) {
+    this.showCallToast("Code requis");
+    return;
+  }
+
   // Stocker le code pour les réessais
-  this.meetingPendingCode = code.trim().toUpperCase();
+  this.meetingPendingCode = normalizedCode;
   
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
@@ -343,11 +362,6 @@ CallManager.prototype.joinMeeting = function(code) {
   
   if (!this.myId) {
     this.showCallToast("ID utilisateur requis - veuillez patienter");
-    return;
-  }
-  
-  if (!this.meetingPendingCode) {
-    this.showCallToast("Code requis");
     return;
   }
   
@@ -675,18 +689,17 @@ CallManager.prototype.startMeetingFromCreated = function(code) {
 CallManager.prototype.startMeeting = function(code) {
   console.log("📅 [MEETING] startMeeting appelé pour code:", code);
   
+  const cleanCode = this.normalizeMeetingCode(code);
+  if (!cleanCode) {
+    this.showCallToast("Code requis");
+    return;
+  }
+  
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
   if (!isConnected) {
     this.showCallToast("Connexion requise");
     return;
   }
-  
-  if (!code || code.trim().length === 0) {
-    this.showCallToast("Code requis");
-    return;
-  }
-  
-  const cleanCode = code.trim().toUpperCase();
   
   // Le créateur rejoint simplement la réunion
   // Le serveur créera la salle automatiquement si c'est le créateur avant l'heure
@@ -769,7 +782,8 @@ CallManager.prototype.closeMeetingJoinView = function() {
 };
 
 CallManager.prototype.confirmJoinMeeting = function() {
-  const code = document.getElementById("meeting-code-input").value.trim();
+  const rawCode = document.getElementById("meeting-code-input").value;
+  const code = this.normalizeMeetingCode(rawCode);
   if (!code) {
     this.showCallToast("Veuillez entrer un code");
     return;
@@ -844,39 +858,38 @@ CallManager.prototype._updateMeetingCountdown = function(data) {
   if (this.meetingTimer) {
     clearInterval(this.meetingTimer);
   }
-  
-  // Utiliser opensAt (début de fenêtre) au lieu de scheduledAt
-  const opensAt = data.opensAt || data.scheduledAt;
-  
+
+  const startsAt = data.startsAt || data.opensAt || data.scheduledAt;
+
   const update = () => {
-    // Utiliser le décalage d'horloge si disponible
     const now = this.clockOffset ? Date.now() + this.clockOffset : Date.now();
-    const remaining = opensAt - now;
-    
+    const remaining = Math.max(0, startsAt - now);
+
     if (remaining <= 0) {
       if (this.meetingTimer) {
         clearInterval(this.meetingTimer);
         this.meetingTimer = null;
       }
-      
-      // Auto-join quand la fenêtre s'ouvre
+
       if (this.meetingPendingCode) {
-        console.log("📅 [MEETING] Fenêtre ouverte, auto-join...");
+        console.log("📅 [MEETING] Heure de démarrage atteinte, auto-join...");
         this.joinMeeting(this.meetingPendingCode);
         this.meetingPendingCode = null;
       }
       return;
     }
-    
-    const minutes = Math.floor(remaining / 60000);
-    const seconds = Math.floor((remaining % 60000) / 1000);
-    
+
+    const totalSeconds = Math.ceil(remaining / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
     const countdownEl = document.getElementById("meeting-countdown");
     if (countdownEl) {
-      countdownEl.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+      countdownEl.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
   };
-  
+
   update();
   this.meetingTimer = setInterval(update, 1000);
 };
@@ -988,6 +1001,7 @@ window.closeMeetingWaitingView = function() { window.callManager.closeMeetingWai
 window.closeMeetingCreatedView = function() { window.callManager.closeMeetingCreatedView(); };
 window.copyMeetingCode = function(code) { window.callManager.copyMeetingCode(code); };
 window.shareMeetingLink = function(link) { window.callManager.shareMeetingLink(link); };
+window.startMeetingFromCreated = function(code) { window.callManager.startMeetingFromCreated(code); };
 window.showMeetingListView = function() { window.callManager.listMeetings(); };
 window.closeMeetingListView = function() { window.callManager.closeMeetingListView(); };
 window.createMeetingFromList = function() { window.callManager.createMeetingFromList(); };
