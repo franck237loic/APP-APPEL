@@ -1262,13 +1262,18 @@ class MeetingManager {
     await db.collection("meetings").doc(meetingId).update({ waitingUsers: nextWaitingUsers });
   }
 
-  async _notifyWaitingUsersStarted(meetingId, roomId, title, isVideo, excludeUserId = null) {
-    const meetingDoc = await db.collection("meetings").doc(meetingId).get();
-    if (!meetingDoc.exists) return;
-
-    const meeting = meetingDoc.data();
-    const waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+  async _notifyWaitingUsersStarted(meetingId, roomId, title, isVideo, excludeUserId = null, waitingUsersParam = null) {
     const room = roomManager.rooms.get(roomId);
+
+    // Utiliser la liste passée en paramètre si disponible, sinon la lire depuis Firestore
+    let waitingUsers = waitingUsersParam;
+    if (!waitingUsers) {
+      const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+      if (!meetingDoc.exists) return;
+
+      const meeting = meetingDoc.data();
+      waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+    }
 
     for (const waitingUserId of waitingUsers) {
       if (excludeUserId && waitingUserId === excludeUserId) continue;
@@ -1293,7 +1298,10 @@ class MeetingManager {
       }
     }
 
-    await db.collection("meetings").doc(meetingId).update({ waitingUsers: [] });
+    // Ne vider waitingUsers que si on ne l'a pas déjà fait dans forceStart
+    if (!waitingUsersParam) {
+      await db.collection("meetings").doc(meetingId).update({ waitingUsers: [] });
+    }
   }
 
   /**
@@ -1343,6 +1351,11 @@ class MeetingManager {
     // Recalculer endsAt = maintenant + durée (comportement Google Meet)
     const newEndsAt = Date.now() + (meeting.durationMin * 60 * 1000);
 
+    // Sauvegarder la liste des utilisateurs en attente AVANT de la vider
+    const meetingDoc = await db.collection("meetings").doc(meeting.id).get();
+    const currentMeeting = meetingDoc.data();
+    const waitingUsers = Array.isArray(currentMeeting.waitingUsers) ? currentMeeting.waitingUsers.filter(Boolean) : [];
+
     // Créer la salle live immédiatement comme une vraie salle de réunion vide,
     // puis ajouter explicitement l'hôte pour éviter le cas où la réunion est créée
     // sans participant malgré des personnes déjà en attente.
@@ -1358,7 +1371,7 @@ class MeetingManager {
     });
 
     await this._removeWaitingUser(meeting.id, userId);
-    await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId);
+    await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
 
     console.log(`📅 Réunion ${meeting.id} démarrée manuellement (salle ${room.roomId}), fin à ${new Date(newEndsAt).toISOString()}`);
 
@@ -1459,6 +1472,9 @@ class MeetingManager {
         console.log(`📅 Créateur démarre tôt, endsAt recalculé à ${new Date(finalEndsAt).toISOString()}`);
       }
 
+      // Sauvegarder la liste des utilisateurs en attente AVANT de la vider
+      const waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+
       // Déterminer le roomId de manière déterministe
       const roomId = `room_meeting_${meeting.id}`;
 
@@ -1502,7 +1518,7 @@ class MeetingManager {
         throw error;
       });
 
-      await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId);
+      await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
       await this._removeWaitingUser(meeting.id, userId);
       console.log(`📅 Réunion ${meeting.id} passée à live (salle ${room.roomId})`);
 
