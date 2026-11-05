@@ -34,26 +34,41 @@ CallManager.prototype.handleMeetingLiveReady = function(data) {
   // en utilisant son code ou lien
 };
 
-CallManager.prototype.handleMeetingJoined = function(data) {
+CallManager.prototype.handleMeetingJoined = async function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
   this.closeMeetingWaitingView();
-  
+
   // Marquer que c'est une réunion planifiée pour empêcher la bascule automatique
   // vers l'écran 1-à-1 lorsqu'il ne reste qu'un autre participant dans la salle.
   this.groupIsMeeting = true;
   this.groupDowngradingToOneToOne = false;
-  
+  this.groupRoomId = data.roomId;
+  this.groupIsVideo = !!data.isVideo;
+
+  // Le flux de réunion doit avoir les médias du groupe prêts avant d'ouvrir
+  // la salle live et d'envoyer le group-join. Sans cela le client se retrouve
+  // avec un roster mais sans peer WebRTC réel, ce qui provoque la fausse
+  // sensation "personne présente" alors qu'un participant est en attente.
+  if (!this.groupLocalStream) {
+    try {
+      await this.acquireGroupMedia(this.groupIsVideo);
+    } catch (error) {
+      console.error("❌ [MEETING] Impossible d'acquérir les médias de la réunion:", error);
+      this.showCallToast("Accès média impossible");
+      this.groupIsMeeting = false;
+      return;
+    }
+  }
+
   // Préparer le roster temporaire
   this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
-  
+
   // Enchaîner sur l'appel de groupe existant
   this.sendSignal({
     type: "group-join",
     roomId: data.roomId,
   });
-  
-  this.groupRoomId = data.roomId;
-  this.groupIsVideo = data.isVideo;
+
   this.showGroupScreen();
 };
 
@@ -702,12 +717,18 @@ CallManager.prototype.startMeeting = function(code) {
     this.showCallToast("Connexion requise");
     return;
   }
+
+  // On marque immédiatement la réunion comme live côté client pour empêcher toute
+  // rebasculer automatiquement en 1-à-1 tant que la confirmation serveur n'est pas revenue.
+  this.groupIsMeeting = true;
+  this.groupDowngradingToOneToOne = false;
+  this.meetingPendingCode = cleanCode;
+  this.sendSignal({
+    type: "meeting-force-start",
+    code: cleanCode,
+  });
   
-  // Le créateur rejoint simplement la réunion
-  // Le serveur créera la salle automatiquement si c'est le créateur avant l'heure
-  this.joinMeeting(cleanCode);
-  
-  console.log("📅 [MEETING] Demande de rejoindre pour démarrer:", cleanCode);
+  console.log("📅 [MEETING] Demande de démarrage forcé pour:", cleanCode);
 };
 
 CallManager.prototype.showMeetingJoinView = function(prefillCode) {

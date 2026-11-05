@@ -2905,7 +2905,50 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      // 18. Annuler une réunion
+      // 18. Démarrer une réunion avant l'heure prévue (hôte)
+      // Envoyé par : Host -> Reçu par : Host + participants en attente
+      // Pourquoi : Forcer le lancement de la réunion et intégrer les utilisateurs en attente
+      if (type === "meeting-force-start") {
+        try {
+          const { code } = data;
+
+          console.log(`[MEETING] meeting-force-start reçu de ${ws.userId || "?"} pour code ${code}`);
+
+          if (!ws.userId) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non enregistré" }));
+            return;
+          }
+
+          if (!code) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Code manquant" }));
+            return;
+          }
+
+          const result = await meetingManager.forceStart(code, ws.userId);
+
+          if (result.success) {
+            ws.send(JSON.stringify({
+              type: "meeting-joined",
+              meetingId: result.meetingId,
+              roomId: result.roomId,
+              isVideo: result.isVideo,
+              title: result.title,
+            }));
+            console.log(`[MEETING] meeting-force-start OK: ${result.roomId} pour ${ws.userId}`);
+          } else {
+            ws.send(JSON.stringify({
+              type: "meeting-error",
+              reason: result.reason,
+            }));
+          }
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-force-start :`, error);
+          ws.send(JSON.stringify({ type: "meeting-error", reason: error.message || "Erreur serveur" }));
+        }
+        return;
+      }
+
+      // 19. Annuler une réunion
       // Envoyé par : Host -> Reçu par : Host (confirmation)
       // Pourquoi : Annuler une réunion planifiée (réservé à l'hôte)
       if (type === "meeting-cancel") {
