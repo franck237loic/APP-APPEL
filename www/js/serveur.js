@@ -1268,9 +1268,19 @@ class MeetingManager {
 
     const meeting = meetingDoc.data();
     const waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+    const room = roomManager.rooms.get(roomId);
 
     for (const waitingUserId of waitingUsers) {
       if (excludeUserId && waitingUserId === excludeUserId) continue;
+
+      // IMPORTANT : l'utilisateur qui est déjà en attente doit être ajouté
+      // immédiatement à la salle live. Cela évite que le host démarre la réunion
+      // et la voie vide pendant que les participants restent bloqués dans la
+      // salle d'attente ou ne reçoivent pas le message de jonction.
+      if (room) {
+        roomManager.join(roomId, waitingUserId);
+      }
+
       const user = users.get(waitingUserId);
       if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
         user.ws.send(JSON.stringify({
