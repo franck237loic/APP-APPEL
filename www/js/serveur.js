@@ -1033,7 +1033,7 @@ class MeetingManager {
    * @param {Array<string>} params.participants - Liste des participants invités
    * @returns {Promise<object>} Réunion créée avec meetingId, code, link
    */
-  async create({ title, scheduledAt, durationMin, isVideo, createdBy, participants }) {
+  async create({ title, description, scheduledAt, durationMin, isVideo, createdBy, participants }) {
     // Validation des paramètres
     if (!title || title.trim().length === 0) {
       return { success: false, reason: "Le titre est requis" };
@@ -1041,6 +1041,10 @@ class MeetingManager {
     
     if (title.length > 100) {
       return { success: false, reason: "Le titre ne peut pas dépasser 100 caractères" };
+    }
+    
+    if (description && description.length > 500) {
+      return { success: false, reason: "La description ne peut pas dépasser 500 caractères" };
     }
     
     if (!scheduledAt || scheduledAt <= Date.now() + 60000) {
@@ -1064,6 +1068,7 @@ class MeetingManager {
       meetingId,
       code,
       title: title.trim(),
+      description: description ? description.trim() : "",
       scheduledAt,
       durationMin,
       endsAt,
@@ -1878,7 +1883,7 @@ app.get("/join/:code", (req, res) => {
     <p style="color: #8696a0; margin-bottom: 20px;">
       Pour rejoindre cette réunion, ouvrez l'application App Appel
     </p>
-    <a href="appappel://join/${code}" class="btn">Ouvrir dans l'application</a>
+    <a href="callapp://join/${code}" class="btn">Ouvrir dans l'application</a>
     <br>
     <a href="https://app-appel.onrender.com" class="btn btn-secondary">Télécharger l'application</a>
   </div>
@@ -1899,6 +1904,408 @@ app.get("/.well-known/apple-app-site-association", (req, res) => {
   const aasa = process.env.AASA_JSON || JSON.stringify({});
   res.set("Content-Type", "application/json");
   res.send(aasa);
+});
+
+// =========================================================
+// API REST POUR MEETING SERVICE
+// =========================================================
+
+// Obtenir une réunion par code
+app.get("/api/meeting/by-code/:code", async (req, res) => {
+  try {
+    const { code } = req.params;
+    const meeting = await meetingManager.getByCode(code);
+    if (!meeting) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    res.json(meeting);
+  } catch (error) {
+    console.error("❌ Erreur API /api/meeting/by-code:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Obtenir une réunion par ID
+app.get("/api/meeting/:meetingId", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    res.json({ id: doc.id, ...doc.data() });
+  } catch (error) {
+    console.error("❌ Erreur API /api/meeting:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Modifier une réunion
+app.patch("/api/meeting/:meetingId", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const updates = req.body;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    
+    // Vérifier que l'utilisateur est le créateur
+    const userId = req.body.userId;
+    if (meeting.createdBy !== userId) {
+      return res.status(403).json({ error: "Non autorisé" });
+    }
+    
+    // Mettre à jour les champs autorisés
+    const allowedUpdates = ['title', 'description', 'scheduledAt', 'durationMin', 'isVideo'];
+    const sanitizedUpdates = {};
+    for (const key of allowedUpdates) {
+      if (updates[key] !== undefined) {
+        sanitizedUpdates[key] = updates[key];
+      }
+    }
+    
+    await db.collection("meetings").doc(meetingId).update(sanitizedUpdates);
+    
+    const updatedDoc = await db.collection("meetings").doc(meetingId).get();
+    res.json({ id: updatedDoc.id, ...updatedDoc.data() });
+  } catch (error) {
+    console.error("❌ Erreur API PATCH /api/meeting:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Obtenir les participants d'une réunion
+app.get("/api/meeting/:meetingId/participants", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    const participants = [];
+    
+    // Participants depuis la salle live si live
+    if (meeting.status === "live" && meeting.roomId) {
+      const room = roomManager.rooms.get(meeting.roomId);
+      if (room) {
+        for (const [userId, data] of room.participants.entries()) {
+          if (data.state === "JOINED") {
+            participants.push({ userId, state: data.state });
+          }
+        }
+      }
+    }
+    
+    // Ajouter les participants listés dans la réunion
+    if (meeting.participants) {
+      meeting.participants.forEach(userId => {
+        if (!participants.find(p => p.userId === userId)) {
+          participants.push({ userId, state: "INVITED" });
+        }
+      });
+    }
+    
+    res.json(participants);
+  } catch (error) {
+    console.error("❌ Erreur API /api/meeting/participants:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Ajouter un participant
+app.post("/api/meeting/:meetingId/participants", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { userId } = req.body;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    const participants = meeting.participants || [];
+    
+    if (!participants.includes(userId)) {
+      participants.push(userId);
+      await db.collection("meetings").doc(meetingId).update({ participants });
+    }
+    
+    res.json({ userId, meetingId });
+  } catch (error) {
+    console.error("❌ Erreur API POST /api/meeting/participants:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Retirer un participant
+app.delete("/api/meeting/:meetingId/participants/:userId", async (req, res) => {
+  try {
+    const { meetingId, userId } = req.params;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    const participants = (meeting.participants || []).filter(id => id !== userId);
+    
+    await db.collection("meetings").doc(meetingId).update({ participants });
+    
+    // Si la réunion est live, retirer de la salle
+    if (meeting.status === "live" && meeting.roomId) {
+      roomManager.leave(meeting.roomId, userId);
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error("❌ Erreur API DELETE /api/meeting/participants:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Chat de réunion - Envoyer un message
+app.post("/api/meeting/:meetingId/chat", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { message, userId, timestamp } = req.body;
+    
+    const chatRef = db.collection("meetings").doc(meetingId).collection("chat");
+    const newMessage = {
+      message,
+      userId,
+      timestamp: timestamp || Date.now(),
+      id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    };
+    
+    await chatRef.doc(newMessage.id).set(newMessage);
+    
+    // Diffuser le message aux participants en salle live
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (doc.exists) {
+      const meeting = doc.data();
+      if (meeting.status === "live" && meeting.roomId) {
+        const room = roomManager.rooms.get(meeting.roomId);
+        if (room) {
+          const broadcastMessage = {
+            type: "meeting-chat",
+            meetingId,
+            message: newMessage
+          };
+          for (const [userId, data] of room.participants.entries()) {
+            if (data.state === "JOINED") {
+              const user = users.get(userId);
+              if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+                user.ws.send(JSON.stringify(broadcastMessage));
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    res.json(newMessage);
+  } catch (error) {
+    console.error("❌ Erreur API POST /api/meeting/chat:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Chat de réunion - Obtenir l'historique
+app.get("/api/meeting/:meetingId/chat", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const chatRef = db.collection("meetings").doc(meetingId).collection("chat");
+    const snapshot = await chatRef.orderBy("timestamp", "desc").limit(100).get();
+    
+    const messages = snapshot.docs.map(doc => doc.data()).reverse();
+    res.json(messages);
+  } catch (error) {
+    console.error("❌ Erreur API GET /api/meeting/chat:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Lever la main
+app.post("/api/meeting/:meetingId/raise-hand", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { userId } = req.body;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    if (meeting.status === "live" && meeting.roomId) {
+      const room = roomManager.rooms.get(meeting.roomId);
+      if (room) {
+        const broadcastMessage = {
+          type: "meeting-hand-raised",
+          meetingId,
+          userId
+        };
+        for (const [uid, data] of room.participants.entries()) {
+          if (data.state === "JOINED") {
+            const user = users.get(uid);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify(broadcastMessage));
+            }
+          }
+        }
+      }
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error("❌ Erreur API POST /api/meeting/raise-hand:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Baisser la main
+app.post("/api/meeting/:meetingId/lower-hand", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { userId } = req.body;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    if (meeting.status === "live" && meeting.roomId) {
+      const room = roomManager.rooms.get(meeting.roomId);
+      if (room) {
+        const broadcastMessage = {
+          type: "meeting-hand-lowered",
+          meetingId,
+          userId
+        };
+        for (const [uid, data] of room.participants.entries()) {
+          if (data.state === "JOINED") {
+            const user = users.get(uid);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify(broadcastMessage));
+            }
+          }
+        }
+      }
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error("❌ Erreur API POST /api/meeting/lower-hand:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Envoyer une réaction
+app.post("/api/meeting/:meetingId/reaction", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const { userId, reaction, timestamp } = req.body;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    if (meeting.status === "live" && meeting.roomId) {
+      const room = roomManager.rooms.get(meeting.roomId);
+      if (room) {
+        const broadcastMessage = {
+          type: "meeting-reaction",
+          meetingId,
+          userId,
+          reaction,
+          timestamp: timestamp || Date.now()
+        };
+        for (const [uid, data] of room.participants.entries()) {
+          if (data.state === "JOINED") {
+            const user = users.get(uid);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify(broadcastMessage));
+            }
+          }
+        }
+      }
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error("❌ Erreur API POST /api/meeting/reaction:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Obtenir les permissions d'un utilisateur
+app.get("/api/meeting/:meetingId/permissions/:userId", async (req, res) => {
+  try {
+    const { meetingId, userId } = req.params;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    const isCreator = meeting.createdBy === userId;
+    
+    // Pour l'instant, permissions simples
+    const permissions = {
+      canModify: isCreator,
+      canRemoveParticipants: isCreator,
+      canEndMeeting: isCreator,
+      canMuteOthers: false, // Pas supporté par WebRTC P2P
+      canChat: true
+    };
+    
+    res.json(permissions);
+  } catch (error) {
+    console.error("❌ Erreur API GET /api/meeting/permissions:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Mettre à jour les permissions
+app.patch("/api/meeting/:meetingId/permissions/:userId", async (req, res) => {
+  try {
+    const { meetingId, userId } = req.params;
+    const permissions = req.body;
+    
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Réunion introuvable" });
+    }
+    
+    const meeting = doc.data();
+    const isCreator = meeting.createdBy === userId;
+    
+    // Seul le créateur peut modifier les permissions
+    if (!isCreator) {
+      return res.status(403).json({ error: "Non autorisé" });
+    }
+    
+    // Stocker les permissions personnalisées dans Firestore
+    const permissionsRef = db.collection("meetings").doc(meetingId).collection("permissions").doc(userId);
+    await permissionsRef.set(permissions, { merge: true });
+    
+    res.json(permissions);
+  } catch (error) {
+    console.error("❌ Erreur API PATCH /api/meeting/permissions:", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 });
 
 // =========================================================
@@ -2763,7 +3170,7 @@ wss.on("connection", (ws) => {
       // Pourquoi : Créer une réunion planifiée avec un code partageable
       if (type === "meeting-create") {
         try {
-          const { title, scheduledAt, durationMin, isVideo, participants } = data;
+          const { title, description, scheduledAt, durationMin, isVideo, participants } = data;
 
           console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"}`);
 
@@ -2793,6 +3200,7 @@ wss.on("connection", (ws) => {
           // Créer la réunion
           const meeting = await meetingManager.create({
             title,
+            description,
             scheduledAt,
             durationMin,
             isVideo: !!isVideo,
@@ -2820,6 +3228,7 @@ wss.on("connection", (ws) => {
               code: meeting.code,
               link: meeting.link,
               title: meeting.title,
+              description: meeting.description,
               scheduledAt: meeting.scheduledAt,
               endsAt: meeting.endsAt,
               durationMin: meeting.durationMin,

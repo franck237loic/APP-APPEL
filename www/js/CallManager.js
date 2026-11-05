@@ -1920,6 +1920,11 @@ button, [role="button"] { cursor: pointer; }
 
     document.addEventListener("deviceready", this.onDeviceReady, false);
 
+    // Écouter les deep links (Android & iOS)
+    document.addEventListener("deviceready", () => {
+      this.setupDeepLinkListeners();
+    }, false);
+
     // Écran noir au retour au premier plan (écran verrouillé/déverrouillé pendant un appel) :
     // le WebView Android peut garder une frame vidéo figée (surface matérielle) tant qu'aucun
     // repaint n'est forcé après une pause. On force ce repaint + on relance la lecture des
@@ -2135,6 +2140,9 @@ button, [role="button"] { cursor: pointer; }
 
       await this.connectWebSocket();
 
+      // Gestion des deep links pour les réunions
+      this.handleDeepLinks();
+
       this.appReady = true;
       if (this.pendingNativeCall) {
         const call = this.pendingNativeCall;
@@ -2190,6 +2198,96 @@ button, [role="button"] { cursor: pointer; }
 
     // 3) Le reset du hardware layer côté natif (MainActivity.onResume()) se déclenche
     // automatiquement via le cycle de vie de l'Activity Android — rien à appeler ici.
+  };
+
+  // Gestion des deep links pour les réunions
+  handleDeepLinks = () => {
+    console.log("🔗 Vérification des deep links...");
+
+    // Vérifier l'URL courante pour les deep links HTTP
+    const url = new URL(window.location.href);
+    const pathParts = url.pathname.split('/').filter(part => part);
+
+    // Format: /join/ABC-123-XYZ
+    if (pathParts[0] === 'join' && pathParts[1]) {
+      const code = pathParts[1];
+      console.log("🔗 Deep link détecté pour rejoindre une réunion:", code);
+
+      // Attendre que l'app soit prête avant d'ouvrir l'écran
+      setTimeout(() => {
+        if (window.callManager && window.callManager.showMeetingJoinView) {
+          window.callManager.showMeetingJoinView(code);
+        }
+      }, 1000);
+    }
+  };
+
+  // Configuration des écouteurs de deep links (Android & iOS)
+  setupDeepLinkListeners = () => {
+    console.log("🔗 Configuration des écouteurs de deep links...");
+
+    // Plugin customurlscheme pour Android & iOS
+    if (window.cordova && window.cordova.plugins && window.cordova.plugins.customurlscheme) {
+      console.log("🔗 Plugin customurlscheme détecté");
+
+      // Écouter les deep links quand l'app est ouverte
+      window.cordova.plugins.customurlscheme.onNewIntent(
+        (url) => {
+          console.log("🔗 Deep link reçu (onNewIntent):", url);
+          this.processDeepLink(url);
+        },
+        (error) => {
+          console.error("❌ Erreur onNewIntent:", error);
+        }
+      );
+
+      // Vérifier si l'app a été ouverte via un deep link
+      window.cordova.plugins.customurlscheme.getIntent(
+        (url) => {
+          if (url) {
+            console.log("🔗 Deep link initial (getIntent):", url);
+            this.processDeepLink(url);
+          }
+        },
+        (error) => {
+          console.log("🔗 Pas de deep link initial:", error);
+        }
+      );
+    }
+
+    // Fallback: handleOpenURL (ancienne méthode)
+    if (window.handleOpenURL) {
+      console.log("🔗 handleOpenURL détecté (fallback)");
+      window.handleOpenURL = (url) => {
+        console.log("🔗 handleOpenURL appelé avec:", url);
+        this.processDeepLink(url);
+      };
+    }
+  };
+
+  // Traiter un deep link
+  processDeepLink = (url) => {
+    console.log("🔗 Traitement du deep link:", url);
+
+    try {
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split('/').filter(part => part);
+
+      // Format: callapp://join/ABC-123-XYZ ou https://app-appel.onrender.com/join/ABC-123-XYZ
+      if (pathParts[0] === 'join' && pathParts[1]) {
+        const code = pathParts[1];
+        console.log("🔗 Code de réunion extrait:", code);
+
+        // Attendre que l'app soit prête
+        setTimeout(() => {
+          if (window.callManager && window.callManager.showMeetingJoinView) {
+            window.callManager.showMeetingJoinView(code);
+          }
+        }, 500);
+      }
+    } catch (error) {
+      console.error("❌ Erreur traitement deep link:", error);
+    }
   };
 
   // Permissions Android

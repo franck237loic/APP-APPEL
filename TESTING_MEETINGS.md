@@ -65,13 +65,23 @@ Pour tester sans attendre l'heure réelle :
 1. Déployez l'app sur Android
 2. Depuis un navigateur ou une autre app, ouvrez : `callapp://join/ABC-123-XYZ`
 3. **Attendu** : L'app s'ouvre et préremplit le code dans l'écran de rejoindre
+4. Alternative: Utiliser le fichier `test-deeplink.html` et cliquer sur "Tester App Link"
 
 ## Test 8 : Deep link HTTP
 
 1. Depuis un navigateur, ouvrez : `https://app-appel.onrender.com/join/ABC-123-XYZ`
 2. **Attendu** : L'écran de rejoindre s'ouvre avec le code prérempli
+3. Alternative: Utiliser le fichier `test-deeplink.html` et cliquer sur "Tester HTTP"
 
-## Test 9 : Firebase Firestore vérification
+## Test 9 : Test Deep Links avec page de test
+
+1. Ouvrez le fichier `test-deeplink.html` dans un navigateur
+2. Entrez un code de réunion (ex: ABC-123-XYZ)
+3. Cliquez sur "Tester HTTP" pour tester le deep link web
+4. Cliquez sur "Tester App Link" pour tester le deep link app (sur appareil)
+5. **Attendu** : L'écran de rejoindre s'ouvre avec le code prérempli
+
+## Test 10 : Firebase Firestore vérification
 
 1. Allez dans la console Firebase → Firestore
 2. Vérifiez la collection `meetings`
@@ -80,7 +90,7 @@ Pour tester sans attendre l'heure réelle :
    - `status`: "scheduled" ou "live"
    - `roomId`: null ou "room_xxx" (après passage en live)
 
-## Test 10 : Transition automatique scheduled→live
+## Test 11 : Transition automatique scheduled→live
 
 1. Créez une réunion pour dans 2 minutes
 2. Ne rejoignez pas

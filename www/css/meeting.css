@@ -1,0 +1,604 @@
+/**
+ * ============================================
+ *  MEETING CSS - STYLES SPÉCIFIQUES AUX RÉUNIONS
+ * ============================================
+ * 
+ * Styles professionnels pour le module Meeting
+ * Inspiré de Google Meet
+ */
+
+/* ===== CONTENEURS DE VUE ===== */
+.view-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: #0b141a;
+  z-index: 1000;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.view-container.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  background: #0b141a;
+}
+
+/* ===== HEADER ===== */
+.header {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  gap: 12px;
+  background: #111b21;
+  border-bottom: 1px solid #222d34;
+}
+
+.icon-btn-top {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: #374045;
+  border-radius: 50%;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.icon-btn-top:hover {
+  background: #455055;
+}
+
+.contact-info {
+  flex: 1;
+}
+
+.contact-name {
+  font-size: 18px;
+  font-weight: 500;
+  color: white;
+}
+
+/* ===== ÉCRAN DE PRÉVISUALISATION ===== */
+.meeting-preview-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.preview-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  gap: 24px;
+}
+
+.preview-video {
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16/9;
+  background: #1f2c34;
+  border-radius: 16px;
+  overflow: hidden;
+  position: relative;
+}
+
+.preview-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.preview-video.audio-only {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-video.audio-only .avatar {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #00a884, #008f6f);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-video.audio-only .avatar i {
+  font-size: 48px;
+  color: white;
+}
+
+.preview-controls {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.preview-control-btn {
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: #222d34;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.preview-control-btn:hover {
+  background: #2a3942;
+}
+
+.preview-control-btn.active {
+  background: #00a884;
+}
+
+.preview-control-btn.inactive {
+  background: #ef5350;
+}
+
+.device-selector {
+  max-width: 320px;
+  width: 100%;
+}
+
+.device-selector select {
+  width: 100%;
+  padding: 12px;
+  background: #222d34;
+  border: 1px solid #374045;
+  border-radius: 8px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+}
+
+.device-selector select:focus {
+  border-color: #00a884;
+}
+
+.meeting-info {
+  text-align: center;
+  color: white;
+}
+
+.meeting-info h2 {
+  font-size: 24px;
+  font-weight: 500;
+  margin: 0 0 8px 0;
+}
+
+.meeting-info p {
+  font-size: 14px;
+  color: #8696a0;
+  margin: 0;
+}
+
+.meeting-info .organizer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: #8696a0;
+}
+
+.join-button {
+  padding: 16px 48px;
+  background: #00a884;
+  border: none;
+  border-radius: 24px;
+  color: white;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.join-button:hover {
+  background: #009675;
+}
+
+.join-button:disabled {
+  background: #374045;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ===== ÉCRAN DE CRÉATION DE RÉUNION ===== */
+.meeting-type-btn {
+  flex: 1;
+  padding: 16px;
+  background: #222d34;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  color: white;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s;
+}
+
+.meeting-type-btn i {
+  font-size: 24px;
+}
+
+.meeting-type-btn.active {
+  border-color: #00a884;
+  background: #1f2c33;
+}
+
+.meeting-type-btn:hover {
+  background: #2a3942;
+}
+
+/* ===== LISTE DES RÉUNIONS ===== */
+.meeting-card {
+  background: #222d34;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.meeting-card:hover {
+  background: #2a3942;
+}
+
+.meeting-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.meeting-card-title {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 500;
+  color: white;
+  margin-bottom: 4px;
+}
+
+.meeting-card-meta {
+  font-size: 13px;
+  color: #8696a0;
+}
+
+.meeting-card-badge {
+  background: #00a884;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: white;
+}
+
+.meeting-card-badge.audio {
+  background: #374045;
+}
+
+.meeting-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ===== CHAT DE RÉUNION ===== */
+.meeting-chat-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 100%;
+  max-width: 360px;
+  height: 100%;
+  background: #111b21;
+  z-index: 2000;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+}
+
+.meeting-chat-panel.open {
+  transform: translateX(0);
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  padding: 16px;
+  gap: 12px;
+  background: #1f2c34;
+  border-bottom: 1px solid #222d34;
+}
+
+.chat-title {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 500;
+  color: white;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 85%;
+}
+
+.chat-message.own {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-message.other {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.chat-message-content {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.chat-message.own .chat-message-content {
+  background: #00a884;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-message.other .chat-message-content {
+  background: #222d34;
+  color: white;
+  border-bottom-left-radius: 4px;
+}
+
+.chat-message-meta {
+  font-size: 11px;
+  color: #8696a0;
+}
+
+.chat-input-container {
+  padding: 16px;
+  background: #1f2c34;
+  border-top: 1px solid #222d34;
+  display: flex;
+  gap: 8px;
+}
+
+.chat-input {
+  flex: 1;
+  padding: 12px;
+  background: #222d34;
+  border: 1px solid #374045;
+  border-radius: 20px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+}
+
+.chat-input:focus {
+  border-color: #00a884;
+}
+
+.chat-send-btn {
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: #00a884;
+  border-radius: 50%;
+  color: white;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chat-send-btn:hover {
+  background: #009675;
+}
+
+/* ===== LISTE DES PARTICIPANTS ===== */
+.meeting-participants-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 100%;
+  max-width: 320px;
+  height: 100%;
+  background: #111b21;
+  z-index: 2000;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+}
+
+.meeting-participants-panel.open {
+  transform: translateX(0);
+}
+
+.participants-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.participant-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #222d34;
+  border-radius: 8px;
+}
+
+.participant-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #00a884, #008f6f);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.participant-info {
+  flex: 1;
+}
+
+.participant-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: white;
+}
+
+.participant-role {
+  font-size: 12px;
+  color: #8696a0;
+}
+
+.participant-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.participant-action-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: #374045;
+  border-radius: 50%;
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.participant-action-btn:hover {
+  background: #455055;
+}
+
+/* ===== RÉACTIONS ===== */
+.reaction-overlay {
+  position: fixed;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3000;
+  pointer-events: none;
+}
+
+.reaction-bubble {
+  font-size: 48px;
+  animation: floatUp 2s ease-out forwards;
+}
+
+@keyframes floatUp {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-100px) scale(1.5);
+  }
+}
+
+/* ===== ÉTATS ===== */
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #222d34;
+  border-top-color: #00a884;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 16px;
+  text-align: center;
+}
+
+.empty-state i {
+  font-size: 48px;
+  color: #374045;
+}
+
+.empty-state-text {
+  color: #8696a0;
+  font-size: 14px;
+}
+
+/* ===== RESPONSIVE ===== */
+@media (max-width: 768px) {
+  .preview-video {
+    max-width: 100%;
+  }
+  
+  .meeting-chat-panel,
+  .meeting-participants-panel {
+    max-width: 100%;
+  }
+  
+  .preview-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}

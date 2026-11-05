@@ -279,13 +279,13 @@ CallManager.prototype.startMeetingFromList = function(code) {
 };
 
 CallManager.prototype.openMeetingDetails = function(meetingId) {
-  // Pour l'instant, afficher le code
-  this.showCallToast("Détails: " + meetingId);
+  // Ouvrir l'écran de modification
+  this.showMeetingCreateView(meetingId);
 };
 
 // ===== MÉTHODES DE RÉUNION =====
 
-CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants) {
+CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "") {
   console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
   
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
@@ -304,7 +304,7 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
         const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
         if (nowConnected) {
           console.log("📅 [MEETING] WebSocket maintenant connecté, création de réunion");
-          this.createMeeting(title, scheduledAt, durationMin, isVideo, participants);
+          this.createMeeting(title, scheduledAt, durationMin, isVideo, participants, description);
         } else {
           console.error("📅 [MEETING] WebSocket toujours non connecté après tentative");
           this.showCallToast("Impossible de se connecter au serveur (timeout)");
@@ -329,6 +329,7 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
   this.sendSignal({
     type: "meeting-create",
     title,
+    description,
     scheduledAt: scheduledAtTimestamp,
     durationMin: parseInt(durationMin),
     isVideo: !!isVideo,
@@ -421,9 +422,14 @@ CallManager.prototype.listMeetings = function() {
 
 // ===== UI RÉUNIONS =====
 
-CallManager.prototype.showMeetingCreateView = function() {
+CallManager.prototype.showMeetingCreateView = function(editMeetingId = null) {
+  this.editingMeetingId = editMeetingId;
+  
   if (this.meetingCreateView) {
     this.meetingCreateView.classList.add("active");
+    if (editMeetingId) {
+      this.loadMeetingForEdit(editMeetingId);
+    }
     return;
   }
   
@@ -435,52 +441,70 @@ CallManager.prototype.showMeetingCreateView = function() {
             <i class="fa-solid fa-arrow-left"></i>
           </button>
           <div class="contact-info">
-            <div class="contact-name">Programmer une réunion</div>
+            <div class="contact-name">${editMeetingId ? 'Modifier la réunion' : 'Programmer une réunion'}</div>
           </div>
           <div style="width: 40px;"></div>
         </div>
         
-        <div style="flex: 1; width: 100%; display: flex; flex-direction: column; gap: 20px; padding: 0 16px;">
+        <div style="flex: 1; width: 100%; display: flex; flex-direction: column; gap: 20px; padding: 0 16px; overflow-y: auto;">
           <div>
-            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Titre</label>
-            <input type="text" id="meeting-title" placeholder="Ex: Réunion d'équipe" 
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Titre *</label>
+            <input type="text" id="meeting-title" placeholder="Ex: Réunion d'équipe" maxlength="100"
                    style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
                           border-radius: 8px; color: white; font-size: 15px; outline: none;">
           </div>
           
           <div>
-            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Date et heure</label>
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Description (optionnel)</label>
+            <textarea id="meeting-description" placeholder="Ajoutez une description..."
+                      style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
+                             border-radius: 8px; color: white; font-size: 15px; outline: none; resize: vertical; min-height: 80px;"></textarea>
+          </div>
+          
+          <div>
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Date et heure *</label>
             <input type="datetime-local" id="meeting-datetime" 
                    style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
                           border-radius: 8px; color: white; font-size: 15px; outline: none;">
           </div>
           
           <div>
-            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Durée (minutes)</label>
-            <input type="number" id="meeting-duration" value="60" min="15" max="480"
-                   style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
-                          border-radius: 8px; color: white; font-size: 15px; outline: none;">
-          </div>
-          
-          <div>
-            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Participants maximum (optionnel)</label>
-            <input type="number" id="meeting-participants" placeholder="Max 6" min="2" max="6"
-                   style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
-                          border-radius: 8px; color: white; font-size: 15px; outline: none;">
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Durée (minutes) *</label>
+            <select id="meeting-duration" 
+                    style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
+                           border-radius: 8px; color: white; font-size: 15px; outline: none; cursor: pointer;">
+              <option value="15">15 minutes</option>
+              <option value="30">30 minutes</option>
+              <option value="45">45 minutes</option>
+              <option value="60" selected>1 heure</option>
+              <option value="90">1 heure 30</option>
+              <option value="120">2 heures</option>
+              <option value="180">3 heures</option>
+              <option value="240">4 heures</option>
+              <option value="480">8 heures</option>
+            </select>
           </div>
           
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Type</label>
             <div style="display: flex; gap: 10px;">
-              <button id="meeting-type-audio" class="meeting-type-btn active" onclick="window.selectMeetingType('audio')">
+              <button id="meeting-type-audio" class="meeting-type-btn" onclick="window.selectMeetingType('audio')">
                 <i class="fa-solid fa-phone"></i>
                 <span>Audio</span>
               </button>
-              <button id="meeting-type-video" class="meeting-type-btn" onclick="window.selectMeetingType('video')">
+              <button id="meeting-type-video" class="meeting-type-btn active" onclick="window.selectMeetingType('video')">
                 <i class="fa-solid fa-video"></i>
                 <span>Vidéo</span>
               </button>
             </div>
+          </div>
+          
+          <div id="edit-actions" style="display: none; gap: 8px;">
+            <button onclick="window.cancelMeeting()" 
+                    style="flex: 1; padding: 12px; background: #ef5350; border: none; border-radius: 20px; 
+                           color: white; font-size: 15px; font-weight: 500; cursor: pointer;">
+              Annuler la réunion
+            </button>
           </div>
         </div>
         
@@ -488,7 +512,7 @@ CallManager.prototype.showMeetingCreateView = function() {
           <button onclick="window.confirmCreateMeeting()" 
                   style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px; 
                          color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
-            Créer la réunion
+            ${editMeetingId ? 'Enregistrer les modifications' : 'Créer la réunion'}
           </button>
         </div>
       </div>
@@ -499,11 +523,41 @@ CallManager.prototype.showMeetingCreateView = function() {
   this.meetingCreateView = document.getElementById("meeting-create-view");
   this.meetingCreateView.classList.add("active");
   
-  // Date par défaut
+  // Date par défaut (demain à 9h)
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(9, 0, 0, 0);
   tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset());
   document.getElementById("meeting-datetime").value = tomorrow.toISOString().slice(0, 16);
+  
+  // Charger si édition
+  if (editMeetingId) {
+    this.loadMeetingForEdit(editMeetingId);
+  }
+};
+
+CallManager.prototype.loadMeetingForEdit = async function(meetingId) {
+  try {
+    if (window.meetingService) {
+      const meeting = await meetingService.loadMeetingById(meetingId);
+      
+      document.getElementById("meeting-title").value = meeting.title || "";
+      document.getElementById("meeting-description").value = meeting.description || "";
+      
+      const date = new Date(meeting.scheduledAt);
+      date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+      document.getElementById("meeting-datetime").value = date.toISOString().slice(0, 16);
+      
+      document.getElementById("meeting-duration").value = meeting.durationMin || 60;
+      
+      this.selectMeetingType(meeting.isVideo ? "video" : "audio");
+      
+      document.getElementById("edit-actions").style.display = "flex";
+    }
+  } catch (error) {
+    console.error("Erreur chargement réunion pour édition:", error);
+    this.showCallToast("Erreur lors du chargement");
+  }
 };
 
 CallManager.prototype.closeMeetingCreateView = function() {
@@ -531,11 +585,11 @@ CallManager.prototype.selectMeetingType = function(type) {
   }
 };
 
-CallManager.prototype.confirmCreateMeeting = function() {
+CallManager.prototype.confirmCreateMeeting = async function() {
   const title = document.getElementById("meeting-title").value.trim();
+  const description = document.getElementById("meeting-description").value.trim();
   const datetime = document.getElementById("meeting-datetime").value;
   const duration = document.getElementById("meeting-duration").value;
-  const participants = document.getElementById("meeting-participants").value;
   const isVideo = document.getElementById("meeting-type-video").classList.contains("active");
   
   if (!title) {
@@ -553,16 +607,59 @@ CallManager.prototype.confirmCreateMeeting = function() {
     return;
   }
   
-  // Participants optionnel : si vide, pas de limite
-  let participantIds = [];
-  if (participants && participants > 0) {
-    // Pour l'instant, on ne stocke que le nombre max
-    // Plus tard, on pourrait permettre d'ajouter des IDs spécifiques
-    console.log("📅 [MEETING] Participants max:", participants);
+  const scheduledAtTimestamp = new Date(datetime).getTime();
+  if (isNaN(scheduledAtTimestamp) || scheduledAtTimestamp <= Date.now() + 60000) {
+    this.showCallToast("Date invalide (doit être dans le futur, au moins 1 minute)");
+    return;
   }
   
-  this.createMeeting(title, datetime, duration, isVideo, participantIds);
+  // Mode édition
+  if (this.editingMeetingId) {
+    try {
+      const updates = {
+        title,
+        description,
+        scheduledAt: scheduledAtTimestamp,
+        durationMin: parseInt(duration),
+        isVideo,
+        userId: this.myId
+      };
+      
+      await meetingService.updateMeeting(this.editingMeetingId, updates);
+      this.showCallToast("Réunion modifiée avec succès");
+      this.closeMeetingCreateView();
+      this.editingMeetingId = null;
+    } catch (error) {
+      console.error("Erreur modification réunion:", error);
+      this.showCallToast("Erreur lors de la modification");
+    }
+    return;
+  }
+  
+  // Mode création
+  this.createMeeting(title, datetime, duration, isVideo, [], description);
   this.closeMeetingCreateView();
+};
+
+CallManager.prototype.cancelMeeting = async function() {
+  if (!this.editingMeetingId) return;
+  
+  if (confirm("Êtes-vous sûr de vouloir annuler cette réunion ?")) {
+    try {
+      await this.cancelMeetingById(this.editingMeetingId);
+      this.showCallToast("Réunion annulée");
+      this.closeMeetingCreateView();
+      this.editingMeetingId = null;
+      
+      // Rafraîchir la liste si affichée
+      if (this.meetingListView) {
+        this.listMeetings();
+      }
+    } catch (error) {
+      console.error("Erreur annulation réunion:", error);
+      this.showCallToast("Erreur lors de l'annulation");
+    }
+  }
 };
 
 CallManager.prototype.showMeetingCreatedView = function(data) {
@@ -804,6 +901,256 @@ CallManager.prototype.closeMeetingJoinView = function() {
   }
 };
 
+// ===== ÉCRAN DE PRÉVISUALISATION (NOUVEAU) =====
+
+CallManager.prototype.showMeetingPreviewView = async function(code) {
+  if (this.meetingPreviewView) {
+    this.meetingPreviewView.classList.add("active");
+    return;
+  }
+
+  // Initialiser l'adaptateur média
+  if (window.meetingMediaAdapter && window.callManager) {
+    meetingMediaAdapter.initialize(window.callManager);
+  }
+
+  const html = `
+    <div class="view-container meeting-preview-view" id="meeting-preview-view">
+      <div class="app-container">
+        <div class="header">
+          <button class="icon-btn-top" onclick="window.closeMeetingPreviewView()">
+            <i class="fa-solid fa-arrow-left"></i>
+          </button>
+          <div class="contact-info">
+            <div class="contact-name">Prévisualisation</div>
+          </div>
+          <div style="width: 40px;"></div>
+        </div>
+        
+        <div class="preview-container">
+          <div class="meeting-info">
+            <h2 id="preview-meeting-title">Chargement...</h2>
+            <p id="preview-meeting-code">Code: ${code}</p>
+            <div class="organizer" id="preview-meeting-organizer">
+              <i class="fa-solid fa-user"></i>
+              <span>Organisateur: --</span>
+            </div>
+          </div>
+          
+          <div class="preview-video" id="preview-video-container">
+            <video id="preview-video" autoplay muted playsinline></video>
+            <div class="avatar" id="preview-avatar" style="display: none;">
+              <i class="fa-solid fa-user"></i>
+            </div>
+          </div>
+          
+          <div class="preview-controls">
+            <button class="preview-control-btn active" id="preview-mic-btn" onclick="window.togglePreviewMic()">
+              <i class="fa-solid fa-microphone"></i>
+            </button>
+            <button class="preview-control-btn active" id="preview-cam-btn" onclick="window.togglePreviewCam()">
+              <i class="fa-solid fa-video"></i>
+            </button>
+          </div>
+          
+          <div class="device-selector" id="camera-selector-container" style="display: none;">
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Caméra</label>
+            <select id="camera-select" onchange="window.selectCamera(this.value)">
+              <option value="">Caméra par défaut</option>
+            </select>
+          </div>
+          
+          <div class="device-selector" id="mic-selector-container" style="display: none;">
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Microphone</label>
+            <select id="mic-select" onchange="window.selectMicrophone(this.value)">
+              <option value="">Microphone par défaut</option>
+            </select>
+          </div>
+          
+          <button class="join-button" id="join-meeting-btn" onclick="window.confirmJoinMeetingFromPreview('${code}')">
+            Rejoindre la réunion
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.insertAdjacentHTML("beforeend", html);
+  this.meetingPreviewView = document.getElementById("meeting-preview-view");
+  this.meetingPreviewView.classList.add("active");
+
+  // Charger les infos de la réunion
+  try {
+    if (window.meetingService) {
+      const meeting = await meetingService.loadMeetingByCode(code);
+      document.getElementById("preview-meeting-title").textContent = meeting.title || "Réunion";
+      document.getElementById("preview-meeting-organizer").innerHTML = `
+        <i class="fa-solid fa-user"></i>
+        <span>Organisateur: ${meeting.createdBy || "Inconnu"}</span>
+      `;
+    }
+  } catch (error) {
+    console.error("Erreur chargement réunion:", error);
+  }
+
+  // État de prévisualisation
+  this.previewMicEnabled = true;
+  this.previewCamEnabled = true;
+  this.previewStream = null;
+
+  // Charger les périphériques
+  this.loadPreviewDevices();
+
+  // Démarrer la prévisualisation
+  this.startPreview();
+};
+
+CallManager.prototype.closeMeetingPreviewView = function() {
+  this.stopPreview();
+  
+  if (this.meetingPreviewView) {
+    this.meetingPreviewView.classList.remove("active");
+    setTimeout(() => {
+      if (this.meetingPreviewView) {
+        this.meetingPreviewView.remove();
+        this.meetingPreviewView = null;
+      }
+    }, 300);
+  }
+};
+
+CallManager.prototype.loadPreviewDevices = async function() {
+  try {
+    const devices = await meetingMediaAdapter.getDevices();
+    
+    const cameraSelect = document.getElementById("camera-select");
+    const micSelect = document.getElementById("mic-select");
+    
+    if (devices.cameras.length > 1) {
+      document.getElementById("camera-selector-container").style.display = "block";
+      devices.cameras.forEach(device => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.textContent = device.label || `Caméra ${device.deviceId.slice(0, 8)}`;
+        cameraSelect.appendChild(option);
+      });
+    }
+    
+    if (devices.microphones.length > 1) {
+      document.getElementById("mic-selector-container").style.display = "block";
+      devices.microphones.forEach(device => {
+        const option = document.createElement("option");
+        option.value = device.deviceId;
+        option.textContent = device.label || `Microphone ${device.deviceId.slice(0, 8)}`;
+        micSelect.appendChild(option);
+      });
+    }
+  } catch (error) {
+    console.error("Erreur chargement périphériques:", error);
+  }
+};
+
+CallManager.prototype.startPreview = async function() {
+  try {
+    this.stopPreview();
+    
+    const isVideo = this.previewCamEnabled;
+    this.previewStream = await meetingMediaAdapter.preparePreview(isVideo);
+    
+    const videoElement = document.getElementById("preview-video");
+    const avatarElement = document.getElementById("preview-avatar");
+    const container = document.getElementById("preview-video-container");
+    
+    if (isVideo && this.previewStream.getVideoTracks().length > 0) {
+      videoElement.srcObject = this.previewStream;
+      videoElement.style.display = "block";
+      avatarElement.style.display = "none";
+      container.classList.remove("audio-only");
+    } else {
+      videoElement.style.display = "none";
+      avatarElement.style.display = "flex";
+      container.classList.add("audio-only");
+    }
+  } catch (error) {
+    console.error("Erreur démarrage prévisualisation:", error);
+    this.showCallToast("Impossible d'accéder à la caméra/microphone");
+  }
+};
+
+CallManager.prototype.stopPreview = function() {
+  if (this.previewStream) {
+    this.previewStream.getTracks().forEach(track => track.stop());
+    this.previewStream = null;
+  }
+  meetingMediaAdapter.stopPreview();
+};
+
+CallManager.prototype.togglePreviewMic = function() {
+  this.previewMicEnabled = !this.previewMicEnabled;
+  
+  const btn = document.getElementById("preview-mic-btn");
+  if (this.previewMicEnabled) {
+    btn.classList.remove("inactive");
+    btn.classList.add("active");
+    btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+  } else {
+    btn.classList.remove("active");
+    btn.classList.add("inactive");
+    btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
+  }
+  
+  // Redémarrer la prévisualisation avec le nouvel état
+  this.startPreview();
+};
+
+CallManager.prototype.togglePreviewCam = function() {
+  this.previewCamEnabled = !this.previewCamEnabled;
+  
+  const btn = document.getElementById("preview-cam-btn");
+  if (this.previewCamEnabled) {
+    btn.classList.remove("inactive");
+    btn.classList.add("active");
+    btn.innerHTML = '<i class="fa-solid fa-video"></i>';
+  } else {
+    btn.classList.remove("active");
+    btn.classList.add("inactive");
+    btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
+  }
+  
+  // Redémarrer la prévisualisation avec le nouvel état
+  this.startPreview();
+};
+
+CallManager.prototype.selectCamera = function(deviceId) {
+  meetingMediaAdapter.selectCamera(deviceId);
+  this.startPreview();
+};
+
+CallManager.prototype.selectMicrophone = function(deviceId) {
+  meetingMediaAdapter.selectMicrophone(deviceId);
+  this.startPreview();
+};
+
+CallManager.prototype.confirmJoinMeetingFromPreview = async function(code) {
+  const btn = document.getElementById("join-meeting-btn");
+  btn.disabled = true;
+  btn.textContent = "Connexion...";
+  
+  try {
+    // Transférer les médias à CallManager
+    await meetingMediaAdapter.transferMediaToCallManager();
+    
+    // Rejoindre la réunion
+    this.joinMeeting(code);
+    this.closeMeetingPreviewView();
+  } catch (error) {
+    console.error("Erreur rejoindre réunion:", error);
+    this.showCallToast("Erreur lors de la connexion");
+    btn.disabled = false;
+    btn.textContent = "Rejoindre la réunion";
+  }
+};
+
 CallManager.prototype.confirmJoinMeeting = function() {
   const rawCode = document.getElementById("meeting-code-input").value;
   const code = this.normalizeMeetingCode(rawCode);
@@ -811,8 +1158,8 @@ CallManager.prototype.confirmJoinMeeting = function() {
     this.showCallToast("Veuillez entrer un code");
     return;
   }
-  this.joinMeeting(code);
   this.closeMeetingJoinView();
+  this.showMeetingPreviewView(code);
 };
 
 CallManager.prototype.showMeetingWaitingView = function(data) {
@@ -1007,16 +1354,21 @@ if (window.callManager) {
   window.callManager.meetingJoinView = null;
   window.callManager.meetingWaitingView = null;
   window.callManager.meetingCreatedView = null;
+  window.callManager.meetingPreviewView = null;
   window.callManager.meetingTimer = null;
   window.callManager.meetingPendingCode = null;
   window.callManager.deepLinkRetries = 0;
+  window.callManager.previewMicEnabled = true;
+  window.callManager.previewCamEnabled = true;
+  window.callManager.previewStream = null;
 }
 
 // ===== EXPORTS GLOBAUX =====
-window.showMeetingCreateView = function() { window.callManager.showMeetingCreateView(); };
+window.showMeetingCreateView = function(meetingId) { window.callManager.showMeetingCreateView(meetingId); };
 window.closeMeetingCreateView = function() { window.callManager.closeMeetingCreateView(); };
 window.selectMeetingType = function(type) { window.callManager.selectMeetingType(type); };
 window.confirmCreateMeeting = function() { window.callManager.confirmCreateMeeting(); };
+window.cancelMeeting = function() { window.callManager.cancelMeeting(); };
 window.showMeetingJoinView = function(code) { window.callManager.showMeetingJoinView(code); };
 window.closeMeetingJoinView = function() { window.callManager.closeMeetingJoinView(); };
 window.confirmJoinMeeting = function() { window.callManager.confirmJoinMeeting(); };
@@ -1029,6 +1381,13 @@ window.showMeetingListView = function() { window.callManager.listMeetings(); };
 window.closeMeetingListView = function() { window.callManager.closeMeetingListView(); };
 window.createMeetingFromList = function() { window.callManager.createMeetingFromList(); };
 window.startMeetingFromList = function(code) { window.callManager.startMeetingFromList(code); };
+// Exports pour l'écran de prévisualisation
+window.closeMeetingPreviewView = function() { window.callManager.closeMeetingPreviewView(); };
+window.togglePreviewMic = function() { window.callManager.togglePreviewMic(); };
+window.togglePreviewCam = function() { window.callManager.togglePreviewCam(); };
+window.selectCamera = function(deviceId) { window.callManager.selectCamera(deviceId); };
+window.selectMicrophone = function(deviceId) { window.callManager.selectMicrophone(deviceId); };
+window.confirmJoinMeetingFromPreview = function(code) { window.callManager.confirmJoinMeetingFromPreview(code); };
 window.openMeetingDetails = function(meetingId) { window.callManager.openMeetingDetails(meetingId); };
 
 // ===== HANDLE DEEP LINK AU DÉMARRAGE =====
