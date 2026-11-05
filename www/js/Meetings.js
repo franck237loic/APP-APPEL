@@ -462,9 +462,23 @@ CallManager.prototype.showMeetingCreateView = function(editMeetingId = null) {
           </div>
           
           <div>
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Mode de réunion</label>
+            <div style="display: flex; gap: 10px;">
+              <button id="meeting-mode-scheduled" class="meeting-type-btn active" onclick="window.selectMeetingMode('scheduled')">
+                <i class="fa-solid fa-calendar"></i>
+                <span>Planifiée</span>
+              </button>
+              <button id="meeting-mode-instant" class="meeting-type-btn" onclick="window.selectMeetingMode('instant')">
+                <i class="fa-solid fa-bolt"></i>
+                <span>Immédiate</span>
+              </button>
+            </div>
+          </div>
+
+          <div id="datetime-container">
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Date et heure *</label>
-            <input type="datetime-local" id="meeting-datetime" 
-                   style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
+            <input type="datetime-local" id="meeting-datetime"
+                   style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045;
                           border-radius: 8px; color: white; font-size: 15px; outline: none;">
           </div>
           
@@ -575,7 +589,7 @@ CallManager.prototype.closeMeetingCreateView = function() {
 CallManager.prototype.selectMeetingType = function(type) {
   const audioBtn = document.getElementById("meeting-type-audio");
   const videoBtn = document.getElementById("meeting-type-video");
-  
+
   if (type === "audio") {
     audioBtn.classList.add("active");
     videoBtn.classList.remove("active");
@@ -585,34 +599,61 @@ CallManager.prototype.selectMeetingType = function(type) {
   }
 };
 
+CallManager.prototype.selectMeetingMode = function(mode) {
+  const scheduledBtn = document.getElementById("meeting-mode-scheduled");
+  const instantBtn = document.getElementById("meeting-mode-instant");
+  const datetimeContainer = document.getElementById("datetime-container");
+
+  if (mode === "scheduled") {
+    scheduledBtn.classList.add("active");
+    instantBtn.classList.remove("active");
+    datetimeContainer.style.display = "block";
+  } else {
+    instantBtn.classList.add("active");
+    scheduledBtn.classList.remove("active");
+    datetimeContainer.style.display = "none";
+  }
+};
+
 CallManager.prototype.confirmCreateMeeting = async function() {
   const title = document.getElementById("meeting-title").value.trim();
   const description = document.getElementById("meeting-description").value.trim();
-  const datetime = document.getElementById("meeting-datetime").value;
   const duration = document.getElementById("meeting-duration").value;
   const isVideo = document.getElementById("meeting-type-video").classList.contains("active");
-  
+  const isInstant = document.getElementById("meeting-mode-instant").classList.contains("active");
+
   if (!title) {
     this.showCallToast("Veuillez entrer un titre");
     return;
   }
-  
-  if (!datetime) {
-    this.showCallToast("Veuillez sélectionner une date et heure");
-    return;
-  }
-  
+
   if (!duration || duration < 15 || duration > 480) {
     this.showCallToast("Durée invalide (15-480 minutes)");
     return;
   }
-  
-  const scheduledAtTimestamp = new Date(datetime).getTime();
-  if (isNaN(scheduledAtTimestamp) || scheduledAtTimestamp <= Date.now() + 60000) {
-    this.showCallToast("Date invalide (doit être dans le futur, au moins 1 minute)");
-    return;
+
+  let scheduledAtTimestamp;
+  let datetime;
+
+  if (isInstant) {
+    // Réunion immédiate: commencer dans 5 secondes
+    scheduledAtTimestamp = Date.now() + 5000;
+    datetime = new Date(scheduledAtTimestamp).toISOString();
+  } else {
+    // Réunion planifiée: date requise
+    datetime = document.getElementById("meeting-datetime").value;
+    if (!datetime) {
+      this.showCallToast("Veuillez sélectionner une date et heure");
+      return;
+    }
+
+    scheduledAtTimestamp = new Date(datetime).getTime();
+    if (isNaN(scheduledAtTimestamp) || scheduledAtTimestamp <= Date.now() + 60000) {
+      this.showCallToast("Date invalide (doit être dans le futur, au moins 1 minute)");
+      return;
+    }
   }
-  
+
   // Mode édition
   if (this.editingMeetingId) {
     try {
@@ -624,7 +665,7 @@ CallManager.prototype.confirmCreateMeeting = async function() {
         isVideo,
         userId: this.myId
       };
-      
+
       await meetingService.updateMeeting(this.editingMeetingId, updates);
       this.showCallToast("Réunion modifiée avec succès");
       this.closeMeetingCreateView();
@@ -635,10 +676,17 @@ CallManager.prototype.confirmCreateMeeting = async function() {
     }
     return;
   }
-  
+
   // Mode création
   this.createMeeting(title, datetime, duration, isVideo, [], description);
   this.closeMeetingCreateView();
+
+  // Si réunion immédiate, attendre un peu puis rejoindre automatiquement
+  if (isInstant) {
+    setTimeout(() => {
+      this.showCallToast("Réunion créée, jonction automatique...");
+    }, 1000);
+  }
 };
 
 CallManager.prototype.cancelMeeting = async function() {

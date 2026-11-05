@@ -1038,23 +1038,25 @@ class MeetingManager {
     if (!title || title.trim().length === 0) {
       return { success: false, reason: "Le titre est requis" };
     }
-    
+
     if (title.length > 100) {
       return { success: false, reason: "Le titre ne peut pas dépasser 100 caractères" };
     }
-    
+
     if (description && description.length > 500) {
       return { success: false, reason: "La description ne peut pas dépasser 500 caractères" };
     }
-    
-    if (!scheduledAt || scheduledAt <= Date.now() + 60000) {
+
+    // Validation de la date: doit être dans le futur OU dans les 5 dernières secondes (réunion immédiate)
+    const now = Date.now();
+    if (!scheduledAt || (scheduledAt <= now - 5000 && scheduledAt < now + 60000)) {
       return { success: false, reason: "L'heure doit être dans le futur (au moins 1 minute)" };
     }
-    
+
     if (!durationMin || durationMin < 15 || durationMin > 480) {
       return { success: false, reason: "La durée doit être entre 15 et 480 minutes" };
     }
-    
+
     if (participants && (!Array.isArray(participants) || participants.length > 14)) {
       return { success: false, reason: "Maximum 14 participants" };
     }
