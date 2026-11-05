@@ -1333,17 +1333,21 @@ class MeetingManager {
     // Recalculer endsAt = maintenant + durée (comportement Google Meet)
     const newEndsAt = Date.now() + (meeting.durationMin * 60 * 1000);
 
-    // Créer la salle live immédiatement (isMeeting = true pour salle vide)
-    const room = roomManager.createRoom(meeting.createdBy, meeting.isVideo, true);
-    room.endsAt = newEndsAt;
+    // Créer la salle live immédiatement comme une vraie salle de réunion vide,
+    // puis ajouter explicitement l'hôte pour éviter le cas où la réunion est créée
+    // sans participant malgré des personnes déjà en attente.
+    const room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, newEndsAt);
+    roomManager.join(room.roomId, userId);
 
     // Mettre à jour Firestore avec le nouveau endsAt
     await db.collection("meetings").doc(meeting.id).update({
       status: "live",
       roomId: room.roomId,
       endsAt: newEndsAt,
+      waitingUsers: [],
     });
 
+    await this._removeWaitingUser(meeting.id, userId);
     await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId);
 
     console.log(`📅 Réunion ${meeting.id} démarrée manuellement (salle ${room.roomId}), fin à ${new Date(newEndsAt).toISOString()}`);
@@ -1444,22 +1448,22 @@ class MeetingManager {
         finalEndsAt = Date.now() + (meeting.durationMin * 60 * 1000);
         console.log(`📅 Créateur démarre tôt, endsAt recalculé à ${new Date(finalEndsAt).toISOString()}`);
       }
-      
+
       // Déterminer le roomId de manière déterministe
       const roomId = `room_meeting_${meeting.id}`;
-      
+
       // Réservation du roomId dans Firestore via transaction
       const roomRef = db.collection("meetings").doc(meeting.id);
-      
+
       let room;
       await db.runTransaction(async (transaction) => {
         const freshMeeting = await transaction.get(roomRef);
         if (!freshMeeting.exists) {
           throw "Réunion introuvable";
         }
-        
+
         const freshData = freshMeeting.data();
-        
+
         // Si quelqu'un d'autre a déjà créé la salle, l'utiliser
         if (freshData.status === "live" && freshData.roomId) {
           const existingRoom = roomManager.rooms.get(freshData.roomId);
@@ -1469,15 +1473,19 @@ class MeetingManager {
             return;
           }
         }
-        
-        // Sinon, créer la salle vide pour réunion
+
+        // Créer la salle vide pour réunion et forcer l'ajout du créateur dans la salle
+        // afin de garantir que le host voit bien la réunion ouverte et que les participants
+        // en attente soient ensuite correctement ajoutés à la salle live.
         room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, finalEndsAt);
-        
+        roomManager.join(room.roomId, userId);
+
         // Mettre à jour Firestore dans la transaction
         transaction.update(roomRef, {
           status: "live",
           roomId: room.roomId,
           endsAt: finalEndsAt,
+          waitingUsers: [],
         });
       }).catch((error) => {
         console.error(`❌ Erreur transaction Firestore:`, error);

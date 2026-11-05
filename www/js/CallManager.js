@@ -6700,6 +6700,7 @@ showLocalStorageOnScreen = () => {
   groupMigrateTimer = null; // Timer pour l'affichage "Connexion…" des personnes en migration
   groupIsLeaving = false; // true quand l'utilisateur est en train de quitter l'appel
   groupDowngradingToOneToOne = false; // true pendant la bascule automatique vers interface 1-à-1
+  groupIsMeeting = false; // true quand la salle vient d'une réunion planifiée ; on ne doit pas descendre en 1-à-1
 
   // Minuteries (toutes nettoyées dans cleanGroupState)
   groupTimerInterval = null; // chrono de l'appel
@@ -7113,6 +7114,7 @@ showLocalStorageOnScreen = () => {
     }
 
     this.groupIsVideo = !!video;
+    this.groupIsMeeting = false;
     this.groupCreating = true;
     this.groupIsLeaving = false;
     this.updateStatus("Initialisation média...");
@@ -7615,7 +7617,7 @@ showLocalStorageOnScreen = () => {
 
     // Si on passe de 3+ participants à 2 participants (moi + 1 autre),
     // basculer vers l'interface 1-à-1 normale (audio ou vidéo selon le type d'appel)
-    if (this.groupRoomId && others.length === 1) {
+    if (this.groupRoomId && others.length === 1 && !this.groupIsMeeting) {
       const otherId = others[0].userId;
       if (!this.groupDowngradingToOneToOne) {
         this.groupDowngradingToOneToOne = true;
@@ -7637,6 +7639,12 @@ showLocalStorageOnScreen = () => {
 
   // Bascule de l'interface de groupe vers l'interface 1-à-1 (audio ou vidéo)
   downgradeGroupToOneToOne = (otherId) => {
+    if (this.groupIsMeeting) {
+      console.log("📅 [MEETING] Bascule 1-à-1 désactivée dans une réunion planifiée");
+      this.groupDowngradingToOneToOne = false;
+      return;
+    }
+
     try {
       // Récupérer le peer WebRTC existant avec l'autre participant
       const peer = this.groupPeers.get(otherId);
@@ -8663,6 +8671,7 @@ showLocalStorageOnScreen = () => {
 
     this.groupRoomId = null;
     this.groupIsVideo = false;
+    this.groupIsMeeting = false;
     this.groupRoster = [];
     this.groupPeerStates.clear();
     this.groupMigratingIds.clear();
@@ -8677,6 +8686,7 @@ showLocalStorageOnScreen = () => {
     this.groupJoinPending = false;
     this.groupRejoining = false;
     this.groupEverHadPeer = false;
+    this.groupIsMeeting = false;
     this.groupAcceptInProgress = false;
     this._groupSwitching = false;
     this.stopVibration();
