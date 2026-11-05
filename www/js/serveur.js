@@ -1072,6 +1072,7 @@ class MeetingManager {
       participants: participants || [],
       status: "scheduled",
       roomId: null,
+      waitingUsers: [],
       createdAt: Date.now(),
       link,
       success: true,
@@ -1237,6 +1238,54 @@ class MeetingManager {
     return null;
   }
 
+  async _addWaitingUser(meetingId, userId) {
+    const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+    if (!meetingDoc.exists) return;
+
+    const current = meetingDoc.data();
+    const waitingUsers = Array.isArray(current.waitingUsers) ? current.waitingUsers.filter(Boolean) : [];
+    if (!waitingUsers.includes(userId)) {
+      waitingUsers.push(userId);
+    }
+
+    await db.collection("meetings").doc(meetingId).update({ waitingUsers });
+  }
+
+  async _removeWaitingUser(meetingId, userId) {
+    const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+    if (!meetingDoc.exists) return;
+
+    const current = meetingDoc.data();
+    const waitingUsers = Array.isArray(current.waitingUsers) ? current.waitingUsers.filter(Boolean) : [];
+    const nextWaitingUsers = waitingUsers.filter((id) => id !== userId);
+
+    await db.collection("meetings").doc(meetingId).update({ waitingUsers: nextWaitingUsers });
+  }
+
+  async _notifyWaitingUsersStarted(meetingId, roomId, title, isVideo, excludeUserId = null) {
+    const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+    if (!meetingDoc.exists) return;
+
+    const meeting = meetingDoc.data();
+    const waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+
+    for (const waitingUserId of waitingUsers) {
+      if (excludeUserId && waitingUserId === excludeUserId) continue;
+      const user = users.get(waitingUserId);
+      if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+        user.ws.send(JSON.stringify({
+          type: "meeting-joined",
+          meetingId,
+          roomId,
+          isVideo,
+          title,
+        }));
+      }
+    }
+
+    await db.collection("meetings").doc(meetingId).update({ waitingUsers: [] });
+  }
+
   /**
    * =========================================================
    *   DÉMARRER FORCÉMENT UNE RÉUNION (CRÉATEUR)
@@ -1294,6 +1343,8 @@ class MeetingManager {
       roomId: room.roomId,
       endsAt: newEndsAt,
     });
+
+    await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId);
 
     console.log(`📅 Réunion ${meeting.id} démarrée manuellement (salle ${room.roomId}), fin à ${new Date(newEndsAt).toISOString()}`);
 
@@ -1362,6 +1413,7 @@ class MeetingManager {
     if (now < meetingStart && !isCreator) {
       const waitTimeMs = meetingStart - now;
       const waitTimeMin = Math.ceil(waitTimeMs / 60000);
+      await this._addWaitingUser(meeting.id, userId);
       console.log(`📅 [MEETING] - En attente de démarrage : ${waitTimeMin}min restantes`);
       return {
         success: false,
@@ -1432,6 +1484,8 @@ class MeetingManager {
         throw error;
       });
 
+      await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId);
+      await this._removeWaitingUser(meeting.id, userId);
       console.log(`📅 Réunion ${meeting.id} passée à live (salle ${room.roomId})`);
 
       return {
