@@ -93,6 +93,105 @@ function generateAuthToken(userId) {
 // Stockage temporaire en mémoire RAM pour les offres d'appel (évite de surcharger FCM)
 const pendingCalls = new Map();
 
+// Rate limiter pour les tentatives de join de réunion (IP → {count, lastAttempt})
+const meetingJoinRateLimiter = new Map();
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const RATE_LIMIT_MAX_ATTEMPTS = 10; // 10 tentatives par minute
+
+/**
+ * Vérifie si une IP a dépassé la limite de tentatives de join
+ * @param {string} ip - Adresse IP du client
+ * @returns {boolean} true si autorisé, false si rate limit atteint
+ */
+function checkMeetingJoinRateLimit(ip) {
+  const now = Date.now();
+  const record = meetingJoinRateLimiter.get(ip);
+
+  if (!record) {
+    meetingJoinRateLimiter.set(ip, { count: 1, lastAttempt: now });
+    return true;
+  }
+
+  // Si la fenêtre de temps est expirée, réinitialiser
+  if (now - record.lastAttempt > RATE_LIMIT_WINDOW) {
+    meetingJoinRateLimiter.set(ip, { count: 1, lastAttempt: now });
+    return true;
+  }
+
+  // Vérifier si la limite est atteinte
+  if (record.count >= RATE_LIMIT_MAX_ATTEMPTS) {
+    console.warn(`⚠️ Rate limit atteint pour IP ${ip}: ${record.count} tentatives`);
+    return false;
+  }
+
+  // Incrémenter le compteur
+  record.count++;
+  record.lastAttempt = now;
+  meetingJoinRateLimiter.set(ip, record);
+  return true;
+}
+
+/**
+ * Valide et sanitize une chaîne de caractères
+ * @param {string} str - Chaîne à valider
+ * @param {number} maxLength - Longueur maximale
+ * @returns {string} Chaîne sanitizée
+ */
+function sanitizeString(str, maxLength = 1000) {
+  if (typeof str !== 'string') return '';
+  // Tronquer si trop long
+  if (str.length > maxLength) str = str.substring(0, maxLength);
+  // Supprimer les caractères dangereux
+  return str.replace(/[<>]/g, '');
+}
+
+/**
+ * Valide les données d'un message de réunion
+ * @param {object} data - Données du message
+ * @param {string} type - Type de message
+ * @returns {object} {valid: boolean, reason: string}
+ */
+function validateMeetingMessage(data, type) {
+  if (!data || typeof data !== 'object') {
+    return { valid: false, reason: 'Données invalides' };
+  }
+
+  switch (type) {
+    case 'meeting-create':
+      if (!data.title || typeof data.title !== 'string' || data.title.length > 100) {
+        return { valid: false, reason: 'Titre invalide (max 100 caractères)' };
+      }
+      if (data.description && typeof data.description === 'string' && data.description.length > 500) {
+        return { valid: false, reason: 'Description trop longue (max 500 caractères)' };
+      }
+      if (data.scheduledAt && typeof data.scheduledAt !== 'number') {
+        return { valid: false, reason: 'Date invalide' };
+      }
+      if (data.durationMin && (typeof data.durationMin !== 'number' || data.durationMin < 15 || data.durationMin > 480)) {
+        return { valid: false, reason: 'Durée invalide (entre 15 et 480 minutes)' };
+      }
+      break;
+
+    case 'meeting-join':
+    case 'meeting-force-start':
+      if (!data.code || typeof data.code !== 'string' || data.code.length > 20) {
+        return { valid: false, reason: 'Code invalide' };
+      }
+      break;
+
+    case 'meeting-cancel':
+      if (!data.meetingId || typeof data.meetingId !== 'string' || data.meetingId.length > 100) {
+        return { valid: false, reason: 'ID de réunion invalide' };
+      }
+      break;
+
+    default:
+      break;
+  }
+
+  return { valid: true };
+}
+
 // =========================================================
 // APPEL DE GROUPE — RoomManager (Style WhatsApp)
 // =========================================================
@@ -1033,7 +1132,7 @@ class MeetingManager {
    * @param {Array<string>} params.participants - Liste des participants invités
    * @returns {Promise<object>} Réunion créée avec meetingId, code, link
    */
-  async create({ title, description, scheduledAt, durationMin, isVideo, createdBy, participants }) {
+  async create({ title, description, scheduledAt, durationMin, isVideo, createdBy, participants, accessPolicy }) {
     // Validation des paramètres
     if (!title || title.trim().length === 0) {
       return { success: false, reason: "Le titre est requis" };
@@ -1080,6 +1179,8 @@ class MeetingManager {
       status: "scheduled",
       roomId: null,
       waitingUsers: [],
+      accessPolicy: accessPolicy || "direct", // "direct" ou "approval"
+      pendingRequests: [], // Demandes d'accès en attente
       createdAt: Date.now(),
       link,
       success: true,
@@ -1269,6 +1370,50 @@ class MeetingManager {
     await db.collection("meetings").doc(meetingId).update({ waitingUsers: nextWaitingUsers });
   }
 
+  async _addPendingRequest(meetingId, userId) {
+    const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+    if (!meetingDoc.exists) return;
+
+    const current = meetingDoc.data();
+    const pendingRequests = Array.isArray(current.pendingRequests) ? current.pendingRequests.filter(Boolean) : [];
+    
+    // Vérifier si déjà en attente
+    if (pendingRequests.some(req => req.userId === userId)) {
+      return;
+    }
+
+    pendingRequests.push({
+      userId,
+      requestedAt: Date.now(),
+    });
+
+    await db.collection("meetings").doc(meetingId).update({ pendingRequests });
+  }
+
+  async _removePendingRequest(meetingId, userId) {
+    const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+    if (!meetingDoc.exists) return;
+
+    const current = meetingDoc.data();
+    const pendingRequests = Array.isArray(current.pendingRequests) ? current.pendingRequests.filter(Boolean) : [];
+    const nextPendingRequests = pendingRequests.filter((req) => req.userId !== userId);
+
+    await db.collection("meetings").doc(meetingId).update({ pendingRequests: nextPendingRequests });
+  }
+
+  async _notifyHostOfPendingRequest(meetingId, userId, hostId, title) {
+    const hostUser = users.get(hostId);
+    if (hostUser?.ws && hostUser.ws.readyState === WebSocket.OPEN) {
+      hostUser.ws.send(JSON.stringify({
+        type: "meeting-pending-request",
+        meetingId,
+        userId,
+        title,
+      }));
+      console.log(`📅 Notification de demande d'accès envoyée à l'hôte ${hostId}`);
+    }
+  }
+
   async _notifyWaitingUsersStarted(meetingId, roomId, title, isVideo, excludeUserId = null, waitingUsersParam = null) {
     const room = roomManager.rooms.get(roomId);
 
@@ -1282,6 +1427,8 @@ class MeetingManager {
       waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
     }
 
+    // Préparer la map des notifications pour Firestore
+    const notifiedUsers = {};
     for (const waitingUserId of waitingUsers) {
       if (excludeUserId && waitingUserId === excludeUserId) continue;
 
@@ -1302,8 +1449,20 @@ class MeetingManager {
           isVideo,
           title,
         }));
+        notifiedUsers[waitingUserId] = true;
+      } else {
+        // Marquer comme notifié même si déconnecté (pour retry à la reconnexion)
+        notifiedUsers[waitingUserId] = false;
       }
     }
+
+    // Mettre à jour Firestore avec le statut de notification
+    await db.collection("meetings").doc(meetingId).update({
+      waitingUsers: [],
+      notifiedUsers: notifiedUsers,
+      roomId: roomId,
+      status: "live"
+    });
 
     // Ne vider waitingUsers que si on ne l'a pas déjà fait dans forceStart
     if (!waitingUsersParam) {
@@ -1485,6 +1644,22 @@ class MeetingManager {
       return { success: false, reason: "Réunion expirée" };
     }
 
+    // Vérifier la politique d'accès
+    if (meeting.accessPolicy === "approval" && !isCreator) {
+      // Ajouter à pendingRequests
+      await this._addPendingRequest(meeting.id, userId);
+      
+      // Notifier le créateur
+      await this._notifyHostOfPendingRequest(meeting.id, userId, meeting.createdBy, meeting.title);
+      
+      return {
+        success: false,
+        status: "pending_approval",
+        reason: "En attente d'approbation de l'hôte",
+        meetingId: meeting.id,
+      };
+    }
+
     // Dans la fenêtre d'accès : ouvrir ou utiliser la salle live
     if (meeting.status === "scheduled") {
       // Si le créateur démarre tôt, recalculer endsAt
@@ -1633,6 +1808,95 @@ class MeetingManager {
     return { success: true };
   }
 
+  async approveRequest(meetingId, userId, hostId) {
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) return { success: false, reason: "Réunion introuvable" };
+
+    const meeting = doc.data();
+    if (meeting.createdBy !== hostId) {
+      return { success: false, reason: "Non autorisé (seul l'hôte peut approuver)" };
+    }
+
+    // Retirer de pendingRequests
+    await this._removePendingRequest(meetingId, userId);
+
+    // Créer la salle si pas encore live
+    let roomId = meeting.roomId;
+    if (meeting.status === "scheduled") {
+      const room = roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
+      roomManager.join(room.roomId, userId);
+      roomId = room.roomId;
+      await db.collection("meetings").doc(meetingId).update({ status: "live", roomId });
+    } else {
+      roomManager.join(roomId, userId);
+    }
+
+    return { success: true, roomId, isVideo: meeting.isVideo, title: meeting.title };
+  }
+
+  async rejectRequest(meetingId, userId, hostId) {
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) return { success: false, reason: "Réunion introuvable" };
+
+    const meeting = doc.data();
+    if (meeting.createdBy !== hostId) {
+      return { success: false, reason: "Non autorisé (seul l'hôte peut refuser)" };
+    }
+
+    await this._removePendingRequest(meetingId, userId);
+    return { success: true };
+  }
+
+  /**
+   * Vérifier si un utilisateur est l'hôte d'une réunion
+   */
+  async isHost(meetingId, userId) {
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) return false;
+    const meeting = doc.data();
+    return meeting.createdBy === userId;
+  }
+
+  /**
+   * Vérifier si un utilisateur est autorisé à rejoindre une réunion
+   */
+  async canJoin(meetingId, userId) {
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) return { allowed: false, reason: "Réunion introuvable" };
+
+    const meeting = doc.data();
+
+    // Vérifier le statut
+    if (meeting.status === "cancelled") {
+      return { allowed: false, reason: "Réunion annulée" };
+    }
+    if (meeting.status === "ended") {
+      return { allowed: false, reason: "Réunion terminée" };
+    }
+
+    // L'hôte peut toujours rejoindre
+    if (meeting.createdBy === userId) {
+      return { allowed: true, isHost: true };
+    }
+
+    // Vérifier si l'utilisateur est dans la liste des participants
+    if (meeting.participants && meeting.participants.includes(userId)) {
+      return { allowed: true, isHost: false };
+    }
+
+    // Politique d'accès direct : autoriser si meeting est live
+    if (meeting.accessPolicy === "direct" && meeting.status === "live") {
+      return { allowed: true, isHost: false };
+    }
+
+    // Politique d'approbation : retourner "pending"
+    if (meeting.accessPolicy === "approval") {
+      return { allowed: false, requiresApproval: true, reason: "Nécessite l'approbation de l'hôte" };
+    }
+
+    return { allowed: false, reason: "Non autorisé" };
+  }
+
   /**
    * =========================================================
    *   LISTER LES RÉUNIONS D'UN UTILISATEUR
@@ -1753,6 +2017,94 @@ class MeetingManager {
       await this._sendMeetingEnded(doc.id, "Salle fermée");
     }
   }
+
+  /**
+   * =========================================================
+   *   VÉRIFIER LES NOTIFICATIONS EN ATTENTE
+   * =========================================================
+   *
+   * Vérifie si un utilisateur a des notifications de meeting en attente
+   * et les envoie lors de la reconnexion
+   *
+   * @param {string} userId - ID de l'utilisateur qui se reconnecte
+   */
+  async _checkPendingMeetingNotifications(userId) {
+    try {
+      // Chercher les réunions où l'utilisateur est dans notifiedUsers mais n'a pas reçu la notification
+      const snapshot = await db.collection("meetings")
+        .where("notifiedUsers." + userId, "==", false)
+        .where("status", "==", "live")
+        .get();
+
+      if (snapshot.empty) {
+        return;
+      }
+
+      for (const doc of snapshot.docs) {
+        const meeting = doc.data();
+        const user = users.get(userId);
+
+        if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+          // Envoyer la notification maintenant
+          user.ws.send(JSON.stringify({
+            type: "meeting-joined",
+            meetingId: doc.id,
+            roomId: meeting.roomId,
+            isVideo: meeting.isVideo,
+            title: meeting.title,
+          }));
+
+          // Marquer comme notifié
+          await db.collection("meetings").doc(doc.id).update({
+            [`notifiedUsers.${userId}`]: true
+          });
+
+          console.log(`📅 Notification de réunion envoyée à ${userId} lors de la reconnexion`);
+        }
+      }
+    } catch (error) {
+      console.error("❌ Erreur vérification notifications en attente:", error);
+    }
+  }
+
+  /**
+   * =========================================================
+   *   NOTIFIER RECONNEXION RÉUNION
+   * =========================================================
+   *
+   * Notifie tous les participants d'une réunion que la salle a été recréée
+   * après un crash serveur
+   *
+   * @param {string} meetingId - ID de la réunion
+   * @param {string} roomId - ID de la salle
+   * @param {boolean} isVideo - Type d'appel
+   * @param {string} title - Titre de la réunion
+   */
+  async _notifyMeetingReconnect(meetingId, roomId, isVideo, title) {
+    try {
+      const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+      if (!meetingDoc.exists) return;
+
+      const meeting = meetingDoc.data();
+      const participants = meeting.participants || [];
+
+      for (const userId of participants) {
+        const user = users.get(userId);
+        if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+          user.ws.send(JSON.stringify({
+            type: "meeting-reconnect",
+            meetingId,
+            roomId,
+            isVideo,
+            title,
+          }));
+          console.log(`📅 Notification de reconnexion envoyée à ${userId}`);
+        }
+      }
+    } catch (error) {
+      console.error("❌ Erreur notification reconnexion:", error);
+    }
+  }
 }
 
 // Instance globale du RoomManager
@@ -1795,6 +2147,9 @@ async function loadMeetingsOnStartup() {
         if (!existingRoom) {
           roomManager.createMeetingRoom(meeting.id, meeting.isVideo, meeting.endsAt);
           console.log(`📅 Salle live recréée: ${meeting.roomId}`);
+
+          // Envoyer un message de reconnexion à tous les participants
+          await _notifyMeetingReconnect(meeting.id, meeting.roomId, meeting.isVideo, meeting.title);
         }
       }
       
@@ -2470,6 +2825,9 @@ wss.on("connection", (ws) => {
         // IMPORTANT: Définir ws.userId pour les vérifications ultérieures
         ws.userId = userId;
 
+        // Vérifier si l'utilisateur a des notifications de meeting en attente
+        await _checkPendingMeetingNotifications(userId);
+
         ws.send(
           JSON.stringify({
             type: "registered",
@@ -3022,6 +3380,22 @@ wss.on("connection", (ws) => {
             roster,
           }),
         );
+
+        // Notifier les autres participants de l'arrivée (pour Meeting)
+        const room = roomManager.rooms.get(roomId);
+        if (room) {
+          for (const [participantId, participant] of room.participants) {
+            if (participantId !== ws.userId) {
+              const user = users.get(participantId);
+              if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+                user.ws.send(JSON.stringify({
+                  type: "meeting-participant-joined",
+                  userId: ws.userId,
+                }));
+              }
+            }
+          }
+        }
         return;
       }
 
@@ -3071,6 +3445,20 @@ wss.on("connection", (ws) => {
               reason: "Impossible de quitter",
             }),
           );
+        }
+
+        // Notifier les autres participants du départ (pour Meeting)
+        const room = roomManager.rooms.get(roomId);
+        if (room) {
+          for (const [participantId, participant] of room.participants) {
+            const user = users.get(participantId);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify({
+                type: "meeting-participant-left",
+                userId: ws.userId,
+              }));
+            }
+          }
         }
         return;
       }
@@ -3187,6 +3575,19 @@ wss.on("connection", (ws) => {
       // Pourquoi : Créer une réunion planifiée avec un code partageable
       if (type === "meeting-create") {
         try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-create");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-create refusé : ${validation.reason}`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: validation.reason,
+              }),
+            );
+            return;
+          }
+
           const { title, description, scheduledAt, durationMin, isVideo, participants } = data;
 
           console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"}`);
@@ -3202,22 +3603,14 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          // Valider les champs obligatoires
-          if (!title || !scheduledAt || !durationMin) {
-            console.error(`[MEETING] meeting-create refusé : champs manquants`);
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "Champs manquants (title, scheduledAt, durationMin)",
-              }),
-            );
-            return;
-          }
+          // Sanitiser les chaînes
+          const sanitizedTitle = sanitizeString(title, 100);
+          const sanitizedDescription = description ? sanitizeString(description, 500) : "";
 
           // Créer la réunion
           const meeting = await meetingManager.create({
-            title,
-            description,
+            title: sanitizedTitle,
+            description: sanitizedDescription,
             scheduledAt,
             durationMin,
             isVideo: !!isVideo,
@@ -3270,9 +3663,37 @@ wss.on("connection", (ws) => {
       // Pourquoi : Rejoindre une réunion planifiée via son code
       if (type === "meeting-join") {
         try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-join");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-join refusé : ${validation.reason}`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: validation.reason,
+              }),
+            );
+            return;
+          }
+
           const { code } = data;
 
           console.log(`[MEETING] meeting-join reçu de ${ws.userId || "?"} pour code ${code}`);
+
+          // Extraire l'IP du client pour le rate limiting
+          const clientIP = ws._socket.remoteAddress || "unknown";
+
+          // Vérifier le rate limiting
+          if (!checkMeetingJoinRateLimit(clientIP)) {
+            console.warn(`[MEETING] meeting-join refusé : rate limit atteint pour IP ${clientIP}`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: "Trop de tentatives, réessayez plus tard",
+              }),
+            );
+            return;
+          }
 
           if (!ws.userId) {
             console.error(`[MEETING] meeting-join refusé : utilisateur non enregistré`);
@@ -3285,14 +3706,21 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          if (!code) {
-            console.error(`[MEETING] meeting-join refusé : code manquant`);
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "Code manquant",
-              }),
-            );
+          // Vérification supplémentaire des permissions avant le join
+          const meetingDoc = await db.collection("meetings").where("code", "==", code).limit(1).get();
+          if (meetingDoc.empty) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Réunion introuvable" }));
+            return;
+          }
+          const meeting = meetingDoc.docs[0].data();
+
+          // Vérifier si la réunion est annulée ou terminée
+          if (meeting.status === "cancelled") {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Réunion annulée" }));
+            return;
+          }
+          if (meeting.status === "ended") {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Réunion terminée" }));
             return;
           }
 
@@ -3325,6 +3753,16 @@ wss.on("connection", (ws) => {
               }),
             );
             console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
+          } else if (result.status === "pending_approval") {
+            // En attente d'approbation de l'hôte
+            ws.send(
+              JSON.stringify({
+                type: "meeting-pending-approval",
+                meetingId: result.meetingId,
+                reason: result.reason,
+              }),
+            );
+            console.log(`[MEETING] meeting-pending-approval envoyé à ${ws.userId}`);
           } else {
             // Erreur (code invalide, expiré, etc.)
             ws.send(
@@ -3352,6 +3790,14 @@ wss.on("connection", (ws) => {
       // Pourquoi : Forcer le lancement de la réunion et intégrer les utilisateurs en attente
       if (type === "meeting-force-start") {
         try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-force-start");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-force-start refusé : ${validation.reason}`);
+            ws.send(JSON.stringify({ type: "meeting-error", reason: validation.reason }));
+            return;
+          }
+
           const { code } = data;
 
           console.log(`[MEETING] meeting-force-start reçu de ${ws.userId || "?"} pour code ${code}`);
@@ -3361,8 +3807,15 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          if (!code) {
-            ws.send(JSON.stringify({ type: "meeting-error", reason: "Code manquant" }));
+          // Vérifier que l'utilisateur est autorisé (hôte)
+          const meetingDoc = await db.collection("meetings").where("code", "==", code).limit(1).get();
+          if (meetingDoc.empty) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Réunion introuvable" }));
+            return;
+          }
+          const meeting = meetingDoc.docs[0].data();
+          if (meeting.createdBy !== ws.userId) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non autorisé (seul l'hôte peut démarrer)" }));
             return;
           }
 
@@ -3395,6 +3848,19 @@ wss.on("connection", (ws) => {
       // Pourquoi : Annuler une réunion planifiée (réservé à l'hôte)
       if (type === "meeting-cancel") {
         try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-cancel");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-cancel refusé : ${validation.reason}`);
+            ws.send(
+              JSON.stringify({
+                type: "meeting-error",
+                reason: validation.reason,
+              }),
+            );
+            return;
+          }
+
           const { meetingId } = data;
 
           console.log(`[MEETING] meeting-cancel reçu de ${ws.userId || "?"} pour ${meetingId}`);
@@ -3410,14 +3876,10 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          if (!meetingId) {
-            console.error(`[MEETING] meeting-cancel refusé : meetingId manquant`);
-            ws.send(
-              JSON.stringify({
-                type: "meeting-error",
-                reason: "meetingId manquant",
-              }),
-            );
+          // Vérifier que l'utilisateur est l'hôte
+          const isHost = await meetingManager.isHost(meetingId, ws.userId);
+          if (!isHost) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non autorisé (seul l'hôte peut annuler)" }));
             return;
           }
 
@@ -3449,6 +3911,225 @@ wss.on("connection", (ws) => {
             }),
           );
         }
+        return;
+      }
+
+      // 20. Approuver une demande d'accès (hôte)
+      // Envoyé par : Host -> Reçu par : Participant + Host (confirmation)
+      // Pourquoi : Permettre à l'hôte d'approuver un participant en attente
+      if (type === "meeting-approve") {
+        try {
+          const { meetingId, userId } = data;
+
+          console.log(`[MEETING] meeting-approve reçu de ${ws.userId} pour ${userId} dans ${meetingId}`);
+
+          if (!ws.userId) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non enregistré" }));
+            return;
+          }
+
+          // Vérifier que l'utilisateur est l'hôte
+          const isHost = await meetingManager.isHost(meetingId, ws.userId);
+          if (!isHost) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non autorisé (seul l'hôte peut approuver)" }));
+            return;
+          }
+
+          const result = await meetingManager.approveRequest(meetingId, userId, ws.userId);
+
+          if (result.success) {
+            // Notifier le participant
+            const participantUser = users.get(userId);
+            if (participantUser?.ws && participantUser.ws.readyState === WebSocket.OPEN) {
+              participantUser.ws.send(JSON.stringify({
+                type: "meeting-approval-granted",
+                meetingId,
+                roomId: result.roomId,
+                isVideo: result.isVideo,
+                title: result.title,
+              }));
+            }
+            // Confirmer à l'hôte
+            ws.send(JSON.stringify({
+              type: "meeting-approval-sent",
+              meetingId,
+              userId,
+            }));
+          } else {
+            ws.send(JSON.stringify({
+              type: "meeting-error",
+              reason: result.reason,
+            }));
+          }
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-approve :`, error);
+          ws.send(JSON.stringify({ type: "meeting-error", reason: error.message || "Erreur serveur" }));
+        }
+        return;
+      }
+
+      // 21. Refuser une demande d'accès (hôte)
+      // Envoyé par : Host -> Reçu par : Participant + Host (confirmation)
+      // Pourquoi : Permettre à l'hôte de refuser un participant
+      if (type === "meeting-reject") {
+        try {
+          const { meetingId, userId } = data;
+
+          console.log(`[MEETING] meeting-reject reçu de ${ws.userId} pour ${userId} dans ${meetingId}`);
+
+          if (!ws.userId) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non enregistré" }));
+            return;
+          }
+
+          // Vérifier que l'utilisateur est l'hôte
+          const isHost = await meetingManager.isHost(meetingId, ws.userId);
+          if (!isHost) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Non autorisé (seul l'hôte peut refuser)" }));
+            return;
+          }
+
+          const result = await meetingManager.rejectRequest(meetingId, userId, ws.userId);
+
+          if (result.success) {
+            // Notifier le participant
+            const participantUser = users.get(userId);
+            if (participantUser?.ws && participantUser.ws.readyState === WebSocket.OPEN) {
+              participantUser.ws.send(JSON.stringify({
+                type: "meeting-approval-denied",
+                meetingId,
+                reason: result.reason || "Accès refusé par l'hôte",
+              }));
+            }
+            // Confirmer à l'hôte
+            ws.send(JSON.stringify({
+              type: "meeting-rejection-sent",
+              meetingId,
+              userId,
+            }));
+          } else {
+            ws.send(JSON.stringify({
+              type: "meeting-error",
+              reason: result.reason,
+            }));
+          }
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-reject :`, error);
+          ws.send(JSON.stringify({ type: "meeting-error", reason: error.message || "Erreur serveur" }));
+        }
+        return;
+      }
+
+      // 22. Synchronisation de l'état des participants
+      // Envoyé par : Participant -> Reçu par : Tous les participants de la salle
+      // Pourquoi : Synchroniser en temps réel l'état média (mic, caméra, etc.)
+      if (type === "meeting-participant-state") {
+        const { roomId, userId, state } = data;
+
+        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) {
+          return;
+        }
+
+        const room = roomManager.rooms.get(roomId);
+        if (!room) return;
+
+        for (const [participantId, participant] of room.participants) {
+          if (participantId !== ws.userId) {
+            const user = users.get(participantId);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify({
+                type: "meeting-participant-state",
+                userId,
+                state,
+              }));
+            }
+          }
+        }
+        return;
+      }
+
+      // 23. Message de chat de réunion
+      // Envoyé par : Participant -> Reçu par : Tous les participants de la salle
+      // Pourquoi : Chat temps réel pendant la réunion
+      if (type === "meeting-chat-message") {
+        const { roomId, meetingId, message, userId, timestamp } = data;
+
+        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) {
+          return;
+        }
+
+        const room = roomManager.rooms.get(roomId);
+        if (!room) return;
+
+        // Relayer à tous les participants
+        for (const [participantId, participant] of room.participants) {
+          const user = users.get(participantId);
+          if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+            user.ws.send(JSON.stringify({
+              type: "meeting-chat-message",
+              meetingId,
+              message,
+              userId,
+              timestamp,
+            }));
+          }
+        }
+        return;
+      }
+
+      // 24. Terminer une réunion pour tous (hôte)
+      // Envoyé par : Host -> Reçu par : Tous les participants
+      // Pourquoi : Terminer la réunion et déconnecter tous les participants
+      if (type === "meeting-end") {
+        const { meetingId } = data;
+
+        if (!ws.userId) {
+          ws.send(JSON.stringify({ type: "meeting-error", reason: "Non enregistré" }));
+          return;
+        }
+
+        // Vérifier que l'utilisateur est l'hôte
+        const isHost = await meetingManager.isHost(meetingId, ws.userId);
+        if (!isHost) {
+          ws.send(JSON.stringify({ type: "meeting-error", reason: "Non autorisé (seul l'hôte peut terminer)" }));
+          return;
+        }
+
+        // Récupérer la réunion
+        const doc = await db.collection("meetings").doc(meetingId).get();
+        if (!doc.exists) {
+          ws.send(JSON.stringify({ type: "meeting-error", reason: "Réunion introuvable" }));
+          return;
+        }
+
+        const meeting = doc.data();
+
+        // Notifier tous les participants AVANT de fermer la salle
+        if (meeting.roomId) {
+          const room = roomManager.rooms.get(meeting.roomId);
+          if (room) {
+            for (const [participantId] of room.participants) {
+              const user = users.get(participantId);
+              if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+                user.ws.send(JSON.stringify({
+                  type: "meeting-ended",
+                  meetingId,
+                  reason: "Réunion terminée par l'hôte",
+                }));
+              }
+            }
+          }
+        }
+
+        // Marquer comme terminée
+        await db.collection("meetings").doc(meetingId).update({ status: "ended" });
+
+        // Fermer la salle
+        if (meeting.roomId) {
+          roomManager.closeRoom(meeting.roomId, "Réunion terminée par l'hôte");
+        }
+
+        console.log(`📅 Réunion ${meetingId} terminée par ${ws.userId}`);
         return;
       }
 

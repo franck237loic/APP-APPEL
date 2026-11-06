@@ -77,6 +77,49 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
   this.showMeetingScreen(data);
 };
 
+CallManager.prototype.handleMeetingReconnect = async function(data) {
+  console.log("📅 [MEETING] Reconnexion à la réunion demandée:", data.roomId);
+  this.showCallToast("Reconnexion à la réunion en cours...");
+
+  // Fermer l'écran actuel si existant
+  this.closeMeetingScreen();
+  this.closeMeetingWaitingView();
+
+  // Marquer que c'est une réunion planifiée
+  this.groupIsMeeting = true;
+  this.groupDowngradingToOneToOne = false;
+  this.groupRoomId = data.roomId;
+  this.groupIsVideo = !!data.isVideo;
+
+  // Stocker les infos de la réunion
+  this.currentMeetingTitle = data.title || "Réunion";
+  this.currentMeetingId = data.meetingId;
+
+  // Acquérir les médias
+  if (!this.groupLocalStream) {
+    try {
+      await this.acquireGroupMedia(this.groupIsVideo);
+    } catch (error) {
+      console.error("❌ [MEETING] Impossible d'acquérir les médias:", error);
+      this.showCallToast("Accès média impossible");
+      this.groupIsMeeting = false;
+      return;
+    }
+  }
+
+  // Préparer le roster temporaire
+  this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
+
+  // Rejoindre la salle
+  this.sendSignal({
+    type: "group-join",
+    roomId: data.roomId,
+  });
+
+  // Afficher l'écran de réunion
+  this.showMeetingScreen(data);
+};
+
 CallManager.prototype.handleMeetingWaiting = function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
 
@@ -113,16 +156,230 @@ CallManager.prototype.handleMeetingError = function(data) {
   this.closeMeetingCreatedView();
 };
 
-CallManager.prototype.handleMeetingHostStarted = function(data) {
-  console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
-  this.showCallToast("L'hôte a démarré la réunion");
+CallManager.prototype.handleMeetingPendingRequest = function(data) {
+  console.log("📅 [MEETING] Demande d'accès en attente:", data);
+  this.showCallToast(`${data.userId} demande à rejoindre`);
+};
 
-  // Fermer la salle d'attente
+CallManager.prototype.handleMeetingApprovalGranted = function(data) {
+  console.log("📅 [MEETING] Accès accordé:", data);
   this.closeMeetingWaitingView();
+  this.groupIsMeeting = true;
+  this.groupRoomId = data.roomId;
+  this.groupIsVideo = data.isVideo;
+  this.currentMeetingTitle = data.title;
+  this.currentMeetingId = data.meetingId;
+  this.sendSignal({ type: "group-join", roomId: data.roomId });
+  this.showMeetingScreen(data);
+};
 
-  // Rejoindre automatiquement
-  if (this.meetingPendingCode) {
-    this.joinMeeting(this.meetingPendingCode);
+CallManager.prototype.handleMeetingApprovalDenied = function(data) {
+  console.log("📅 [MEETING] Accès refusé:", data);
+  this.showCallToast(data.reason || "Accès refusé par l'hôte");
+  this.closeMeetingWaitingView();
+};
+
+CallManager.prototype.handleMeetingPendingApproval = function(data) {
+  console.log("📅 [MEETING] En attente d'approbation:", data);
+  this.showCallToast("Demande d'accès envoyée à l'hôte");
+  this.showMeetingWaitingView({ ...data, reason: "En attente d'approbation de l'hôte" });
+};
+
+CallManager.prototype.handleMeetingPendingRequest = function(data) {
+  console.log("📅 [MEETING] Demande d'accès reçue:", data);
+  this.showCallToast(`${data.userId} demande à rejoindre`);
+  this.showPendingRequestDialog(data);
+};
+
+CallManager.prototype.showPendingRequestDialog = function(data) {
+  if (this.pendingRequestDialog) {
+    this.pendingRequestDialog.classList.add("active");
+    return;
+  }
+
+  const dialog = document.createElement("div");
+  dialog.className = "pending-request-dialog";
+  dialog.id = "pending-request-dialog";
+  dialog.innerHTML = `
+    <div class="dialog-overlay" onclick="window.closePendingRequestDialog()"></div>
+    <div class="dialog-content">
+      <div class="dialog-header">
+        <h3>Demande d'accès</h3>
+        <button class="dialog-close" onclick="window.closePendingRequestDialog()">
+          <i class="fa-solid fa-times"></i>
+        </button>
+      </div>
+      <div class="dialog-body">
+        <p>${data.userId} souhaite rejoindre la réunion "${data.title}"</p>
+      </div>
+      <div class="dialog-footer">
+        <button class="btn-secondary" onclick="window.rejectMeetingRequest('${data.meetingId}', '${data.userId}')">
+          Refuser
+        </button>
+        <button class="btn-primary" onclick="window.approveMeetingRequest('${data.meetingId}', '${data.userId}')">
+          Accepter
+        </button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(dialog);
+  this.pendingRequestDialog = dialog;
+  setTimeout(() => dialog.classList.add("active"), 10);
+};
+
+CallManager.prototype.closePendingRequestDialog = function() {
+  if (this.pendingRequestDialog) {
+    this.pendingRequestDialog.classList.remove("active");
+    setTimeout(() => {
+      if (this.pendingRequestDialog) {
+        this.pendingRequestDialog.remove();
+        this.pendingRequestDialog = null;
+      }
+    }, 300);
+  }
+};
+
+CallManager.prototype.approveMeetingRequest = function(meetingId, userId) {
+  this.sendSignal({
+    type: "meeting-approve",
+    meetingId,
+    userId,
+  });
+  this.closePendingRequestDialog();
+  this.showCallToast("Demande acceptée");
+};
+
+CallManager.prototype.rejectMeetingRequest = function(meetingId, userId) {
+  this.sendSignal({
+    type: "meeting-reject",
+    meetingId,
+    userId,
+  });
+  this.closePendingRequestDialog();
+  this.showCallToast("Demande refusée");
+};
+
+CallManager.prototype.handleMeetingParticipantJoined = function(data) {
+  console.log("📅 [MEETING] Participant rejoint:", data);
+  if (window.meetingParticipants) {
+    meetingParticipants.updateParticipant(data.userId, "JOINED");
+  }
+  this.showCallToast(`${data.userId} a rejoint la réunion`);
+};
+
+CallManager.prototype.handleMeetingParticipantLeft = function(data) {
+  console.log("📅 [MEETING] Parti:", data);
+  if (window.meetingParticipants) {
+    meetingParticipants.updateParticipant(data.userId, "LEFT");
+  }
+  this.showCallToast(`${data.userId} a quitté la réunion`);
+};
+
+CallManager.prototype.handleMeetingParticipantState = function(data) {
+  console.log("📅 [MEETING] État participant:", data);
+  if (window.meetingParticipants) {
+    meetingParticipants.updateParticipant(data.userId, data.state);
+  }
+};
+
+CallManager.prototype.broadcastParticipantState = function(state) {
+  if (!this.groupRoomId || !this.myId) return;
+
+  this.sendSignal({
+    type: "meeting-participant-state",
+    roomId: this.groupRoomId,
+    userId: this.myId,
+    state,
+  });
+};
+
+CallManager.prototype.toggleMeetingMic = function() {
+  const btn = document.getElementById("meeting-mic-btn");
+  if (!btn) return;
+
+  const isEnabled = this.isGroupMicEnabled !== false;
+
+  if (isEnabled) {
+    this.disableGroupMicrophone();
+    btn.classList.remove("active");
+    btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
+  } else {
+    this.enableGroupMicrophone();
+    btn.classList.add("active");
+    btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+  }
+  this.isGroupMicEnabled = !isEnabled;
+
+  // Diffuser l'état après le toggle
+  const newState = this.isGroupMicEnabled !== false;
+  if (window.meetingParticipants) {
+    meetingParticipants.updateParticipantMedia(this.myId, { micEnabled: newState });
+  }
+  this.broadcastParticipantState({ micEnabled: newState });
+};
+
+CallManager.prototype.toggleMeetingCam = function() {
+  const btn = document.getElementById("meeting-cam-btn");
+  if (!btn) return;
+
+  const isEnabled = this.isGroupCamEnabled !== false;
+
+  if (isEnabled) {
+    this.disableGroupCamera();
+    btn.classList.remove("active");
+    btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
+  } else {
+    this.enableGroupCamera();
+    btn.classList.add("active");
+    btn.innerHTML = '<i class="fa-solid fa-video"></i>';
+  }
+  this.isGroupCamEnabled = !isEnabled;
+
+  // Diffuser l'état après le toggle
+  const newState = this.isGroupCamEnabled !== false;
+  if (window.meetingParticipants) {
+    meetingParticipants.updateParticipantMedia(this.myId, { camEnabled: newState });
+  }
+  this.broadcastParticipantState({ camEnabled: newState });
+};
+
+CallManager.prototype.leaveMeeting = function() {
+  if (this.groupRoomId) {
+    this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
+  }
+  this.closeMeetingScreen();
+  this.groupIsMeeting = false;
+  this.groupRoomId = null;
+  this.currentMeetingId = null;
+  this.currentMeetingTitle = null;
+};
+
+CallManager.prototype.endMeetingForEveryone = function() {
+  if (!confirm("Êtes-vous sûr de vouloir terminer la réunion pour tous les participants ?")) {
+    return;
+  }
+
+  if (this.currentMeetingId) {
+    this.sendSignal({
+      type: "meeting-end",
+      meetingId: this.currentMeetingId,
+    });
+  }
+
+  this.leaveMeeting();
+};
+
+CallManager.prototype.handleMeetingEndedByHost = function(data) {
+  console.log("📅 [MEETING] Réunion terminée par l'hôte:", data);
+  this.showCallToast(data.reason || "Réunion terminée par l'hôte");
+  this.leaveMeeting();
+};
+
+CallManager.prototype.handleMeetingChatMessage = function(data) {
+  console.log("📅 [MEETING] Message chat reçu:", data);
+  if (window.meetingChat) {
+    meetingChat.receiveMessage(data);
   }
 };
 
@@ -194,6 +451,9 @@ CallManager.prototype.showMeetingScreen = function(data) {
             </button>
             <button class="meeting-control-btn meeting-hangup" onclick="window.leaveMeeting()">
               <i class="fa-solid fa-phone-slash"></i>
+            </button>
+            <button class="meeting-control-btn meeting-end" onclick="window.endMeetingForEveryone()" title="Terminer pour tous">
+              <i class="fa-solid fa-power-off"></i>
             </button>
           </div>
         </div>
@@ -270,48 +530,6 @@ CallManager.prototype.closeMeetingScreen = function() {
       }
     }, 300);
   }
-};
-
-/**
- * Basculer le microphone (réunion)
- */
-CallManager.prototype.toggleMeetingMic = function() {
-  const btn = document.getElementById("meeting-mic-btn");
-  if (!btn) return;
-
-  const isEnabled = this.isGroupMicEnabled !== false;
-
-  if (isEnabled) {
-    this.disableGroupMicrophone();
-    btn.classList.remove("active");
-    btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
-  } else {
-    this.enableGroupMicrophone();
-    btn.classList.add("active");
-    btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
-  }
-  this.isGroupMicEnabled = !isEnabled;
-};
-
-/**
- * Basculer la caméra (réunion)
- */
-CallManager.prototype.toggleMeetingCam = function() {
-  const btn = document.getElementById("meeting-cam-btn");
-  if (!btn) return;
-
-  const isEnabled = this.isGroupCamEnabled !== false;
-
-  if (isEnabled) {
-    this.disableGroupCamera();
-    btn.classList.remove("active");
-    btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
-  } else {
-    this.enableGroupCamera();
-    btn.classList.add("active");
-    btn.innerHTML = '<i class="fa-solid fa-video"></i>';
-  }
-  this.isGroupCamEnabled = !isEnabled;
 };
 
 /**
@@ -564,7 +782,7 @@ CallManager.prototype.openMeetingDetails = function(meetingId) {
 
 // ===== MÉTHODES DE RÉUNION =====
 
-CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "") {
+CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct") {
   console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
   
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
@@ -583,7 +801,7 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
         const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
         if (nowConnected) {
           console.log("📅 [MEETING] WebSocket maintenant connecté, création de réunion");
-          this.createMeeting(title, scheduledAt, durationMin, isVideo, participants, description);
+          this.createMeeting(title, scheduledAt, durationMin, isVideo, participants, description, accessPolicy);
         } else {
           console.error("📅 [MEETING] WebSocket toujours non connecté après tentative");
           this.showCallToast("Impossible de se connecter au serveur (timeout)");
@@ -613,9 +831,10 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
     durationMin: parseInt(durationMin),
     isVideo: !!isVideo,
     participants: participants || [],
+    accessPolicy: accessPolicy || "direct",
   });
   
-  console.log("📅 [MEETING] Demande de création de réunion envoyée");
+  console.log("📅 [MEETING] Demande de création de réunion envoyée avec politique:", accessPolicy);
 };
 
 CallManager.prototype.joinMeeting = function(code) {
@@ -750,6 +969,20 @@ CallManager.prototype.showMeetingCreateView = function(editMeetingId = null) {
               <button id="meeting-mode-instant" class="meeting-type-btn" onclick="window.selectMeetingMode('instant')">
                 <i class="fa-solid fa-bolt"></i>
                 <span>Immédiate</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Politique d'accès</label>
+            <div style="display: flex; gap: 10px;">
+              <button id="access-direct" class="meeting-type-btn active" onclick="window.selectAccessPolicy('direct')">
+                <i class="fa-solid fa-unlock"></i>
+                <span>Direct</span>
+              </button>
+              <button id="access-approval" class="meeting-type-btn" onclick="window.selectAccessPolicy('approval')">
+                <i class="fa-solid fa-user-shield"></i>
+                <span>Approbation</span>
               </button>
             </div>
           </div>
@@ -894,6 +1127,22 @@ CallManager.prototype.selectMeetingMode = function(mode) {
   }
 };
 
+CallManager.prototype.selectAccessPolicy = function(policy) {
+  const directBtn = document.getElementById("access-direct");
+  const approvalBtn = document.getElementById("access-approval");
+
+  if (policy === "direct") {
+    directBtn.classList.add("active");
+    approvalBtn.classList.remove("active");
+  } else {
+    approvalBtn.classList.add("active");
+    directBtn.classList.remove("active");
+  }
+};
+    datetimeContainer.style.display = "none";
+  
+
+
 CallManager.prototype.confirmCreateMeeting = async function() {
   const title = document.getElementById("meeting-title").value.trim();
   const description = document.getElementById("meeting-description").value.trim();
@@ -956,8 +1205,11 @@ CallManager.prototype.confirmCreateMeeting = async function() {
     return;
   }
 
+  // Récupérer la politique d'accès
+  const accessPolicy = document.getElementById("access-approval").classList.contains("active") ? "approval" : "direct";
+
   // Mode création
-  this.createMeeting(title, datetime, duration, isVideo, [], description);
+  this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy);
   this.closeMeetingCreateView();
 
   // Si réunion immédiate, attendre un peu puis rejoindre automatiquement
@@ -1700,12 +1952,15 @@ if (window.callManager) {
   window.callManager.previewMicEnabled = true;
   window.callManager.previewCamEnabled = true;
   window.callManager.previewStream = null;
+  window.callManager.pendingRequestDialog = null;
 }
 
 // ===== EXPORTS GLOBAUX =====
 window.showMeetingCreateView = function(meetingId) { window.callManager.showMeetingCreateView(meetingId); };
 window.closeMeetingCreateView = function() { window.callManager.closeMeetingCreateView(); };
 window.selectMeetingType = function(type) { window.callManager.selectMeetingType(type); };
+window.selectMeetingMode = function(mode) { window.callManager.selectMeetingMode(mode); };
+window.selectAccessPolicy = function(policy) { window.callManager.selectAccessPolicy(policy); };
 window.confirmCreateMeeting = function() { window.callManager.confirmCreateMeeting(); };
 window.cancelMeeting = function() { window.callManager.cancelMeeting(); };
 window.showMeetingJoinView = function(code) { window.callManager.showMeetingJoinView(code); };
@@ -1714,6 +1969,13 @@ window.confirmJoinMeeting = function() { window.callManager.confirmJoinMeeting()
 window.closeMeetingWaitingView = function() { window.callManager.closeMeetingWaitingView(); };
 window.closeMeetingCreatedView = function() { window.callManager.closeMeetingCreatedView(); };
 window.copyMeetingCode = function(code) { window.callManager.copyMeetingCode(code); };
+window.closePendingRequestDialog = function() { window.callManager.closePendingRequestDialog(); };
+window.approveMeetingRequest = function(meetingId, userId) { window.callManager.approveMeetingRequest(meetingId, userId); };
+window.rejectMeetingRequest = function(meetingId, userId) { window.callManager.rejectMeetingRequest(meetingId, userId); };
+window.leaveMeeting = function() { window.callManager.leaveMeeting(); };
+window.endMeetingForEveryone = function() { window.callManager.endMeetingForEveryone(); };
+window.toggleMeetingMic = function() { window.callManager.toggleMeetingMic(); };
+window.toggleMeetingCam = function() { window.callManager.toggleMeetingCam(); };
 window.shareMeetingLink = function(link) { window.callManager.shareMeetingLink(link); };
 window.startMeetingFromCreated = function(code) { window.callManager.startMeetingFromCreated(code); };
 window.showMeetingListView = function() { window.callManager.listMeetings(); };

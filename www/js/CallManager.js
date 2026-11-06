@@ -2792,6 +2792,7 @@ button, [role="button"] { cursor: pointer; }
     const onSuccess = (success) => {
       console.log("✅ WebSocket Connecté");
       this.wsId = success.webSocketId;
+      this.reconnectAttempts = 0; // Réinitialiser les tentatives de reconnexion
 
       // Le serveur coupe la connexion après ~30 s d'inactivité → ping JSON
       // toutes les 20 s.
@@ -2836,6 +2837,7 @@ button, [role="button"] { cursor: pointer; }
       this.ws.onopen = () => {
         console.log("✅ WebSocket natif connecté");
         this.wsReadyState = WebSocket.OPEN;
+        this.reconnectAttempts = 0; // Réinitialiser les tentatives de reconnexion
         this.startHeartbeat();
         this.sendRegistration();
         if (typeof onSettle === "function") onSettle();
@@ -3140,6 +3142,60 @@ button, [role="button"] { cursor: pointer; }
         this.handleMeetingList(data);
         break;
 
+      case "meeting-participant-joined":
+        if (window.callManager && window.callManager.handleMeetingParticipantJoined) {
+          window.callManager.handleMeetingParticipantJoined(data);
+        }
+        break;
+
+      case "meeting-participant-left":
+        if (window.callManager && window.callManager.handleMeetingParticipantLeft) {
+          window.callManager.handleMeetingParticipantLeft(data);
+        }
+        break;
+
+      case "meeting-participant-state":
+        if (window.callManager && window.callManager.handleMeetingParticipantState) {
+          window.callManager.handleMeetingParticipantState(data);
+        }
+        break;
+
+      case "meeting-pending-request":
+        if (window.callManager && window.callManager.handleMeetingPendingRequest) {
+          window.callManager.handleMeetingPendingRequest(data);
+        }
+        break;
+
+      case "meeting-approval-granted":
+        if (window.callManager && window.callManager.handleMeetingApprovalGranted) {
+          window.callManager.handleMeetingApprovalGranted(data);
+        }
+        break;
+
+      case "meeting-approval-denied":
+        if (window.callManager && window.callManager.handleMeetingApprovalDenied) {
+          window.callManager.handleMeetingApprovalDenied(data);
+        }
+        break;
+
+      case "meeting-pending-approval":
+        if (window.callManager && window.callManager.handleMeetingPendingApproval) {
+          window.callManager.handleMeetingPendingApproval(data);
+        }
+        break;
+
+      case "meeting-chat-message":
+        if (window.callManager && window.callManager.handleMeetingChatMessage) {
+          window.callManager.handleMeetingChatMessage(data);
+        }
+        break;
+
+      case "meeting-ended":
+        if (window.callManager && window.callManager.handleMeetingEndedByHost) {
+          window.callManager.handleMeetingEndedByHost(data);
+        }
+        break;
+
       case "video-upgrade-offer":
         this.handleVideoUpgradeOffer(data);
         break;
@@ -3156,9 +3212,26 @@ button, [role="button"] { cursor: pointer; }
 
   scheduleReconnect = () => {
     clearTimeout(this.reconnectTimer);
+
+    // Backoff exponentiel: 1s, 2s, 4s, 8s, 16s, max 30s
+    if (!this.reconnectAttempts) {
+      this.reconnectAttempts = 0;
+    }
+    this.reconnectAttempts++;
+
+    const delay = Math.min(
+      Math.pow(2, this.reconnectAttempts - 1) * 1000,
+      30000
+    );
+
+    console.log(`🔄 Reconnexion WebSocket dans ${delay}ms (tentative ${this.reconnectAttempts})`);
+
+    // Afficher indicateur visuel de reconnexion
+    this.updateStatus(`Reconnexion en cours... (${this.reconnectAttempts})`);
+
     this.reconnectTimer = setTimeout(
       () => this.connectWebSocket(),
-      CallManager.RECONNECT_DELAY,
+      delay,
     );
   };
 
@@ -4099,7 +4172,8 @@ button, [role="button"] { cursor: pointer; }
           !this.isRestartingIce &&
           !this.isRenegotiating
         ) {
-          console.log("⚠️ Déclenchement restartIceSession()");
+          console.warn("⚠️ Déclenchement restartIceSession() - État:", state);
+          this.showCallToast("Problème de connexion, tentative de reconnexion...");
           this.restartIceSession();
         }
 
@@ -8192,7 +8266,8 @@ showLocalStorageOnScreen = () => {
         screenSharing: !!this.isScreenSharing,
       });
       this.capGroupVideoBitrate(peer.pc);
-    } else if (peer.connState === "failed") {
+    } else if (peer.connState === "failed" || peer.connState === "disconnected") {
+      console.warn(`⚠️ [GROUPE] Connexion échouée avec ${peerId}: ${peer.connState}`);
       this.retryGroupPeer(peerId);
     }
     this.updateGroupTile(peerId);
@@ -8205,8 +8280,10 @@ showLocalStorageOnScreen = () => {
     const tries = this.groupRetryCount.get(peerId) || 0;
     if (tries >= 2) {
       console.warn("⚠️ [GROUPE] abandon de la connexion avec", peerId);
+      this.showCallToast(`Impossible de se connecter à ${peerId}`);
       return;
     }
+    console.log(`🔄 [GROUPE] Retry connexion avec ${peerId} (tentative ${tries + 1}/2)`);
     this.groupRetryCount.set(peerId, tries + 1);
     this.closeGroupPeer(peerId);
     this.createGroupPeer(peerId);

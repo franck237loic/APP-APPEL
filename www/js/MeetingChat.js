@@ -131,6 +131,21 @@ class MeetingChat {
     const message = input.value.trim();
     if (!message) return;
 
+    // Essayer d'envoyer via WebSocket en premier
+    if (window.callManager && window.callManager.groupRoomId) {
+      window.callManager.sendSignal({
+        type: "meeting-chat-message",
+        roomId: this.currentRoomId,
+        meetingId: this.currentMeetingId,
+        message,
+        userId: window.callManager.myId,
+        timestamp: Date.now(),
+      });
+      input.value = "";
+      return;
+    }
+
+    // Fallback REST
     try {
       if (window.meetingService) {
         const sent = await meetingService.sendChatMessage(this.currentMeetingId, message);

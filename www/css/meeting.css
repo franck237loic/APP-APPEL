@@ -526,6 +526,32 @@
   background: #455055;
 }
 
+.participant-media-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.media-status {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.media-status.enabled {
+  background: #00a884;
+  color: white;
+}
+
+.media-status.disabled {
+  background: #374045;
+  color: #8696a0;
+}
+
 /* ===== RÉACTIONS ===== */
 .reaction-overlay {
   position: fixed;
@@ -807,4 +833,131 @@
 
 .meeting-control-btn.meeting-hangup:hover {
   background: #e53935;
+}
+
+.meeting-control-btn.meeting-end {
+  background: #ff9800;
+}
+
+.meeting-control-btn.meeting-end:hover {
+  background: #f57c00;
+}
+
+/* ===== DIALOGUE DE DEMANDE D'ACCÈS ===== */
+.pending-request-dialog {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5000;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.pending-request-dialog.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.dialog-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.dialog-content {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: #111b21;
+  border-radius: 12px;
+  padding: 24px;
+  min-width: 320px;
+  max-width: 90%;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.dialog-header h3 {
+  font-size: 18px;
+  font-weight: 500;
+  color: white;
+  margin: 0;
+}
+
+.dialog-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #8696a0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s ease;
+}
+
+.dialog-close:hover {
+  background: #222d34;
+  color: white;
+}
+
+.dialog-body {
+  margin-bottom: 20px;
+}
+
+.dialog-body p {
+  font-size: 14px;
+  color: #8696a0;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.dialog-footer {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.btn-primary,
+.btn-secondary {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-primary {
+  background: #00a884;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #008f6f;
+}
+
+.btn-secondary {
+  background: #374045;
+  color: white;
+}
+
+.btn-secondary:hover {
+  background: #455055;
 }

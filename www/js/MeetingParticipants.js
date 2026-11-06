@@ -107,7 +107,9 @@ class MeetingParticipants {
       const userId = p.userId || p.id;
       const state = p.state || "JOINED";
       const isCreator = this.isHost && userId === window.callManager?.myId;
-      
+      const micEnabled = p.micEnabled !== false;
+      const camEnabled = p.camEnabled !== false;
+
       html += `
         <div class="participant-item">
           <div class="participant-avatar">
@@ -118,7 +120,15 @@ class MeetingParticipants {
               ${userId}
               ${isCreator ? '<span style="color: #00a884; font-size: 11px; margin-left: 4px;">(Organisateur)</span>' : ''}
             </div>
-          <div class="participant-role">${state}</div>
+            <div class="participant-role">${state}</div>
+          </div>
+          <div class="participant-media-status">
+            <span class="media-status ${micEnabled ? 'enabled' : 'disabled'}" title="Microphone">
+              <i class="fa-solid ${micEnabled ? 'fa-microphone' : 'fa-microphone-slash'}"></i>
+            </span>
+            <span class="media-status ${camEnabled ? 'enabled' : 'disabled'}" title="Caméra">
+              <i class="fa-solid ${camEnabled ? 'fa-video' : 'fa-video-slash'}"></i>
+            </span>
           </div>
           ${this.isHost && !isCreator ? `
             <div class="participant-actions">
@@ -156,7 +166,17 @@ class MeetingParticipants {
    * Mettre à jour en temps réel
    */
   updateParticipant(userId, state) {
-    this.participants.set(userId, { userId, state });
+    const existing = this.participants.get(userId) || { userId };
+    this.participants.set(userId, { ...existing, state });
+    this.renderParticipants(Array.from(this.participants.values()));
+  }
+
+  /**
+   * Mettre à jour l'état média d'un participant
+   */
+  updateParticipantMedia(userId, mediaState) {
+    const existing = this.participants.get(userId) || { userId };
+    this.participants.set(userId, { ...existing, ...mediaState });
     this.renderParticipants(Array.from(this.participants.values()));
   }
 
