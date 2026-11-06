@@ -7829,7 +7829,7 @@ showLocalStorageOnScreen = () => {
     const others = this.groupRoster.filter(
       (r) => r.userId !== this.myId && (r.state === "JOINED" || r.state === "RINGING"),
     );
-    if (this.groupRoomId && this.groupRoster.length && others.length === 0) {
+    if (this.groupRoomId && this.groupRoster.length && others.length === 0 && !this.groupIsMeeting) {
       if (!this.groupAloneTimer) {
         this.groupAloneTimer = setTimeout(() => {
           this.groupAloneTimer = null;
