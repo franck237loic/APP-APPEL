@@ -75,9 +75,12 @@ const wss = new WebSocketServer({ server });
 // Carte globale persistante (RAM) pour conserver les utilisateurs et leurs tokens FCM
 const users = new Map();
 
-// Carte des tokens d'authentification utilisateur (userId → token)
+// Carte des tokens d'authentification utilisateur (userId → {token, createdAt})
 // Permet d'empêcher l'usurpation d'identité
 const userAuthTokens = new Map();
+
+// Durée de validité des tokens (24 heures)
+const TOKEN_VALIDITY_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Génère un token d'authentification unique pour un utilisateur
@@ -88,6 +91,26 @@ function generateAuthToken(userId) {
   const random = Math.random().toString(16).substring(2, 10);
   const userHash = userId.split('').reduce((acc, char) => acc + char.charCodeAt(0).toString(16), '').substring(0, 16);
   return `${timestamp}-${random}-${userHash}`.substring(0, 32);
+}
+
+/**
+ * Vérifie si un token est valide (existe et n'est pas expiré)
+ */
+function validateAuthToken(userId, token) {
+  const stored = userAuthTokens.get(userId);
+  if (!stored || stored.token !== token) {
+    return false;
+  }
+
+  // Vérifier l'expiration
+  const now = Date.now();
+  if (now - stored.createdAt > TOKEN_VALIDITY_MS) {
+    console.warn(`⚠️ Token expiré pour ${userId}`);
+    userAuthTokens.delete(userId);
+    return false;
+  }
+
+  return true;
 }
 
 // Stockage temporaire en mémoire RAM pour les offres d'appel (évite de surcharger FCM)
@@ -185,11 +208,56 @@ function validateMeetingMessage(data, type) {
       }
       break;
 
+    case 'meeting-approve':
+    case 'meeting-reject':
+      if (!data.meetingId || typeof data.meetingId !== 'string' || data.meetingId.length > 100) {
+        return { valid: false, reason: 'ID de réunion invalide' };
+      }
+      if (!data.userId || typeof data.userId !== 'string' || data.userId.length > 100) {
+        return { valid: false, reason: 'ID utilisateur invalide' };
+      }
+      break;
+
+    case 'meeting-end':
+      if (!data.meetingId || typeof data.meetingId !== 'string' || data.meetingId.length > 100) {
+        return { valid: false, reason: 'ID de réunion invalide' };
+      }
+      break;
+
+    case 'meeting-chat-message':
+      if (!data.message || typeof data.message !== 'string' || data.message.length > 1000) {
+        return { valid: false, reason: 'Message invalide (max 1000 caractères)' };
+      }
+      if (!data.roomId || typeof data.roomId !== 'string' || data.roomId.length > 100) {
+        return { valid: false, reason: 'ID de salle invalide' };
+      }
+      break;
+
+    case 'meeting-participant-state':
+      if (!data.roomId || typeof data.roomId !== 'string' || data.roomId.length > 100) {
+        return { valid: false, reason: 'ID de salle invalide' };
+      }
+      if (!data.userId || typeof data.userId !== 'string' || data.userId.length > 100) {
+        return { valid: false, reason: 'ID utilisateur invalide' };
+      }
+      if (!data.state || typeof data.state !== 'object') {
+        return { valid: false, reason: 'État invalide' };
+      }
+      break;
+
     default:
       break;
   }
 
   return { valid: true };
+}
+
+/**
+ * Sanitize une chaîne pour éviter les injections XSS
+ */
+function sanitizeString(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/[<>]/g, '');
 }
 
 // =========================================================
@@ -2149,7 +2217,7 @@ async function loadMeetingsOnStartup() {
           console.log(`📅 Salle live recréée: ${meeting.roomId}`);
 
           // Envoyer un message de reconnexion à tous les participants
-          await _notifyMeetingReconnect(meeting.id, meeting.roomId, meeting.isVideo, meeting.title);
+          await meetingManager._notifyMeetingReconnect(meeting.id, meeting.roomId, meeting.isVideo, meeting.title);
         }
       }
       
@@ -2759,15 +2827,15 @@ wss.on("connection", (ws) => {
         // VÉRIFICATION DE LA PRÉSENCE DANS LA MAP
         if (users.has(userId)) {
           const existingUser = users.get(userId);
-          const storedToken = userAuthTokens.get(userId);
+          const storedTokenData = userAuthTokens.get(userId);
 
-          // Vérifier le token d'authentification
-          if (storedToken && authToken !== storedToken) {
-            console.warn(`⚠️ Token invalide pour ${userId}, rejet de l'enregistrement`);
+          // Vérifier le token d'authentification avec expiration
+          if (storedTokenData && !validateAuthToken(userId, authToken)) {
+            console.warn(`⚠️ Token invalide ou expiré pour ${userId}, rejet de l'enregistrement`);
             ws.send(
               JSON.stringify({
                 type: "registration-error",
-                reason: "Token d'authentification invalide",
+                reason: "Token d'authentification invalide ou expiré",
               }),
             );
             return;
@@ -2794,7 +2862,7 @@ wss.on("connection", (ws) => {
         } else {
           // Nouvel utilisateur : générer un token
           const newToken = generateAuthToken(userId);
-          userAuthTokens.set(userId, newToken);
+          userAuthTokens.set(userId, { token: newToken, createdAt: Date.now() });
 
           console.log(
             `✨ Nouvel utilisateur enregistré dans la Map : ${userId} avec token`,
@@ -2803,13 +2871,14 @@ wss.on("connection", (ws) => {
             ws: ws,
             pushToken: pushToken || null,
           });
-          
+
           // IMPORTANT: Définir ws.userId pour les vérifications ultérieures
           ws.userId = userId;
         }
 
         const currentUser = users.get(userId);
-        const currentToken = userAuthTokens.get(userId);
+        const currentTokenData = userAuthTokens.get(userId);
+        const currentToken = currentTokenData ? currentTokenData.token : null;
 
         console.log(
           `👤 Statut : ${userId} | Token FCM : ${currentUser.pushToken || "Aucun"} | Token Auth : ${currentToken ? "existant" : "généré"}`,
@@ -2826,7 +2895,9 @@ wss.on("connection", (ws) => {
         ws.userId = userId;
 
         // Vérifier si l'utilisateur a des notifications de meeting en attente
-        await _checkPendingMeetingNotifications(userId);
+        if (typeof meetingManager !== 'undefined') {
+          await meetingManager._checkPendingMeetingNotifications(userId);
+        }
 
         ws.send(
           JSON.stringify({
@@ -3382,9 +3453,9 @@ wss.on("connection", (ws) => {
         );
 
         // Notifier les autres participants de l'arrivée (pour Meeting)
-        const room = roomManager.rooms.get(roomId);
-        if (room) {
-          for (const [participantId, participant] of room.participants) {
+        const meetingRoom = roomManager.rooms.get(roomId);
+        if (meetingRoom) {
+          for (const [participantId, participant] of meetingRoom.participants) {
             if (participantId !== ws.userId) {
               const user = users.get(participantId);
               if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
@@ -3919,6 +3990,14 @@ wss.on("connection", (ws) => {
       // Pourquoi : Permettre à l'hôte d'approuver un participant en attente
       if (type === "meeting-approve") {
         try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-approve");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-approve refusé : ${validation.reason}`);
+            ws.send(JSON.stringify({ type: "meeting-error", reason: validation.reason }));
+            return;
+          }
+
           const { meetingId, userId } = data;
 
           console.log(`[MEETING] meeting-approve reçu de ${ws.userId} pour ${userId} dans ${meetingId}`);
@@ -3973,6 +4052,14 @@ wss.on("connection", (ws) => {
       // Pourquoi : Permettre à l'hôte de refuser un participant
       if (type === "meeting-reject") {
         try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-reject");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-reject refusé : ${validation.reason}`);
+            ws.send(JSON.stringify({ type: "meeting-error", reason: validation.reason }));
+            return;
+          }
+
           const { meetingId, userId } = data;
 
           console.log(`[MEETING] meeting-reject reçu de ${ws.userId} pour ${userId} dans ${meetingId}`);
@@ -4081,9 +4168,18 @@ wss.on("connection", (ws) => {
       // Envoyé par : Host -> Reçu par : Tous les participants
       // Pourquoi : Terminer la réunion et déconnecter tous les participants
       if (type === "meeting-end") {
-        const { meetingId } = data;
+        try {
+          // Validation des données
+          const validation = validateMeetingMessage(data, "meeting-end");
+          if (!validation.valid) {
+            console.warn(`[MEETING] meeting-end refusé : ${validation.reason}`);
+            ws.send(JSON.stringify({ type: "meeting-error", reason: validation.reason }));
+            return;
+          }
 
-        if (!ws.userId) {
+          const { meetingId } = data;
+
+          if (!ws.userId) {
           ws.send(JSON.stringify({ type: "meeting-error", reason: "Non enregistré" }));
           return;
         }
@@ -4130,6 +4226,11 @@ wss.on("connection", (ws) => {
         }
 
         console.log(`📅 Réunion ${meetingId} terminée par ${ws.userId}`);
+        return;
+        } catch (error) {
+          console.error(`[MEETING] Erreur dans meeting-end :`, error);
+          ws.send(JSON.stringify({ type: "meeting-error", reason: error.message || "Erreur serveur" }));
+        }
         return;
       }
 

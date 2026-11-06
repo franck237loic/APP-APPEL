@@ -156,11 +156,6 @@ CallManager.prototype.handleMeetingError = function(data) {
   this.closeMeetingCreatedView();
 };
 
-CallManager.prototype.handleMeetingPendingRequest = function(data) {
-  console.log("📅 [MEETING] Demande d'accès en attente:", data);
-  this.showCallToast(`${data.userId} demande à rejoindre`);
-};
-
 CallManager.prototype.handleMeetingApprovalGranted = function(data) {
   console.log("📅 [MEETING] Accès accordé:", data);
   this.closeMeetingWaitingView();

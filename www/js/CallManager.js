@@ -4054,6 +4054,55 @@ button, [role="button"] { cursor: pointer; }
       }
     };
 
+      // Gestion des erreurs de connexion ICE
+      this.peerConnection.oniceconnectionstatechange = () => {
+        const state = this.peerConnection.iceConnectionState;
+        console.log(`🧊 ICE connection state: ${state}`);
+        this.logToScreen(`🧊 ICE state: ${state}`);
+
+        if (state === "failed" || state === "disconnected") {
+          console.error(`❌ ICE connection ${state}`);
+          this.updateStatus(`Connexion ICE ${state}`);
+          this.logToScreen(`❌ ICE ${state} - tentative de renégociation`);
+
+          // Tenter de renégocier la connexion
+          if (state === "failed" && !this.isRestartingIce) {
+            this.isRestartingIce = true;
+            this.restartIceSession().catch((error) => {
+              console.error("❌ Échec du restart ICE:", error);
+              this.isRestartingIce = false;
+              // Proposer de quitter si la renégociation échoue
+              if (confirm("Connexion réseau défaillante. Voulez-vous quitter l'appel ?")) {
+                this.hangUp(false);
+              }
+            });
+          }
+        } else if (state === "connected" || state === "completed") {
+          console.log("✅ ICE connection établie");
+          this.updateStatus("Connecté");
+          this.isRestartingIce = false;
+        }
+      };
+
+      // Gestion des erreurs de connexion globale
+      this.peerConnection.onconnectionstatechange = () => {
+        const state = this.peerConnection.connectionState;
+        console.log(`🔗 Connection state: ${state}`);
+        this.logToScreen(`🔗 Connection state: ${state}`);
+
+        if (state === "failed") {
+          console.error("❌ Connection failed");
+          this.updateStatus("Connexion échouée");
+          this.logToScreen("❌ Connection failed");
+          if (confirm("La connexion a échoué. Voulez-vous quitter ?")) {
+            this.hangUp(false);
+          }
+        } else if (state === "connected") {
+          console.log("✅ Connection établie");
+          this.updateStatus("Connecté");
+        }
+      };
+
       this.peerConnection.ontrack = async (event) => {
         console.log("🔊/📹 ontrack déclenché — kind:", event.track.kind);
 
