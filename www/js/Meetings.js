@@ -128,11 +128,15 @@ CallManager.prototype.handleMeetingReconnect = async function(data) {
 CallManager.prototype.handleMeetingWaiting = function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
 
-  // Stocker les données pour l'auto-join
+  // Ne PAS écraser l'écran live si on est déjà dans la réunion
+  if (this.groupIsMeeting && this.groupRoomId) {
+    console.log("📅 [MEETING] Déjà en réunion live, on ignore meeting-waiting");
+    return;
+  }
+
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
 
-  // Calculer le décalage d'horloge
   if (data.serverNow) {
     this.clockOffset = data.serverNow - Date.now();
     console.log("🕐 Décalage d'horloge:", this.clockOffset, "ms");
@@ -145,10 +149,31 @@ CallManager.prototype.handleMeetingHostStarted = function(data) {
   console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
   this.showCallToast("L'hôte a démarré la réunion");
 
-  // Fermer la salle d'attente
+  // Si on est DÉJÀ dans la salle live, ne rien faire (évite de revenir en attente)
+  if (this.groupRoomId && data.roomId && this.groupRoomId === data.roomId) {
+    this.closeMeetingWaitingView();
+    return;
+  }
+  if (this.groupIsMeeting && this.groupRoomId) {
+    this.closeMeetingWaitingView();
+    return;
+  }
+
   this.closeMeetingWaitingView();
 
-  // Rejoindre automatiquement
+  // Si meeting-joined arrive en parallèle, ne pas double-join
+  if (data.roomId && !this.groupRoomId) {
+    // Prefer direct join via room if provided
+    this.handleMeetingJoined({
+      meetingId: data.meetingId,
+      roomId: data.roomId,
+      isVideo: data.isVideo,
+      title: data.title,
+      createdBy: data.hostId,
+    });
+    return;
+  }
+
   if (this.meetingPendingCode) {
     this.joinMeeting(this.meetingPendingCode);
   }
@@ -184,7 +209,13 @@ CallManager.prototype.handleMeetingApprovalDenied = function(data) {
 CallManager.prototype.handleMeetingPendingApproval = function(data) {
   console.log("📅 [MEETING] En attente d'approbation:", data);
   this.showCallToast("Demande d'accès envoyée à l'hôte");
-  this.showMeetingWaitingView({ ...data, reason: "En attente d'approbation de l'hôte" });
+  this.closeMeetingWaitingView();
+  this.showMeetingWaitingView({
+    ...data,
+    reason: "En attente d'approbation de l'hôte",
+    waitTimeMin: 0,
+    code: this.meetingPendingCode || "",
+  });
 };
 
 CallManager.prototype.handleMeetingPendingRequest = function(data) {

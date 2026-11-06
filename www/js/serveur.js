@@ -1627,17 +1627,21 @@ class MeetingManager {
     await this._removeWaitingUser(meeting.id, userId);
     await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
 
-    // Envoyer notification "hôte a démarré" aux participants en attente
-    for (const waitingUserId of waitingUsers) {
-      const user = users.get(waitingUserId);
-      if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
-        user.ws.send(JSON.stringify({
-          type: "meeting-host-started",
-          meetingId: meeting.id,
-          roomId: room.roomId,
-          hostId: userId,
-          title: meeting.title,
-        }));
+    // Mode DIRECT uniquement : notifier "hôte a démarré" pour auto-join
+    // Mode APPROVAL : déjà géré via pending_approval dans _notifyWaitingUsersStarted
+    if (currentMeeting.accessPolicy !== "approval") {
+      for (const waitingUserId of waitingUsers) {
+        const user = users.get(waitingUserId);
+        if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+          user.ws.send(JSON.stringify({
+            type: "meeting-host-started",
+            meetingId: meeting.id,
+            roomId: room.roomId,
+            hostId: userId,
+            title: meeting.title,
+            isVideo: meeting.isVideo,
+          }));
+        }
       }
     }
 
@@ -3696,9 +3700,9 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          const { title, description, scheduledAt, durationMin, isVideo, participants } = data;
+          const { title, description, scheduledAt, durationMin, isVideo, participants, accessPolicy } = data;
 
-          console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"}`);
+          console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"} accessPolicy=${accessPolicy || "direct"}`);
 
           if (!ws.userId) {
             console.error(`[MEETING] meeting-create refusé : utilisateur non enregistré`);
@@ -3714,6 +3718,7 @@ wss.on("connection", (ws) => {
           // Sanitiser les chaînes
           const sanitizedTitle = sanitizeString(title, 100);
           const sanitizedDescription = description ? sanitizeString(description, 500) : "";
+          const policy = (accessPolicy === "approval") ? "approval" : "direct";
 
           // Créer la réunion
           const meeting = await meetingManager.create({
@@ -3724,6 +3729,7 @@ wss.on("connection", (ws) => {
             isVideo: !!isVideo,
             createdBy: ws.userId,
             participants: participants || [],
+            accessPolicy: policy,
           });
 
           // Vérifier si la création a réussi
