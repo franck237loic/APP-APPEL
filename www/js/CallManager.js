@@ -3166,6 +3166,12 @@ button, [role="button"] { cursor: pointer; }
         }
         break;
 
+      case "meeting-kicked":
+        if (window.callManager && window.callManager.handleMeetingKicked) {
+          window.callManager.handleMeetingKicked(data);
+        }
+        break;
+
       case "meeting-approval-granted":
         if (window.callManager && window.callManager.handleMeetingApprovalGranted) {
           window.callManager.handleMeetingApprovalGranted(data);
@@ -8495,11 +8501,14 @@ showLocalStorageOnScreen = () => {
       }
     }
 
-    // Appliquer la classe de layout selon le partage d'écran
-    if (screenSharerId && ids.length > 1) {
-      grid.className = `group-grid count-${Math.max(1, Math.min(ids.length, 6))} screen-share-mode`;
+    // Appliquer la classe de layout selon le partage d'écran / nombre de participants
+    const count = Math.max(1, Math.min(ids.length, 6));
+    if (this.groupIsMeeting) {
+      grid.className = `video-grid count-${count}` + (screenSharerId && ids.length > 1 ? " screen-share-mode" : "");
+    } else if (screenSharerId && ids.length > 1) {
+      grid.className = `group-grid count-${count} screen-share-mode`;
     } else {
-      grid.className = `group-grid count-${Math.max(1, Math.min(ids.length, 6))}`;
+      grid.className = `group-grid count-${count}`;
     }
 
     // Tuiles qui ne doivent plus exister

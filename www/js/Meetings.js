@@ -190,18 +190,39 @@ CallManager.prototype.handleMeetingPendingApproval = function(data) {
 CallManager.prototype.handleMeetingPendingRequest = function(data) {
   console.log("📅 [MEETING] Demande d'accès reçue:", data);
   this.showCallToast(`${data.userId} demande à rejoindre`);
+  // Toujours afficher le dialogue, même si l'hôte est déjà dans la réunion
   this.showPendingRequestDialog(data);
 };
 
+CallManager.prototype.handleMeetingKicked = function(data) {
+  console.log("📅 [MEETING] Expulsé de la réunion:", data);
+  this.showCallToast(data.reason || "Vous avez été retiré de la réunion");
+  if (typeof this.leaveMeeting === "function") {
+    // leave without confirm
+    if (this.groupRoomId) {
+      try {
+        if (typeof this.leaveGroupCall === "function") {
+          this.leaveGroupCall(data.reason || "Expulsé");
+        }
+      } catch (e) {}
+    }
+    this.closeMeetingScreen();
+    this.groupIsMeeting = false;
+    this.currentMeetingId = null;
+  }
+};
+
 CallManager.prototype.showPendingRequestDialog = function(data) {
+  // Toujours recréer avec les bonnes données (nouvelle demande)
   if (this.pendingRequestDialog) {
-    this.pendingRequestDialog.classList.add("active");
-    return;
+    try { this.pendingRequestDialog.remove(); } catch (e) {}
+    this.pendingRequestDialog = null;
   }
 
   const dialog = document.createElement("div");
   dialog.className = "pending-request-dialog";
   dialog.id = "pending-request-dialog";
+  dialog.style.zIndex = "5000";
   dialog.innerHTML = `
     <div class="dialog-overlay" onclick="window.closePendingRequestDialog()"></div>
     <div class="dialog-content">

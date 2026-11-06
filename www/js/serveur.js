@@ -61,7 +61,7 @@ const app = express();
 // Middleware CORS permissif pour wake-up Render + tests
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") {
     return res.sendStatus(200);
@@ -1249,6 +1249,7 @@ class MeetingManager {
       waitingUsers: [],
       accessPolicy: accessPolicy || "direct", // "direct" ou "approval"
       pendingRequests: [], // Demandes d'accès en attente
+      approvedUsers: [], // Users déjà approuvés (reconnexion)
       createdAt: Date.now(),
       link,
       success: true,
@@ -1495,15 +1496,33 @@ class MeetingManager {
       waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
     }
 
+    // Lire la politique d'accès
+    const meetingSnap = await db.collection("meetings").doc(meetingId).get();
+    const meetingData = meetingSnap.exists ? meetingSnap.data() : {};
+    const needsApproval = meetingData.accessPolicy === "approval";
+
     // Préparer la map des notifications pour Firestore
     const notifiedUsers = {};
     for (const waitingUserId of waitingUsers) {
       if (excludeUserId && waitingUserId === excludeUserId) continue;
 
-      // IMPORTANT : l'utilisateur qui est déjà en attente doit être ajouté
-      // immédiatement à la salle live. Cela évite que le host démarre la réunion
-      // et la voie vide pendant que les participants restent bloqués dans la
-      // salle d'attente ou ne reçoivent pas le message de jonction.
+      // Mode approbation : ne PAS auto-joindre — demander l'accord de l'hôte
+      if (needsApproval) {
+        await this._addPendingRequest(meetingId, waitingUserId);
+        await this._notifyHostOfPendingRequest(meetingId, waitingUserId, meetingData.createdBy || excludeUserId, title);
+        const user = users.get(waitingUserId);
+        if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+          user.ws.send(JSON.stringify({
+            type: "meeting-pending-approval",
+            meetingId,
+            reason: "En attente d'approbation de l'hôte",
+          }));
+        }
+        notifiedUsers[waitingUserId] = true;
+        continue;
+      }
+
+      // Mode direct : rejoindre immédiatement la salle live
       if (room) {
         roomManager.join(roomId, waitingUserId);
       }
@@ -1516,11 +1535,10 @@ class MeetingManager {
           roomId,
           isVideo,
           title,
-          createdBy: excludeUserId, // l'hôte qui a démarré
+          createdBy: excludeUserId,
         }));
         notifiedUsers[waitingUserId] = true;
       } else {
-        // Marquer comme notifié même si déconnecté (pour retry à la reconnexion)
         notifiedUsers[waitingUserId] = false;
       }
     }
@@ -1680,14 +1698,33 @@ class MeetingManager {
     console.log(`📅 [MEETING] - status: ${meeting.status}`);
     console.log(`📅 [MEETING] - isCreator: ${meeting.createdBy === userId}`);
 
-    // Si le créateur démarre la réunion avant l'heure prévue, on laisse le flux normal
-    // Même avant l'heure programmée, les participants peuvent entrer dans la salle d'attente
-    // et recevoir le compte à rebours jusqu'au démarrage réel de la réunion.
     const isCreator = meeting.createdBy === userId;
     const canStartEarly = isCreator && now < meetingStart;
+    const approvedUsers = Array.isArray(meeting.approvedUsers) ? meeting.approvedUsers : [];
+    const isApproved = approvedUsers.includes(userId);
 
-    // TROP TÔT : les participants restent en salle d'attente, avec compte à rebours jusqu'à scheduledAt.
-    // Le créateur peut démarrer la réunion immédiatement, même avant l'heure prévue.
+    // Trop tard : réunion expirée
+    if (now > meeting.endsAt) {
+      await this._updateStatus(meeting.id, "ended");
+      return { success: false, reason: "Réunion expirée" };
+    }
+
+    // Politique d'approbation : TOUJOURS avant la salle d'attente / join live
+    // (sauf hôte et utilisateurs déjà approuvés)
+    if (meeting.accessPolicy === "approval" && !isCreator && !isApproved) {
+      await this._addPendingRequest(meeting.id, userId);
+      await this._notifyHostOfPendingRequest(meeting.id, userId, meeting.createdBy, meeting.title);
+      console.log(`📅 [MEETING] - Demande d'approbation pour ${userId}`);
+      return {
+        success: false,
+        status: "pending_approval",
+        reason: "En attente d'approbation de l'hôte",
+        meetingId: meeting.id,
+        title: meeting.title,
+      };
+    }
+
+    // TROP TÔT (mode direct uniquement, ou déjà approuvé) : salle d'attente
     if (now < meetingStart && !isCreator) {
       const waitTimeMs = meetingStart - now;
       const waitTimeMin = Math.ceil(waitTimeMs / 60000);
@@ -1706,28 +1743,6 @@ class MeetingManager {
         serverNow: now,
         opensAt: meetingStart,
         startsAt: meetingStart,
-      };
-    }
-
-    // Trop tard : réunion expirée
-    if (now > meeting.endsAt) {
-      await this._updateStatus(meeting.id, "ended");
-      return { success: false, reason: "Réunion expirée" };
-    }
-
-    // Vérifier la politique d'accès
-    if (meeting.accessPolicy === "approval" && !isCreator) {
-      // Ajouter à pendingRequests
-      await this._addPendingRequest(meeting.id, userId);
-      
-      // Notifier le créateur
-      await this._notifyHostOfPendingRequest(meeting.id, userId, meeting.createdBy, meeting.title);
-      
-      return {
-        success: false,
-        status: "pending_approval",
-        reason: "En attente d'approbation de l'hôte",
-        meetingId: meeting.id,
       };
     }
 
@@ -1890,21 +1905,38 @@ class MeetingManager {
       return { success: false, reason: "Non autorisé (seul l'hôte peut approuver)" };
     }
 
-    // Retirer de pendingRequests
     await this._removePendingRequest(meetingId, userId);
 
-    // Créer la salle si pas encore live
+    // Mémoriser l'approbation pour les reconnexions
+    const approvedUsers = Array.isArray(meeting.approvedUsers) ? meeting.approvedUsers.filter(Boolean) : [];
+    if (!approvedUsers.includes(userId)) {
+      approvedUsers.push(userId);
+      await db.collection("meetings").doc(meetingId).update({ approvedUsers });
+    }
+
     let roomId = meeting.roomId;
-    if (meeting.status === "scheduled") {
-      const room = roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
+    if (meeting.status === "scheduled" || !roomId) {
+      const endsAt = meeting.endsAt || (Date.now() + (meeting.durationMin || 60) * 60 * 1000);
+      const room = roomManager.createMeetingRoom(meetingId, meeting.isVideo, endsAt);
+      roomManager.join(room.roomId, hostId); // hôte aussi si salle créée
       roomManager.join(room.roomId, userId);
       roomId = room.roomId;
       await db.collection("meetings").doc(meetingId).update({ status: "live", roomId });
     } else {
+      if (!roomManager.rooms.get(roomId)) {
+        roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
+      }
       roomManager.join(roomId, userId);
     }
 
-    return { success: true, roomId, isVideo: meeting.isVideo, title: meeting.title };
+    return {
+      success: true,
+      roomId,
+      isVideo: meeting.isVideo,
+      title: meeting.title,
+      createdBy: meeting.createdBy,
+      meetingId,
+    };
   }
 
   async rejectRequest(meetingId, userId, hostId) {
@@ -4033,6 +4065,7 @@ wss.on("connection", (ws) => {
                 roomId: result.roomId,
                 isVideo: result.isVideo,
                 title: result.title,
+                createdBy: result.createdBy,
               }));
             }
             // Confirmer à l'hôte
@@ -4216,6 +4249,45 @@ wss.on("connection", (ws) => {
       }
 
       // 23d. Hôte coupe micro / caméra d'un participant
+      if (type === "meeting-kick") {
+        try {
+          const { meetingId, roomId, targetUserId } = data;
+          if (!ws.userId || !targetUserId) return;
+          const isHost = await meetingManager.isHost(meetingId, ws.userId);
+          if (!isHost) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Seul l'hôte peut retirer un participant" }));
+            return;
+          }
+          const room = roomManager.rooms.get(roomId);
+          if (room) {
+            roomManager.leave(roomId, targetUserId);
+            const target = users.get(targetUserId);
+            if (target?.ws && target.ws.readyState === WebSocket.OPEN) {
+              target.ws.send(JSON.stringify({
+                type: "meeting-kicked",
+                meetingId,
+                roomId,
+                reason: "Vous avez été retiré de la réunion par l'hôte",
+              }));
+            }
+            // Notifier les autres
+            for (const [pid] of room.participants) {
+              const u = users.get(pid);
+              if (u?.ws && u.ws.readyState === WebSocket.OPEN) {
+                u.ws.send(JSON.stringify({
+                  type: "meeting-participant-left",
+                  userId: targetUserId,
+                }));
+              }
+            }
+          }
+          console.log(`📅 [MEETING] ${targetUserId} retiré par l'hôte ${ws.userId}`);
+        } catch (e) {
+          console.error("[MEETING] kick error:", e);
+        }
+        return;
+      }
+
       if (type === "meeting-host-mute") {
         try {
           const { meetingId, roomId, targetUserId, media, muted } = data;

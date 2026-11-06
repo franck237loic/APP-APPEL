@@ -169,15 +169,34 @@ class MeetingParticipants {
   async removeParticipant(userId) {
     if (!confirm(`Retirer ${userId} de la réunion ?`)) return;
 
+    const toast = (msg) => {
+      if (window.callManager && typeof window.callManager.showCallToast === "function") {
+        window.callManager.showCallToast(msg);
+      }
+    };
+
     try {
+      // Priorité WebSocket (évite CORS DELETE)
+      if (window.callManager && window.callManager.groupRoomId) {
+        window.callManager.sendSignal({
+          type: "meeting-kick",
+          meetingId: this.currentMeetingId || window.callManager.currentMeetingId,
+          roomId: this.currentRoomId || window.callManager.groupRoomId,
+          targetUserId: userId,
+        });
+        toast("Participant retiré");
+        setTimeout(() => this.loadParticipants(), 400);
+        return;
+      }
+
       if (window.meetingService) {
         await meetingService.removeParticipant(this.currentMeetingId, userId);
-        this.showCallToast("Participant retiré");
+        toast("Participant retiré");
         this.loadParticipants();
       }
     } catch (error) {
       console.error("Erreur retrait participant:", error);
-      this.showCallToast("Erreur lors du retrait");
+      toast("Erreur lors du retrait");
     }
   }
 
