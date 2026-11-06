@@ -1134,9 +1134,6 @@ CallManager.prototype.selectAccessPolicy = function(policy) {
     directBtn.classList.remove("active");
   }
 };
-    datetimeContainer.style.display = "none";
-  
-
 
 CallManager.prototype.confirmCreateMeeting = async function() {
   const title = document.getElementById("meeting-title").value.trim();
