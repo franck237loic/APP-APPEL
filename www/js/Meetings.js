@@ -48,6 +48,9 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
   // Stocker les infos de la réunion
   this.currentMeetingTitle = data.title || "Réunion";
   this.currentMeetingId = data.meetingId;
+  // Qui est l'hôte ? (créateur de la réunion)
+  this.meetingCreatedBy = data.createdBy || data.hostId || null;
+  this.isMeetingHost = !!(this.meetingCreatedBy && this.meetingCreatedBy === this.myId);
 
   // Le flux de réunion doit avoir les médias du groupe prêts avant d'ouvrir
   // la salle live et d'envoyer le group-join. Sans cela le client se retrouve
@@ -94,6 +97,8 @@ CallManager.prototype.handleMeetingReconnect = async function(data) {
   // Stocker les infos de la réunion
   this.currentMeetingTitle = data.title || "Réunion";
   this.currentMeetingId = data.meetingId;
+  this.meetingCreatedBy = data.createdBy || data.hostId || null;
+  this.isMeetingHost = !!(this.meetingCreatedBy && this.meetingCreatedBy === this.myId);
 
   // Acquérir les médias
   if (!this.groupLocalStream) {
@@ -164,6 +169,8 @@ CallManager.prototype.handleMeetingApprovalGranted = function(data) {
   this.groupIsVideo = data.isVideo;
   this.currentMeetingTitle = data.title;
   this.currentMeetingId = data.meetingId;
+  this.meetingCreatedBy = data.createdBy || data.hostId || null;
+  this.isMeetingHost = !!(this.meetingCreatedBy && this.meetingCreatedBy === this.myId);
   this.sendSignal({ type: "group-join", roomId: data.roomId });
   this.showMeetingScreen(data);
 };
@@ -261,6 +268,7 @@ CallManager.prototype.handleMeetingParticipantJoined = function(data) {
     meetingParticipants.updateParticipant(data.userId, "JOINED");
   }
   this.showCallToast(`${data.userId} a rejoint la réunion`);
+  this.updateMeetingParticipantCount();
 };
 
 CallManager.prototype.handleMeetingParticipantLeft = function(data) {
@@ -269,6 +277,7 @@ CallManager.prototype.handleMeetingParticipantLeft = function(data) {
     meetingParticipants.updateParticipant(data.userId, "LEFT");
   }
   this.showCallToast(`${data.userId} a quitté la réunion`);
+  this.updateMeetingParticipantCount();
 };
 
 CallManager.prototype.handleMeetingParticipantState = function(data) {
@@ -293,59 +302,69 @@ CallManager.prototype.toggleMeetingMic = function() {
   const btn = document.getElementById("meeting-mic-btn");
   if (!btn) return;
 
-  const isEnabled = this.isGroupMicEnabled !== false;
+  // Utilise la même logique que les appels de groupe
+  if (typeof this.toggleGroupMic === "function") {
+    this.toggleGroupMic();
+  }
 
-  if (isEnabled) {
-    this.disableGroupMicrophone();
+  const muted = !!this.groupIsMuted;
+  if (muted) {
     btn.classList.remove("active");
     btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
   } else {
-    this.enableGroupMicrophone();
     btn.classList.add("active");
     btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
   }
-  this.isGroupMicEnabled = !isEnabled;
 
-  // Diffuser l'état après le toggle
-  const newState = this.isGroupMicEnabled !== false;
   if (window.meetingParticipants) {
-    meetingParticipants.updateParticipantMedia(this.myId, { micEnabled: newState });
+    meetingParticipants.updateParticipantMedia(this.myId, { micEnabled: !muted });
   }
-  this.broadcastParticipantState({ micEnabled: newState });
+  this.broadcastParticipantState({ micEnabled: !muted });
 };
 
-CallManager.prototype.toggleMeetingCam = function() {
+CallManager.prototype.toggleMeetingCam = async function() {
   const btn = document.getElementById("meeting-cam-btn");
   if (!btn) return;
 
-  const isEnabled = this.isGroupCamEnabled !== false;
+  if (typeof this.toggleGroupCamera === "function") {
+    await this.toggleGroupCamera();
+  }
 
-  if (isEnabled) {
-    this.disableGroupCamera();
+  const camOff = !!this.groupIsCamOff;
+  if (camOff) {
     btn.classList.remove("active");
     btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
   } else {
-    this.enableGroupCamera();
     btn.classList.add("active");
     btn.innerHTML = '<i class="fa-solid fa-video"></i>';
   }
-  this.isGroupCamEnabled = !isEnabled;
 
-  // Diffuser l'état après le toggle
-  const newState = this.isGroupCamEnabled !== false;
   if (window.meetingParticipants) {
-    meetingParticipants.updateParticipantMedia(this.myId, { camEnabled: newState });
+    meetingParticipants.updateParticipantMedia(this.myId, { camEnabled: !camOff });
   }
-  this.broadcastParticipantState({ camEnabled: newState });
+  this.broadcastParticipantState({ camEnabled: !camOff });
 };
 
 CallManager.prototype.leaveMeeting = function() {
+  // Quitter proprement la salle de groupe (peers WebRTC + médias + signal)
   if (this.groupRoomId) {
-    this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
+    try {
+      if (typeof this.leaveGroupCall === "function") {
+        this.leaveGroupCall("Vous avez quitté la réunion");
+      } else {
+        this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
+        if (typeof this.finishGroupCall === "function") {
+          this.finishGroupCall("Vous avez quitté la réunion");
+        }
+      }
+    } catch (e) {
+      console.warn("leaveMeeting cleanup:", e);
+    }
   }
   this.closeMeetingScreen();
   this.groupIsMeeting = false;
-  this.groupRoomId = null;
+  this.isMeetingHost = false;
+  this.meetingCreatedBy = null;
   this.currentMeetingId = null;
   this.currentMeetingTitle = null;
 };
@@ -399,7 +418,7 @@ CallManager.prototype.showMeetingScreen = function(data) {
             <div class="meeting-time">${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
           </div>
           <div class="meeting-actions">
-            <button class="meeting-action-btn" onclick="window.meetingParticipants.show('${this.currentMeetingId}', '${this.groupRoomId}', true)" title="Participants">
+            <button class="meeting-action-btn" onclick="window.meetingParticipants.show('${this.currentMeetingId}', '${this.groupRoomId}', ${!!this.isMeetingHost})" title="Participants">
               <i class="fa-solid fa-users"></i>
               <span id="participant-count">1</span>
             </button>
@@ -415,14 +434,7 @@ CallManager.prototype.showMeetingScreen = function(data) {
         <!-- Zone vidéo principale -->
         <div class="meeting-video-area" id="meeting-video-area">
           <div class="video-grid" id="meeting-video-grid">
-            <!-- Votre vidéo -->
-            <div class="video-tile self" id="self-video-tile">
-              <video id="meeting-local-video" autoplay muted playsinline></video>
-              <div class="video-tile-info">
-                <span class="user-name">Vous</span>
-                <span class="user-badge">Hôte</span>
-              </div>
-            </div>
+            <!-- Rempli dynamiquement par renderGroupGrid (même logique que les appels de groupe) -->
           </div>
         </div>
 
@@ -432,10 +444,10 @@ CallManager.prototype.showMeetingScreen = function(data) {
             00:00:00
           </div>
           <div class="meeting-control-buttons">
-            <button class="meeting-control-btn" id="meeting-mic-btn" onclick="window.toggleMeetingMic()">
+            <button class="meeting-control-btn active" id="meeting-mic-btn" onclick="window.toggleMeetingMic()">
               <i class="fa-solid fa-microphone"></i>
             </button>
-            <button class="meeting-control-btn" id="meeting-cam-btn" onclick="window.toggleMeetingCam()">
+            <button class="meeting-control-btn active" id="meeting-cam-btn" onclick="window.toggleMeetingCam()">
               <i class="fa-solid fa-video"></i>
             </button>
             <button class="meeting-control-btn" id="meeting-hand-btn" onclick="window.toggleMeetingHand()">
@@ -447,9 +459,9 @@ CallManager.prototype.showMeetingScreen = function(data) {
             <button class="meeting-control-btn meeting-hangup" onclick="window.leaveMeeting()">
               <i class="fa-solid fa-phone-slash"></i>
             </button>
-            <button class="meeting-control-btn meeting-end" onclick="window.endMeetingForEveryone()" title="Terminer pour tous">
+            ${this.isMeetingHost ? `<button class="meeting-control-btn meeting-end" onclick="window.endMeetingForEveryone()" title="Terminer pour tous">
               <i class="fa-solid fa-power-off"></i>
-            </button>
+            </button>` : ''}
           </div>
         </div>
       </div>
@@ -460,11 +472,15 @@ CallManager.prototype.showMeetingScreen = function(data) {
   this.meetingScreen = document.getElementById("meeting-screen");
   this.meetingScreen.classList.add("active");
 
-  // Attacher la vidéo locale
-  this.attachMeetingLocalVideo();
+  // Afficher immédiatement la grille (moi + participants déjà présents)
+  // via le même système que les appels de groupe
+  if (typeof this.renderGroupGrid === "function") {
+    this.renderGroupGrid();
+  }
 
   // Démarrer le timer de réunion
   this.startMeetingTimer();
+  this.updateMeetingParticipantCount();
 };
 
 /**
@@ -554,13 +570,22 @@ CallManager.prototype.showMeetingReactions = function() {
 };
 
 /**
- * Quitter la réunion
+ * Quitter la réunion (avec confirmation)
+ * Note: la version sans confirm est définie plus haut et appelée par endMeetingForEveryone.
+ * Cette version demande confirmation pour le bouton "quitter".
  */
-CallManager.prototype.leaveMeeting = function() {
+CallManager.prototype.leaveMeetingWithConfirm = function() {
   if (confirm("Voulez-vous vraiment quitter la réunion?")) {
-    this.closeMeetingScreen();
-    this.endGroupCall();
+    this.leaveMeeting();
   }
+};
+
+CallManager.prototype.updateMeetingParticipantCount = function() {
+  const el = document.getElementById("participant-count");
+  if (!el) return;
+  const roster = this.groupRoster || [];
+  const count = roster.filter(r => r && r.state === "JOINED").length || 1;
+  el.textContent = String(count);
 };
 
 /**
@@ -570,7 +595,7 @@ window.showMeetingParticipants = function() {
   if (window.callManager && window.meetingParticipants) {
     const meetingId = window.callManager.currentMeetingId;
     const roomId = window.callManager.groupRoomId;
-    const isHost = true; // TODO: Vérifier si l'utilisateur est l'hôte
+    const isHost = !!window.callManager.isMeetingHost;
     window.meetingParticipants.show(meetingId, roomId, isHost);
   }
 };
@@ -1964,10 +1989,12 @@ window.copyMeetingCode = function(code) { window.callManager.copyMeetingCode(cod
 window.closePendingRequestDialog = function() { window.callManager.closePendingRequestDialog(); };
 window.approveMeetingRequest = function(meetingId, userId) { window.callManager.approveMeetingRequest(meetingId, userId); };
 window.rejectMeetingRequest = function(meetingId, userId) { window.callManager.rejectMeetingRequest(meetingId, userId); };
-window.leaveMeeting = function() { window.callManager.leaveMeeting(); };
+window.leaveMeeting = function() { window.callManager.leaveMeetingWithConfirm ? window.callManager.leaveMeetingWithConfirm() : window.callManager.leaveMeeting(); };
 window.endMeetingForEveryone = function() { window.callManager.endMeetingForEveryone(); };
 window.toggleMeetingMic = function() { window.callManager.toggleMeetingMic(); };
 window.toggleMeetingCam = function() { window.callManager.toggleMeetingCam(); };
+window.toggleMeetingHand = function() { window.callManager.toggleMeetingHand(); };
+window.showMeetingReactions = function() { window.callManager.showMeetingReactions(); };
 window.shareMeetingLink = function(link) { window.callManager.shareMeetingLink(link); };
 window.startMeetingFromCreated = function(code) { window.callManager.startMeetingFromCreated(code); };
 window.showMeetingListView = function() { window.callManager.listMeetings(); };

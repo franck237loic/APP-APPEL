@@ -1516,6 +1516,7 @@ class MeetingManager {
           roomId,
           isVideo,
           title,
+          createdBy: excludeUserId, // l'hôte qui a démarré
         }));
         notifiedUsers[waitingUserId] = true;
       } else {
@@ -1579,6 +1580,7 @@ class MeetingManager {
         roomId: meeting.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
+        createdBy: meeting.createdBy,
       };
     }
 
@@ -1629,6 +1631,7 @@ class MeetingManager {
       roomId: room.roomId,
       isVideo: meeting.isVideo,
       title: meeting.title,
+      createdBy: meeting.createdBy,
     };
   }
 
@@ -1793,6 +1796,7 @@ class MeetingManager {
         roomId: room.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
+        createdBy: meeting.createdBy,
       };
     }
 
@@ -1819,6 +1823,7 @@ class MeetingManager {
         roomId: room.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
+        createdBy: meeting.createdBy,
       };
     }
 
@@ -3806,6 +3811,7 @@ wss.on("connection", (ws) => {
                 roomId: result.roomId,
                 isVideo: result.isVideo,
                 title: result.title,
+                createdBy: result.createdBy,
               }),
             );
             console.log(`[MEETING] meeting-joined envoyé à ${ws.userId} (salle ${result.roomId})`);
@@ -3899,6 +3905,7 @@ wss.on("connection", (ws) => {
               roomId: result.roomId,
               isVideo: result.isVideo,
               title: result.title,
+              createdBy: result.createdBy || ws.userId,
             }));
             console.log(`[MEETING] meeting-force-start OK: ${result.roomId} pour ${ws.userId}`);
           } else {

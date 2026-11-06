@@ -1107,3 +1107,82 @@
 .btn-secondary:hover {
   background: #455055;
 }
+
+
+/* ===== Grille réunion : réutilise les tuiles group-tile ===== */
+#meeting-video-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  align-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+#meeting-video-grid .group-tile,
+#meeting-video-grid .video-tile {
+  position: relative;
+  flex: 1 1 200px;
+  max-width: 480px;
+  min-height: 160px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #202124;
+}
+
+#meeting-video-grid .group-tile video,
+#meeting-video-grid .video-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+#meeting-video-grid .group-tile.is-self video,
+#meeting-video-grid .video-tile.self video {
+  transform: scaleX(-1);
+}
+
+#meeting-video-grid .group-tile[data-is-host="1"] .group-tile-name::after,
+#meeting-video-grid .video-tile[data-is-host="1"] .user-name::after {
+  content: " · Hôte";
+  color: #8ab4f8;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+#meeting-video-grid .group-badge-mute {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  color: #ea4335;
+  background: rgba(0,0,0,0.55);
+  border-radius: 50%;
+  padding: 6px;
+  font-size: 12px;
+}
+
+#meeting-video-grid .group-tile-info,
+#meeting-video-grid .video-tile-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 8px 10px;
+  background: linear-gradient(transparent, rgba(0,0,0,0.65));
+  color: #fff;
+  font-size: 13px;
+}
+
+.meeting-control-btn.active {
+  background: #3c4043;
+  color: #e8eaed;
+}
+
+.meeting-control-btn.meeting-end {
+  background: #d93025;
+  color: #fff;
+}

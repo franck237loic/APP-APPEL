@@ -7821,6 +7821,9 @@ showLocalStorageOnScreen = () => {
 
     this.renderGroupGrid();
     this.checkGroupAlone();
+    if (this.groupIsMeeting && typeof this.updateMeetingParticipantCount === "function") {
+      this.updateMeetingParticipantCount();
+    }
   };
 
   // Si on est le dernier dans l'appel (plus personne ne sonne), on quitte
@@ -8447,7 +8450,10 @@ showLocalStorageOnScreen = () => {
   // (Re)construit la grille : crée les tuiles manquantes, retire les obsolètes,
   // garde les <video> existantes pour ne pas couper un flux qui joue.
   renderGroupGrid = () => {
-    const grid = document.getElementById("group-grid");
+    // En réunion planifiée, la grille visible est #meeting-video-grid (UI Google Meet).
+    // Sinon on utilise la grille d'appel de groupe classique.
+    const gridId = this.groupIsMeeting ? "meeting-video-grid" : "group-grid";
+    const grid = document.getElementById(gridId);
     if (!grid) return;
     const ids = this.getGroupDisplayIds();
 
@@ -8504,14 +8510,18 @@ showLocalStorageOnScreen = () => {
   // Crée l'élément DOM d'une tuile (le contenu texte est posé par updateGroupTile).
   createGroupTile = (userId) => {
     const tile = document.createElement("div");
-    tile.className = "group-tile";
-    if (userId === this.myId) tile.classList.add("is-self");
+    // Classes duales : compatible grille groupe ET grille réunion (meeting.css .video-tile)
+    tile.className = this.groupIsMeeting ? "video-tile group-tile" : "group-tile";
+    if (userId === this.myId) {
+      tile.classList.add("is-self");
+      tile.classList.add("self");
+    }
     tile.innerHTML = `
       <video class="group-video" autoplay playsinline webkit-playsinline muted></video>
       <div class="group-avatar"><span class="group-initial"></span></div>
       <i class="fa-solid fa-microphone-slash group-badge-mute"></i>
-      <div class="group-tile-info">
-        <span class="group-tile-name"></span>
+      <div class="group-tile-info video-tile-info">
+        <span class="group-tile-name user-name"></span>
         <span class="group-tile-status"></span>
       </div>`;
     return tile;
@@ -8542,7 +8552,17 @@ showLocalStorageOnScreen = () => {
     const showVideo = state === "JOINED" && hasVideoTrack && (!camOff || (screenSharing && !isSelf));
 
     // Textes (textContent : jamais d'HTML venant d'un autre utilisateur)
+    const isMeetingHostUser = this.groupIsMeeting && (
+      (isSelf && this.isMeetingHost) ||
+      (!isSelf && this.meetingCreatedBy && userId === this.meetingCreatedBy)
+    );
     tile.querySelector(".group-tile-name").textContent = isSelf ? "Vous" : userId;
+    // Badge organisateur uniquement pour le vrai hôte
+    let statusEl = tile.querySelector(".group-tile-status");
+    if (statusEl && this.groupIsMeeting) {
+      // status text set below; we inject host badge via dataset
+      tile.dataset.isHost = isMeetingHostUser ? "1" : "0";
+    }
     tile.querySelector(".group-initial").textContent = String(userId).charAt(0).toUpperCase();
 
     let statusText = CallManager.GROUP_STATE_LABELS[state] || "";
@@ -8896,6 +8916,8 @@ showLocalStorageOnScreen = () => {
     this.groupTiles.clear();
     const grid = document.getElementById("group-grid");
     if (grid) grid.innerHTML = "";
+    const meetingGrid = document.getElementById("meeting-video-grid");
+    if (meetingGrid) meetingGrid.innerHTML = "";
     const audioBox = document.getElementById("group-audio-container");
     if (audioBox) audioBox.innerHTML = "";
     this.closeGroupAddSheet();
