@@ -3178,15 +3178,39 @@ button, [role="button"] { cursor: pointer; }
         }
         break;
 
-      case "meeting-pending-approval":
-        if (window.callManager && window.callManager.handleMeetingPendingApproval) {
-          window.callManager.handleMeetingPendingApproval(data);
+      case "meeting-hand-raised":
+        if (window.callManager && window.callManager.handleMeetingHandRaised) {
+          window.callManager.handleMeetingHandRaised(data);
+        }
+        break;
+
+      case "meeting-hand-lowered":
+        if (window.callManager && window.callManager.handleMeetingHandLowered) {
+          window.callManager.handleMeetingHandLowered(data);
+        }
+        break;
+
+      case "meeting-reaction":
+        if (window.callManager && window.callManager.handleMeetingReaction) {
+          window.callManager.handleMeetingReaction(data);
+        }
+        break;
+
+      case "meeting-force-mute":
+        if (window.callManager && window.callManager.handleMeetingForceMute) {
+          window.callManager.handleMeetingForceMute(data);
         }
         break;
 
       case "meeting-chat-message":
         if (window.callManager && window.callManager.handleMeetingChatMessage) {
           window.callManager.handleMeetingChatMessage(data);
+        }
+        break;
+
+      case "meeting-pending-approval":
+        if (window.callManager && window.callManager.handleMeetingPendingApproval) {
+          window.callManager.handleMeetingPendingApproval(data);
         }
         break;
 

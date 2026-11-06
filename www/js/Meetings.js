@@ -438,31 +438,46 @@ CallManager.prototype.showMeetingScreen = function(data) {
           </div>
         </div>
 
-        <!-- Barre de contrôle (bas) -->
-        <div class="meeting-controls">
-          <div class="meeting-time-display" id="meeting-time-display">
-            00:00:00
-          </div>
+        <!-- Overlay réactions flottantes -->
+        <div id="meeting-reaction-overlay" class="meeting-reaction-overlay" aria-hidden="true"></div>
+
+        <!-- Barre de contrôle (plus haute, style Meet) -->
+        <div class="meeting-controls meeting-controls-raised">
+          <div class="meeting-time-display" id="meeting-time-display">00:00:00</div>
           <div class="meeting-control-buttons">
-            <button class="meeting-control-btn active" id="meeting-mic-btn" onclick="window.toggleMeetingMic()">
+            <button class="meeting-control-btn active" id="meeting-mic-btn" onclick="window.toggleMeetingMic()" title="Micro">
               <i class="fa-solid fa-microphone"></i>
             </button>
-            <button class="meeting-control-btn active" id="meeting-cam-btn" onclick="window.toggleMeetingCam()">
+            <button class="meeting-control-btn active" id="meeting-cam-btn" onclick="window.toggleMeetingCam()" title="Caméra">
               <i class="fa-solid fa-video"></i>
             </button>
-            <button class="meeting-control-btn" id="meeting-hand-btn" onclick="window.toggleMeetingHand()">
+            <button class="meeting-control-btn" id="meeting-screen-btn" onclick="window.toggleMeetingScreenShare()" title="Partager l'écran">
+              <i class="fa-solid fa-desktop"></i>
+            </button>
+            <button class="meeting-control-btn" id="meeting-hand-btn" onclick="window.toggleMeetingHand()" title="Lever la main">
               <i class="fa-solid fa-hand"></i>
             </button>
-            <button class="meeting-control-btn" id="meeting-reaction-btn" onclick="window.showMeetingReactions()">
+            <button class="meeting-control-btn" id="meeting-reaction-btn" onclick="window.showMeetingReactions()" title="Réactions">
               <i class="fa-solid fa-face-smile"></i>
             </button>
-            <button class="meeting-control-btn meeting-hangup" onclick="window.leaveMeeting()">
+            <button class="meeting-control-btn meeting-hangup" onclick="window.leaveMeeting()" title="Quitter">
               <i class="fa-solid fa-phone-slash"></i>
             </button>
             ${this.isMeetingHost ? `<button class="meeting-control-btn meeting-end" onclick="window.endMeetingForEveryone()" title="Terminer pour tous">
               <i class="fa-solid fa-power-off"></i>
             </button>` : ''}
           </div>
+        </div>
+        <!-- Picker réactions -->
+        <div id="meeting-reaction-picker" class="meeting-reaction-picker" style="display:none">
+          <button type="button" onclick="window.sendMeetingReaction('👍')">👍</button>
+          <button type="button" onclick="window.sendMeetingReaction('👏')">👏</button>
+          <button type="button" onclick="window.sendMeetingReaction('❤️')">❤️</button>
+          <button type="button" onclick="window.sendMeetingReaction('😂')">😂</button>
+          <button type="button" onclick="window.sendMeetingReaction('😮')">😮</button>
+          <button type="button" onclick="window.sendMeetingReaction('🎉')">🎉</button>
+          <button type="button" onclick="window.sendMeetingReaction('🔥')">🔥</button>
+          <button type="button" onclick="window.sendMeetingReaction('👎')">👎</button>
         </div>
       </div>
     </div>
@@ -544,29 +559,195 @@ CallManager.prototype.closeMeetingScreen = function() {
 };
 
 /**
- * Lever la main
+ * Lever / baisser la main
  */
 CallManager.prototype.toggleMeetingHand = function() {
   const btn = document.getElementById("meeting-hand-btn");
-  if (!btn) return;
+  if (!btn || !this.groupRoomId) return;
 
+  this.handRaised = !this.handRaised;
   if (this.handRaised) {
-    btn.classList.remove("active");
-    this.handRaised = false;
-    // TODO: Envoyer signal au serveur
-  } else {
     btn.classList.add("active");
-    this.handRaised = true;
-    // TODO: Envoyer signal au serveur
+    this.sendSignal({
+      type: "meeting-hand-raise",
+      roomId: this.groupRoomId,
+      meetingId: this.currentMeetingId,
+    });
+    this.showCallToast("Main levée");
+  } else {
+    btn.classList.remove("active");
+    this.sendSignal({
+      type: "meeting-hand-lower",
+      roomId: this.groupRoomId,
+      meetingId: this.currentMeetingId,
+    });
+  }
+};
+
+CallManager.prototype.handleMeetingHandRaised = function(data) {
+  if (!data || !data.userId) return;
+  if (data.userId === this.myId) return;
+  this.showCallToast(`${data.userId} a levé la main ✋`);
+  // Badge sur la tuile
+  const tile = this.groupTiles && this.groupTiles.get(data.userId);
+  if (tile) {
+    tile.classList.add("hand-raised");
+    let badge = tile.querySelector(".hand-raised-badge");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "hand-raised-badge";
+      badge.textContent = "✋";
+      tile.appendChild(badge);
+    }
+  }
+};
+
+CallManager.prototype.handleMeetingHandLowered = function(data) {
+  if (!data || !data.userId) return;
+  const tile = this.groupTiles && this.groupTiles.get(data.userId);
+  if (tile) {
+    tile.classList.remove("hand-raised");
+    const badge = tile.querySelector(".hand-raised-badge");
+    if (badge) badge.remove();
   }
 };
 
 /**
- * Afficher les réactions
+ * Afficher le picker de réactions
  */
 CallManager.prototype.showMeetingReactions = function() {
-  // TODO: Implémenter le panel de réactions
-  this.showCallToast("Réactions bientôt disponibles");
+  const picker = document.getElementById("meeting-reaction-picker");
+  if (!picker) return;
+  const visible = picker.style.display !== "none";
+  picker.style.display = visible ? "none" : "flex";
+};
+
+CallManager.prototype.sendMeetingReaction = function(emoji) {
+  if (!this.groupRoomId || !emoji) return;
+  this.sendSignal({
+    type: "meeting-reaction",
+    roomId: this.groupRoomId,
+    meetingId: this.currentMeetingId,
+    reaction: emoji,
+  });
+  // Afficher localement aussi
+  this.showFloatingReaction(this.myId, emoji);
+  const picker = document.getElementById("meeting-reaction-picker");
+  if (picker) picker.style.display = "none";
+};
+
+CallManager.prototype.handleMeetingReaction = function(data) {
+  if (!data) return;
+  this.showFloatingReaction(data.userId, data.reaction);
+};
+
+CallManager.prototype.showFloatingReaction = function(userId, emoji) {
+  const overlay = document.getElementById("meeting-reaction-overlay");
+  if (!overlay || !emoji) return;
+  const el = document.createElement("div");
+  el.className = "floating-reaction";
+  el.textContent = emoji;
+  el.style.left = (10 + Math.random() * 70) + "%";
+  overlay.appendChild(el);
+  setTimeout(() => el.remove(), 2500);
+  if (userId && userId !== this.myId) {
+    this.showCallToast(`${userId}: ${emoji}`);
+  }
+};
+
+/**
+ * Partage d'écran (réutilise le flux groupe)
+ */
+CallManager.prototype.toggleMeetingScreenShare = async function() {
+  const btn = document.getElementById("meeting-screen-btn");
+  try {
+    if (typeof this.toggleScreenShare === "function") {
+      await this.toggleScreenShare();
+    }
+  } catch (e) {
+    console.error("screen share error", e);
+    this.showCallToast("Partage d'écran impossible");
+    return;
+  }
+  // Mettre à jour le bouton
+  setTimeout(() => {
+    if (!btn) return;
+    if (this.isScreenSharing) {
+      btn.classList.add("active", "sharing");
+      btn.innerHTML = '<i class="fa-solid fa-desktop"></i>';
+      this.showCallToast("Partage d'écran activé");
+    } else {
+      btn.classList.remove("active", "sharing");
+      btn.innerHTML = '<i class="fa-solid fa-desktop"></i>';
+    }
+  }, 300);
+};
+
+/**
+ * Ordre hôte : couper mon micro ou ma caméra
+ */
+CallManager.prototype.handleMeetingForceMute = function(data) {
+  if (!data) return;
+  const muted = data.muted !== false;
+  if (data.media === "mic") {
+    if (muted && !this.groupIsMuted) {
+      if (typeof this.toggleGroupMic === "function") this.toggleGroupMic();
+    } else if (!muted && this.groupIsMuted) {
+      if (typeof this.toggleGroupMic === "function") this.toggleGroupMic();
+    }
+    // Sync bouton UI
+    const btn = document.getElementById("meeting-mic-btn");
+    if (btn) {
+      if (this.groupIsMuted) {
+        btn.classList.remove("active");
+        btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
+      } else {
+        btn.classList.add("active");
+        btn.innerHTML = '<i class="fa-solid fa-microphone"></i>';
+      }
+    }
+    this.showCallToast(muted ? "L'hôte a coupé votre micro" : "L'hôte a réactivé votre micro");
+  } else if (data.media === "cam") {
+    const needOff = muted && !this.groupIsCamOff;
+    const needOn = !muted && this.groupIsCamOff;
+    if (needOff || needOn) {
+      if (typeof this.toggleGroupCamera === "function") this.toggleGroupCamera();
+    }
+    setTimeout(() => {
+      const btn = document.getElementById("meeting-cam-btn");
+      if (btn) {
+        if (this.groupIsCamOff) {
+          btn.classList.remove("active");
+          btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
+        } else {
+          btn.classList.add("active");
+          btn.innerHTML = '<i class="fa-solid fa-video"></i>';
+        }
+      }
+    }, 200);
+    this.showCallToast(muted ? "L'hôte a coupé votre caméra" : "L'hôte a réactivé votre caméra");
+  }
+};
+
+/**
+ * Hôte : forcer mute micro/cam d'un participant
+ */
+CallManager.prototype.hostMuteParticipant = function(targetUserId, media, muted = true) {
+  if (!this.isMeetingHost || !this.groupRoomId || !targetUserId) {
+    this.showCallToast("Action réservée à l'hôte");
+    return;
+  }
+  this.sendSignal({
+    type: "meeting-host-mute",
+    meetingId: this.currentMeetingId,
+    roomId: this.groupRoomId,
+    targetUserId,
+    media, // "mic" | "cam"
+    muted,
+  });
+  this.showCallToast(muted
+    ? (media === "mic" ? "Micro coupé" : "Caméra coupée")
+    : (media === "mic" ? "Micro réactivé" : "Caméra réactivée"));
 };
 
 /**
@@ -1995,6 +2176,9 @@ window.toggleMeetingMic = function() { window.callManager.toggleMeetingMic(); };
 window.toggleMeetingCam = function() { window.callManager.toggleMeetingCam(); };
 window.toggleMeetingHand = function() { window.callManager.toggleMeetingHand(); };
 window.showMeetingReactions = function() { window.callManager.showMeetingReactions(); };
+window.sendMeetingReaction = function(emoji) { window.callManager.sendMeetingReaction(emoji); };
+window.toggleMeetingScreenShare = function() { window.callManager.toggleMeetingScreenShare(); };
+window.hostMuteParticipant = function(uid, media, muted) { window.callManager.hostMuteParticipant(uid, media, muted); };
 window.shareMeetingLink = function(link) { window.callManager.shareMeetingLink(link); };
 window.startMeetingFromCreated = function(code) { window.callManager.startMeetingFromCreated(code); };
 window.showMeetingListView = function() { window.callManager.listMeetings(); };

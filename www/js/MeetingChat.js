@@ -133,13 +133,20 @@ class MeetingChat {
 
     // Essayer d'envoyer via WebSocket en premier
     if (window.callManager && window.callManager.groupRoomId) {
-      window.callManager.sendSignal({
+      const payload = {
         type: "meeting-chat-message",
-        roomId: this.currentRoomId,
-        meetingId: this.currentMeetingId,
+        roomId: this.currentRoomId || window.callManager.groupRoomId,
+        meetingId: this.currentMeetingId || window.callManager.currentMeetingId,
         message,
         userId: window.callManager.myId,
         timestamp: Date.now(),
+      };
+      window.callManager.sendSignal(payload);
+      // Affichage local immédiat (le serveur relaie aussi à soi-même)
+      this.receiveMessage({
+        message: payload.message,
+        userId: payload.userId,
+        timestamp: payload.timestamp,
       });
       input.value = "";
       return;
@@ -163,6 +170,13 @@ class MeetingChat {
    * Recevoir un message (via WebSocket)
    */
   receiveMessage(message) {
+    if (!message) return;
+    // Éviter les doublons (echo local + serveur)
+    const last = this.messages[this.messages.length - 1];
+    if (last && last.userId === message.userId && last.message === message.message
+        && Math.abs((last.timestamp || 0) - (message.timestamp || 0)) < 2000) {
+      return;
+    }
     this.messages.push(message);
     this.renderMessages();
   }

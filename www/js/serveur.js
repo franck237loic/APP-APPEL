@@ -2712,7 +2712,7 @@ app.get("/api/meeting/:meetingId/permissions/:userId", async (req, res) => {
       canModify: isCreator,
       canRemoveParticipants: isCreator,
       canEndMeeting: isCreator,
-      canMuteOthers: false, // Pas supporté par WebRTC P2P
+      canMuteOthers: isCreator, // Hôte peut forcer mute micro/cam via signal
       canChat: true
     };
     
@@ -4167,6 +4167,97 @@ wss.on("connection", (ws) => {
               timestamp,
             }));
           }
+        }
+        return;
+      }
+
+      // 23b. Lever / baisser la main (WebSocket)
+      if (type === "meeting-hand-raise" || type === "meeting-hand-lower") {
+        const { roomId, meetingId } = data;
+        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) return;
+        const room = roomManager.rooms.get(roomId);
+        if (!room) return;
+        const msg = {
+          type: type === "meeting-hand-raise" ? "meeting-hand-raised" : "meeting-hand-lowered",
+          meetingId,
+          roomId,
+          userId: ws.userId,
+        };
+        for (const [participantId] of room.participants) {
+          const user = users.get(participantId);
+          if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+            user.ws.send(JSON.stringify(msg));
+          }
+        }
+        return;
+      }
+
+      // 23c. Réaction emoji
+      if (type === "meeting-reaction") {
+        const { roomId, meetingId, reaction } = data;
+        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) return;
+        const room = roomManager.rooms.get(roomId);
+        if (!room) return;
+        const msg = {
+          type: "meeting-reaction",
+          meetingId,
+          roomId,
+          userId: ws.userId,
+          reaction: String(reaction || "").slice(0, 8),
+          timestamp: Date.now(),
+        };
+        for (const [participantId] of room.participants) {
+          const user = users.get(participantId);
+          if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+            user.ws.send(JSON.stringify(msg));
+          }
+        }
+        return;
+      }
+
+      // 23d. Hôte coupe micro / caméra d'un participant
+      if (type === "meeting-host-mute") {
+        try {
+          const { meetingId, roomId, targetUserId, media, muted } = data;
+          if (!ws.userId) return;
+          const isHost = await meetingManager.isHost(meetingId, ws.userId);
+          if (!isHost) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Seul l'hôte peut couper micro/caméra" }));
+            return;
+          }
+          if (!targetUserId || !["mic", "cam"].includes(media)) return;
+          const room = roomManager.rooms.get(roomId);
+          if (!room) return;
+
+          // Envoyer l'ordre au participant ciblé
+          const target = users.get(targetUserId);
+          if (target?.ws && target.ws.readyState === WebSocket.OPEN) {
+            target.ws.send(JSON.stringify({
+              type: "meeting-force-mute",
+              meetingId,
+              roomId,
+              media,
+              muted: muted !== false,
+              byHost: ws.userId,
+            }));
+          }
+
+          // Notifier tous les autres pour maj UI
+          const broadcast = {
+            type: "meeting-participant-state",
+            userId: targetUserId,
+            state: media === "mic"
+              ? { micEnabled: muted === false }
+              : { camEnabled: muted === false },
+          };
+          for (const [participantId] of room.participants) {
+            const user = users.get(participantId);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify(broadcast));
+            }
+          }
+        } catch (e) {
+          console.error("[MEETING] host-mute error:", e);
         }
         return;
       }

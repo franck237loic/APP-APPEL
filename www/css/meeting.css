@@ -1186,3 +1186,190 @@
   background: #d93025;
   color: #fff;
 }
+
+
+/* ===== Contrôles remontés (style Google Meet) ===== */
+.meeting-controls.meeting-controls-raised {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.meeting-controls.meeting-controls-raised .meeting-time-display {
+  pointer-events: none;
+  background: rgba(32, 33, 36, 0.75);
+  color: #e8eaed;
+  padding: 4px 12px;
+  border-radius: 16px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.meeting-controls.meeting-controls-raised .meeting-control-buttons {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(32, 33, 36, 0.92);
+  padding: 10px 16px;
+  border-radius: 28px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+}
+
+.meeting-control-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: none;
+  background: #3c4043;
+  color: #e8eaed;
+  font-size: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.meeting-control-btn:hover {
+  background: #5f6368;
+}
+
+.meeting-control-btn.active {
+  background: #3c4043;
+  color: #e8eaed;
+}
+
+.meeting-control-btn:not(.active)#meeting-mic-btn,
+.meeting-control-btn:not(.active)#meeting-cam-btn {
+  background: #ea4335;
+  color: #fff;
+}
+
+.meeting-control-btn.sharing,
+.meeting-control-btn#meeting-screen-btn.sharing {
+  background: #8ab4f8;
+  color: #202124;
+}
+
+.meeting-control-btn#meeting-hand-btn.active {
+  background: #fbbc04;
+  color: #202124;
+}
+
+.meeting-control-btn.meeting-hangup {
+  background: #ea4335;
+  color: #fff;
+}
+
+.meeting-control-btn.meeting-end {
+  background: #d93025;
+  color: #fff;
+}
+
+/* ===== Réactions flottantes ===== */
+.meeting-reaction-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 35;
+  overflow: hidden;
+}
+
+.floating-reaction {
+  position: absolute;
+  bottom: 100px;
+  font-size: 42px;
+  animation: floatReaction 2.4s ease-out forwards;
+  filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4));
+}
+
+@keyframes floatReaction {
+  0% { opacity: 0; transform: translateY(20px) scale(0.6); }
+  15% { opacity: 1; transform: translateY(0) scale(1.1); }
+  100% { opacity: 0; transform: translateY(-120px) scale(1); }
+}
+
+.meeting-reaction-picker {
+  position: absolute;
+  left: 50%;
+  bottom: 100px;
+  transform: translateX(-50%);
+  z-index: 45;
+  display: flex;
+  gap: 6px;
+  background: rgba(32, 33, 36, 0.95);
+  padding: 10px 12px;
+  border-radius: 24px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+
+.meeting-reaction-picker button {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+  transition: transform 0.12s, background 0.12s;
+}
+
+.meeting-reaction-picker button:hover {
+  transform: scale(1.2);
+  background: rgba(255,255,255,0.08);
+}
+
+/* ===== Main levée sur tuile ===== */
+.hand-raised-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 22px;
+  z-index: 5;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.5));
+  animation: handPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes handPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+.participant-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.participant-action-btn {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: #3c4043;
+  color: #e8eaed;
+  cursor: pointer;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.participant-action-btn:hover {
+  background: #5f6368;
+}
+
+/* Laisser de l'espace bas pour la barre de contrôles */
+#meeting-video-area,
+.meeting-video-area {
+  padding-bottom: 96px;
+  box-sizing: border-box;
+}

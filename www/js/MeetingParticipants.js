@@ -70,15 +70,25 @@ class MeetingParticipants {
       const listContainer = document.getElementById("participants-list");
       if (!listContainer) return;
 
-      // Charger depuis MeetingService
+      // Priorité au roster live (WebRTC) — source de vérité pendant la réunion
+      if (window.callManager && Array.isArray(window.callManager.groupRoster) && window.callManager.groupRoster.length) {
+        const roster = window.callManager.groupRoster.map(r => {
+          const st = window.callManager.groupPeerStates?.get(r.userId) || {};
+          const isSelf = r.userId === window.callManager.myId;
+          return {
+            userId: r.userId,
+            state: r.state || "JOINED",
+            micEnabled: isSelf ? !window.callManager.groupIsMuted : !st.micMuted,
+            camEnabled: isSelf ? !window.callManager.groupIsCamOff : !st.camOff,
+          };
+        });
+        this.renderParticipants(roster);
+        return;
+      }
+
       if (window.meetingService) {
         const participants = await meetingService.loadParticipants(this.currentMeetingId);
         this.renderParticipants(participants);
-      } else {
-        // Fallback: utiliser le roster de CallManager
-        if (window.callManager && window.callManager.groupRoster) {
-          this.renderParticipants(window.callManager.groupRoster);
-        }
       }
     } catch (error) {
       console.error("Erreur chargement participants:", error);
@@ -102,23 +112,26 @@ class MeetingParticipants {
       return;
     }
 
+    const hostId = window.callManager?.meetingCreatedBy || null;
+    const myId = window.callManager?.myId;
     let html = "";
     participants.forEach(p => {
       const userId = p.userId || p.id;
       const state = p.state || "JOINED";
-      const isCreator = this.isHost && userId === window.callManager?.myId;
+      const isOrganizer = hostId && userId === hostId;
+      const isSelf = userId === myId;
       const micEnabled = p.micEnabled !== false;
       const camEnabled = p.camEnabled !== false;
 
       html += `
-        <div class="participant-item">
+        <div class="participant-item" data-user-id="${userId}">
           <div class="participant-avatar">
-            ${userId.slice(-2).toUpperCase()}
+            ${String(userId).slice(-2).toUpperCase()}
           </div>
           <div class="participant-info">
             <div class="participant-name">
-              ${userId}
-              ${isCreator ? '<span style="color: #00a884; font-size: 11px; margin-left: 4px;">(Organisateur)</span>' : ''}
+              ${isSelf ? "Vous" : userId}
+              ${isOrganizer ? '<span style="color: #00a884; font-size: 11px; margin-left: 4px;">(Organisateur)</span>' : ''}
             </div>
             <div class="participant-role">${state}</div>
           </div>
@@ -130,8 +143,14 @@ class MeetingParticipants {
               <i class="fa-solid ${camEnabled ? 'fa-video' : 'fa-video-slash'}"></i>
             </span>
           </div>
-          ${this.isHost && !isCreator ? `
+          ${this.isHost && !isSelf ? `
             <div class="participant-actions">
+              <button class="participant-action-btn" onclick="window.hostMuteParticipant('${userId}', 'mic', true)" title="Couper le micro">
+                <i class="fa-solid fa-microphone-slash"></i>
+              </button>
+              <button class="participant-action-btn" onclick="window.hostMuteParticipant('${userId}', 'cam', true)" title="Couper la caméra">
+                <i class="fa-solid fa-video-slash"></i>
+              </button>
               <button class="participant-action-btn" onclick="window.meetingParticipants.removeParticipant('${userId}')" title="Retirer">
                 <i class="fa-solid fa-user-minus"></i>
               </button>
