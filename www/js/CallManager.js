@@ -2297,8 +2297,8 @@ button, [role="button"] { cursor: pointer; }
         const permissions = cordova.plugins.permissions;
         permissions.requestPermission(
           permissions.CAMERA,
-          (status) => resolve(),
-          (error) => resolve(),
+          (status) => resolve(!!status?.hasPermission),
+          () => resolve(false),
         );
       } else {
         resolve();
@@ -2330,8 +2330,8 @@ button, [role="button"] { cursor: pointer; }
         const permissions = cordova.plugins.permissions;
         permissions.requestPermission(
           permissions.RECORD_AUDIO,
-          (status) => resolve(),
-          (error) => resolve(),
+          (status) => resolve(!!status?.hasPermission),
+          () => resolve(false),
         );
       } else {
         resolve();
@@ -2792,6 +2792,9 @@ button, [role="button"] { cursor: pointer; }
     const onSuccess = (success) => {
       console.log("✅ WebSocket Connecté");
       this.wsId = success.webSocketId;
+      // Le transport natif était bien connecté, mais son état restait
+      // CONNECTING : les écrans de réunion refusaient alors d'envoyer leurs messages.
+      this.wsReadyState = WebSocket.OPEN;
       this.reconnectAttempts = 0; // Réinitialiser les tentatives de reconnexion
 
       // Le serveur coupe la connexion après ~30 s d'inactivité → ping JSON

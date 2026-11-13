@@ -37,9 +37,8 @@ class MeetingMediaAdapter {
    */
   async getDevices() {
     try {
-      // Demander d'abord les permissions
-      await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      
+      // enumerateDevices n'a pas besoin d'ouvrir le micro ni la caméra. Ouvrir
+      // un flux ici puis un second pour l'aperçu fait échouer la caméra sur Android.
       const devices = await navigator.mediaDevices.enumerateDevices();
       return {
         cameras: devices.filter(d => d.kind === 'videoinput'),
@@ -76,7 +75,7 @@ class MeetingMediaAdapter {
   /**
    * Préparer les médias pour un aperçu
    */
-  async preparePreview(isVideo = true) {
+  async preparePreview(isVideo = true, isAudio = true) {
     try {
       const constraints = {
         video: isVideo ? {
@@ -84,9 +83,9 @@ class MeetingMediaAdapter {
           width: { ideal: 1280 },
           height: { ideal: 720 }
         } : false,
-        audio: {
+        audio: isAudio ? {
           deviceId: this.selectedMicrophone ? { exact: this.selectedMicrophone } : undefined
-        }
+        } : false
       };
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -139,24 +138,28 @@ class MeetingMediaAdapter {
   /**
    * Transférer les médias préparés à CallManager pour rejoindre une réunion
    */
-  async transferMediaToCallManager() {
+  async transferMediaToCallManager(isVideo) {
     if (!this.callManager) {
       throw new Error('CallManager non initialisé');
     }
 
     if (!this.preparedMedia) {
       // Si pas de média préparé, en acquérir un
-      const isVideo = meetingService.currentMeeting?.isVideo || false;
-      await this.preparePreview(isVideo);
+      const wantsVideo = isVideo ?? meetingService.currentMeeting?.isVideo ?? true;
+      await this.preparePreview(wantsVideo);
     }
 
     // CallManager utilise déjà acquireGroupMedia, on peut l'utiliser
     // mais on s'assure d'utiliser les périphériques sélectionnés
-    const isVideo = meetingService.currentMeeting?.isVideo || false;
-    await this.callManager.acquireGroupMedia(isVideo);
-    
-    // Nettoyer notre média préparé car CallManager en a créé un nouveau
-    this.stopPreview();
+    const wantsVideo = isVideo ?? meetingService.currentMeeting?.isVideo ?? true;
+    // Libérer l'aperçu avant d'ouvrir la caméra d'appel : Android n'autorise
+    // souvent qu'une seule capture simultanée dans la WebView.
+    if (this.callManager.stopPreview) {
+      this.callManager.stopPreview();
+    } else {
+      this.stopPreview();
+    }
+    await this.callManager.acquireGroupMedia(wantsVideo);
   }
 
   /**
