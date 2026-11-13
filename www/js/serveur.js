@@ -1535,6 +1535,7 @@ class MeetingManager {
           roomId,
           isVideo,
           title,
+          code: meetingData.code,
           createdBy: excludeUserId,
         }));
         notifiedUsers[waitingUserId] = true;
@@ -1598,7 +1599,9 @@ class MeetingManager {
         roomId: meeting.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
+        code: meeting.code,
         createdBy: meeting.createdBy,
+        
       };
     }
 
@@ -1653,6 +1656,7 @@ class MeetingManager {
       roomId: room.roomId,
       isVideo: meeting.isVideo,
       title: meeting.title,
+      code: meeting.code,
       createdBy: meeting.createdBy,
     };
   }
@@ -1743,6 +1747,7 @@ class MeetingManager {
         scheduledAt: meeting.scheduledAt,
         code: meeting.code,
         meetingId: meeting.id,
+        code: meeting.code,
         createdBy: meeting.createdBy,
         serverNow: now,
         opensAt: meetingStart,
@@ -1815,6 +1820,7 @@ class MeetingManager {
         roomId: room.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
+        code: meeting.code,
         createdBy: meeting.createdBy,
       };
     }
@@ -1842,6 +1848,7 @@ class MeetingManager {
         roomId: room.roomId,
         isVideo: meeting.isVideo,
         title: meeting.title,
+        code: meeting.code,
         createdBy: meeting.createdBy,
       };
     }
@@ -1938,6 +1945,7 @@ class MeetingManager {
       roomId,
       isVideo: meeting.isVideo,
       title: meeting.title,
+      code: meeting.code,
       createdBy: meeting.createdBy,
       meetingId,
     };
@@ -2161,6 +2169,7 @@ class MeetingManager {
             roomId: meeting.roomId,
             isVideo: meeting.isVideo,
             title: meeting.title,
+             code: meeting.code,
           }));
 
           // Marquer comme notifié
@@ -3849,6 +3858,7 @@ wss.on("connection", (ws) => {
                 roomId: result.roomId,
                 isVideo: result.isVideo,
                 title: result.title,
+                code: result.code,
                 createdBy: result.createdBy,
               }),
             );
@@ -3943,6 +3953,7 @@ wss.on("connection", (ws) => {
               roomId: result.roomId,
               isVideo: result.isVideo,
               title: result.title,
+              code: result.code,
               createdBy: result.createdBy || ws.userId,
             }));
             console.log(`[MEETING] meeting-force-start OK: ${result.roomId} pour ${ws.userId}`);
@@ -4071,6 +4082,7 @@ wss.on("connection", (ws) => {
                 roomId: result.roomId,
                 isVideo: result.isVideo,
                 title: result.title,
+                code: result.code,
                 createdBy: result.createdBy,
               }));
             }
