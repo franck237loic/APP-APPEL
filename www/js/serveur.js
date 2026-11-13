@@ -74,6 +74,12 @@ const wss = new WebSocketServer({ server });
 
 // Carte globale persistante (RAM) pour conserver les utilisateurs et leurs tokens FCM
 const users = new Map();
+// Noms d'affichage (userId -> nom), alimentés à l'enregistrement
+const userDisplayNames = new Map();
+function getUserDisplayName(userId) {
+  const n = userDisplayNames.get(userId);
+  return n && n !== userId ? n : null;
+}
 
 // Carte des tokens d'authentification utilisateur (userId → {token, createdAt})
 // Permet d'empêcher l'usurpation d'identité
@@ -730,8 +736,9 @@ class RoomManager {
 
     const roster = [];
     for (const [userId, data] of room.participants.entries()) {
-      roster.push({
+        roster.push({
         userId,
+        name: getUserDisplayName(userId),
         state: data.state,
       });
     }
@@ -823,8 +830,9 @@ class RoomManager {
     const joinedRoster = [];
     for (const [userId, data] of room.participants.entries()) {
       if (data.state === "JOINED") {
-        joinedRoster.push({
+          joinedRoster.push({
           userId,
+          name: getUserDisplayName(userId),
           state: data.state,
         });
       }
@@ -2873,6 +2881,11 @@ wss.on("connection", (ws) => {
       // 1. Enregistrement / Reconnexion de l'utilisateur
       if (type === "register-user") {
         const { authToken } = data;
+
+        if (typeof data.displayName === "string") {
+          const cleanName = data.displayName.replace(/[<>"'`]/g, "").trim().slice(0, 40);
+          if (cleanName) userDisplayNames.set(userId, cleanName);
+        }
 
         // VÉRIFICATION DE LA PRÉSENCE DANS LA MAP
         if (users.has(userId)) {

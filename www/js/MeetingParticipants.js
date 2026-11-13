@@ -77,6 +77,7 @@ class MeetingParticipants {
           const isSelf = r.userId === window.callManager.myId;
           return {
             userId: r.userId,
+            name: r.name || null,
             state: r.state || "JOINED",
             micEnabled: isSelf ? !window.callManager.groupIsMuted : !st.micMuted,
             camEnabled: isSelf ? !window.callManager.groupIsCamOff : !st.camOff,
@@ -126,7 +127,7 @@ class MeetingParticipants {
       html += `
         <div class="participant-item" data-user-id="${userId}">
           <div class="participant-avatar">
-            ${String(userId).slice(-2).toUpperCase()}
+            ${p.name ? String(p.name).slice(0, 2).toUpperCase() : String(userId).slice(-2).toUpperCase()}
           </div>
           <div class="participant-info">
             <div class="participant-name">

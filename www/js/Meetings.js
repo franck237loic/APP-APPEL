@@ -25,6 +25,14 @@ CallManager.prototype.normalizeMeetingCode = function(code) {
 
 CallManager.prototype.handleMeetingCreated = function(data) {
   console.log("📅 [MEETING] Réunion créée:", data);
+
+  // Réunion instantanée : on va directement à l'aperçu caméra, sans écran intermédiaire
+  if (this.instantMeetingPending) {
+    this.instantMeetingPending = false;
+    this.showMeetingPreviewView(data.code);
+    return;
+  }
+
   this.showMeetingCreatedView(data);
 };
 
@@ -1686,6 +1694,23 @@ CallManager.prototype.shareMeetingLink = function(link) {
   }
 };
 
+// ===== RÉUNION INSTANTANÉE (équivalent de "Nouvelle réunion" dans Google Meet) =====
+CallManager.prototype.startInstantMeeting = function() {
+  if (this.instantMeetingPending) return; // anti double-clic
+  this.instantMeetingPending = true;
+  setTimeout(() => { this.instantMeetingPending = false; }, 15000); // sécurité si la création échoue
+
+  this.createMeeting(
+    "Réunion de " + (this.myId || "moi"),
+    new Date(Date.now() + 3000).toISOString(), // démarre dans 3 s
+    480,       // durée max autorisée par le serveur
+    true,      // vidéo
+    [],        // pas d'invités : on partage le code
+    "",
+    "direct"   // entrée libre avec le code
+  );
+};
+
 CallManager.prototype.startMeetingFromCreated = function(code) {
   this.closeMeetingCreatedView();
   this.startMeeting(code);
@@ -1856,6 +1881,15 @@ CallManager.prototype.showMeetingPreviewView = async function(code) {
             <select id="mic-select" onchange="window.selectMicrophone(this.value)">
               <option value="">Microphone par défaut</option>
             </select>
+          </div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;background:#222d34;border-radius:12px;padding:12px 16px;margin-bottom:12px;">
+            <div>
+              <div style="color:#8696a0;font-size:12px;">Code de la réunion</div>
+              <div style="color:white;font-size:18px;letter-spacing:1px;">${code}</div>
+            </div>
+            <button onclick="window.copyMeetingCode('${code}')" style="background:#374045;border:none;border-radius:8px;color:white;padding:10px 14px;cursor:pointer;">
+              <i class="fa-solid fa-copy"></i>
+            </button>
           </div>
           
           <button class="join-button" id="join-meeting-btn" onclick="window.confirmJoinMeetingFromPreview('${code}')">
@@ -2319,6 +2353,7 @@ window.togglePreviewCam = function() { window.callManager.togglePreviewCam(); };
 window.selectCamera = function(deviceId) { window.callManager.selectCamera(deviceId); };
 window.selectMicrophone = function(deviceId) { window.callManager.selectMicrophone(deviceId); };
 window.confirmJoinMeetingFromPreview = function(code) { window.callManager.confirmJoinMeetingFromPreview(code); };
+window.startInstantMeeting = function() { window.callManager.startInstantMeeting(); };
 window.openMeetingDetails = function(meetingId) { window.callManager.openMeetingDetails(meetingId); };
 
 // ===== HANDLE DEEP LINK AU DÉMARRAGE =====

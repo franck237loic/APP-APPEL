@@ -2908,6 +2908,7 @@ button, [role="button"] { cursor: pointer; }
           type: "register-user",
           userId: userId,
           pushToken: "browser",
+          displayName: holderName,
           authToken: this.authToken || null,
         }));
       }
@@ -2921,6 +2922,7 @@ button, [role="button"] { cursor: pointer; }
             type: "register-user",
             userId: userId,
             pushToken: this.deviceToken || "android",
+            displayName: holderName,
             authToken: this.authToken || null,
           }),
         );
@@ -7753,6 +7755,14 @@ showLocalStorageOnScreen = () => {
 
   // Applique la liste officielle du serveur : met à jour les pairs WebRTC et la grille.
   // syncPeers = false : on met seulement l'affichage à jour (reconnexion en cours).
+    // Nom à afficher pour un participant (nom envoyé par le serveur, sinon l'identifiant)
+  getGroupDisplayName = (userId) => {
+    if (userId === this.myId) return "Vous";
+    const r = Array.isArray(this.groupRoster)
+      ? this.groupRoster.find((x) => x.userId === userId)
+      : null;
+    return (r && r.name) || userId;
+  };
   applyGroupRoster = (roster, syncPeers = true) => {
     if (!Array.isArray(roster)) return;
     this.groupRoster = roster;
@@ -8589,7 +8599,8 @@ showLocalStorageOnScreen = () => {
       (isSelf && this.isMeetingHost) ||
       (!isSelf && this.meetingCreatedBy && userId === this.meetingCreatedBy)
     );
-    tile.querySelector(".group-tile-name").textContent = isSelf ? "Vous" : userId;
+    tile.querySelector(".group-tile-name").textContent = isSelf ? "Vous" : this.getGroupDisplayName(userId);
+
     // Badge organisateur uniquement pour le vrai hôte
     let statusEl = tile.querySelector(".group-tile-status");
     if (statusEl && this.groupIsMeeting) {
