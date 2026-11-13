@@ -528,6 +528,7 @@ CallManager.prototype.showMeetingScreen = function(data) {
 
   if (this.meetingScreen) {
     this.meetingScreen.classList.add("active");
+    document.body.classList.add("meeting-ui-active");
     return;
   }
 
@@ -609,6 +610,7 @@ CallManager.prototype.showMeetingScreen = function(data) {
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingScreen = document.getElementById("meeting-screen");
   this.meetingScreen.classList.add("active");
+  document.body.classList.add("meeting-ui-active");
 
   const micButton = document.getElementById("meeting-mic-btn");
   if (micButton) {
@@ -687,6 +689,7 @@ CallManager.prototype.closeMeetingScreen = function() {
 
   if (this.meetingScreen) {
     this.meetingScreen.classList.remove("active");
+    document.body.classList.remove("meeting-ui-active");
     setTimeout(() => {
       if (this.meetingScreen) {
         this.meetingScreen.remove();
@@ -1874,7 +1877,6 @@ CallManager.prototype.showMeetingPreviewView = async function(code, meetingIsVid
         <div class="preview-container">
           <div class="meeting-info">
             <h2 id="preview-meeting-title">Chargement...</h2>
-            <p id="preview-meeting-code">Code: ${code}</p>
             <div class="organizer" id="preview-meeting-organizer">
               <i class="fa-solid fa-user"></i>
               <span>Organisateur: --</span>
@@ -1910,20 +1912,19 @@ CallManager.prototype.showMeetingPreviewView = async function(code, meetingIsVid
               <option value="">Microphone par défaut</option>
             </select>
           </div>
-                    <div style="display:flex;align-items:center;justify-content:space-between;background:#222d34;border-radius:12px;padding:12px 16px;margin-bottom:12px;">
+          <div class="meeting-code-card">
             <div>
-              <div style="color:#8696a0;font-size:12px;">Code de la réunion</div>
-              <div style="color:white;font-size:18px;letter-spacing:1px;">${code}</div>
+              <span>Code de la réunion</span>
+              <strong>${code}</strong>
             </div>
-            <button onclick="window.copyMeetingCode('${code}')" style="background:#374045;border:none;border-radius:8px;color:white;padding:10px 14px;cursor:pointer;">
+            <button class="meeting-code-copy" onclick="window.copyMeetingCode('${code}')" aria-label="Copier le code de la réunion">
               <i class="fa-solid fa-copy"></i>
             </button>
           </div>
-          
-          <button class="join-button" id="join-meeting-btn" onclick="window.confirmJoinMeetingFromPreview('${code}')">
-            Rejoindre la réunion
-          </button>
         </div>
+        <button class="join-button" id="join-meeting-btn" onclick="window.confirmJoinMeetingFromPreview('${code}')">
+          Rejoindre la réunion
+        </button>
       </div>
     </div>
   `;
@@ -1931,6 +1932,7 @@ CallManager.prototype.showMeetingPreviewView = async function(code, meetingIsVid
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingPreviewView = document.getElementById("meeting-preview-view");
   this.meetingPreviewView.classList.add("active");
+  document.body.classList.add("meeting-ui-active");
 
   // Afficher la prévisualisation sans attendre la requête réseau des détails.
   this.previewMicEnabled = true;
@@ -1961,6 +1963,7 @@ CallManager.prototype.showMeetingPreviewView = async function(code, meetingIsVid
 
 CallManager.prototype.closeMeetingPreviewView = function() {
   this.stopPreview();
+  document.body.classList.remove("meeting-ui-active");
   
   if (this.meetingPreviewView) {
     this.meetingPreviewView.classList.remove("active");

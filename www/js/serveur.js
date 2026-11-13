@@ -234,6 +234,9 @@ function validateMeetingMessage(data, type) {
       if (!data.message || typeof data.message !== 'string' || data.message.length > 1000) {
         return { valid: false, reason: 'Message invalide (max 1000 caractères)' };
       }
+      if (!data.meetingId || typeof data.meetingId !== 'string' || data.meetingId.length > 100) {
+        return { valid: false, reason: 'ID de réunion invalide' };
+      }
       if (!data.roomId || typeof data.roomId !== 'string' || data.roomId.length > 100) {
         return { valid: false, reason: 'ID de salle invalide' };
       }
@@ -4210,25 +4213,53 @@ wss.on("connection", (ws) => {
       // Envoyé par : Participant -> Reçu par : Tous les participants de la salle
       // Pourquoi : Chat temps réel pendant la réunion
       if (type === "meeting-chat-message") {
-        const { roomId, meetingId, message, userId, timestamp } = data;
-
-        if (!roomManager.isJoinedInRoom(roomId, ws.userId)) {
+        const validation = validateMeetingMessage(data, type);
+        if (!validation.valid) {
+          ws.send(JSON.stringify({ type: "meeting-chat-error", reason: validation.reason, clientMessageId: data.clientMessageId || null }));
           return;
         }
 
+        const { roomId, meetingId, message, clientMessageId } = data;
         const room = roomManager.rooms.get(roomId);
-        if (!room) return;
+        if (!ws.userId || !roomManager.isJoinedInRoom(roomId, ws.userId) ||
+            !room || !room.isMeeting || roomId !== `room_meeting_${meetingId}`) {
+          ws.send(JSON.stringify({ type: "meeting-chat-error", reason: "Vous n'êtes pas dans cette réunion.", clientMessageId: data.clientMessageId || null }));
+          return;
+        }
 
-        // Relayer à tous les participants
+        const cleanMessage = sanitizeString(message).slice(0, 1000).trim();
+        if (!cleanMessage) return;
+        const chatMessage = {
+          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+          clientMessageId: typeof clientMessageId === "string" ? clientMessageId.slice(0, 100) : null,
+          meetingId,
+          message: cleanMessage,
+          userId: ws.userId,
+          displayName: getUserDisplayName(ws.userId) || ws.userId,
+          timestamp: Date.now(),
+        };
+
+        try {
+          await db.collection("meetings").doc(meetingId)
+            .collection("chat").doc(chatMessage.id).set(chatMessage);
+        } catch (error) {
+          console.error("[MEETING CHAT] Échec de sauvegarde :", error);
+          ws.send(JSON.stringify({
+            type: "meeting-chat-error",
+            reason: "Le message n'a pas pu être enregistré. Réessayez.",
+            clientMessageId: chatMessage.clientMessageId,
+          }));
+          return;
+        }
+
+        // Persister avant de diffuser, puis envoyer l'écho à l'expéditeur aussi.
         for (const [participantId, participant] of room.participants) {
+          if (participant.state !== "JOINED") continue;
           const user = users.get(participantId);
           if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
             user.ws.send(JSON.stringify({
               type: "meeting-chat-message",
-              meetingId,
-              message,
-              userId,
-              timestamp,
+              ...chatMessage,
             }));
           }
         }

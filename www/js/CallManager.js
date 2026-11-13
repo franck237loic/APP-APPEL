@@ -3219,6 +3219,20 @@ button, [role="button"] { cursor: pointer; }
         }
         break;
 
+      case "meeting-chat":
+        if (window.meetingChat && data.message) {
+          window.meetingChat.receiveMessage({
+            ...data.message,
+            meetingId: data.meetingId,
+          });
+        }
+        break;
+
+      case "meeting-chat-error":
+        window.meetingChat?.handleSendError(data);
+        this.showCallToast(data.reason || "Le message n'a pas pu être envoyé.");
+        break;
+
       case "meeting-pending-approval":
         if (window.callManager && window.callManager.handleMeetingPendingApproval) {
           window.callManager.handleMeetingPendingApproval(data);

@@ -1085,6 +1085,196 @@
   }
 }
 
+/* Aperçu avant réunion : le contenu défile, l'action principale reste visible. */
+body.meeting-ui-active #log-toggle-btn {
+  display: none !important;
+}
+
+.meeting-preview-view .app-container {
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  max-width: 560px;
+  min-height: 0;
+  justify-content: flex-start;
+  gap: 0;
+  overflow: hidden;
+  padding: max(8px, env(safe-area-inset-top)) 16px max(14px, env(safe-area-inset-bottom));
+  background: #0b141a;
+}
+
+.meeting-preview-view .header {
+  width: 100%;
+  min-height: 58px;
+  padding: 4px 2px 12px;
+  flex-shrink: 0;
+  background: transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+
+.meeting-preview-view .preview-container {
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 4px 14px;
+  gap: 18px;
+}
+
+.meeting-preview-view .meeting-info {
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.meeting-preview-view .meeting-info h2 {
+  color: #f1f3f4;
+  font-size: clamp(20px, 5vw, 25px);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.meeting-preview-view .meeting-info .organizer {
+  color: #aeb4bb;
+}
+
+.meeting-preview-view .preview-video {
+  flex: 0 0 auto;
+  width: 100%;
+  max-height: 34vh;
+  min-height: 150px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 18px;
+  background: radial-gradient(circle at 50% 35%, #29343b, #151b20 72%);
+}
+
+.meeting-preview-view .preview-video video {
+  transform: scaleX(-1);
+}
+
+.meeting-preview-view .preview-controls {
+  flex-shrink: 0;
+  gap: 20px;
+}
+
+.meeting-preview-view .preview-control-btn {
+  width: 54px;
+  height: 54px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .24);
+}
+
+.meeting-preview-view .device-selector {
+  max-width: 640px;
+  flex-shrink: 0;
+}
+
+.meeting-preview-view .device-selector label {
+  color: #bdc1c6 !important;
+  font-size: 13px !important;
+  margin-bottom: 6px !important;
+}
+
+.meeting-code-card {
+  width: 100%;
+  max-width: 640px;
+  min-height: 68px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 16px;
+  background: #20272c;
+  flex-shrink: 0;
+}
+
+.meeting-code-card span {
+  display: block;
+  margin-bottom: 3px;
+  color: #aeb4bb;
+  font-size: 12px;
+}
+
+.meeting-code-card strong {
+  color: #f1f3f4;
+  font-size: clamp(17px, 4.5vw, 21px);
+  font-weight: 600;
+  letter-spacing: .08em;
+  overflow-wrap: anywhere;
+}
+
+.meeting-code-copy {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 0;
+  border-radius: 13px;
+  background: #343b40;
+  color: #f1f3f4;
+  font-size: 16px;
+}
+
+.meeting-preview-view .join-button {
+  width: 100%;
+  max-width: 640px;
+  min-height: 54px;
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 10px 0 0;
+  padding: 14px 20px;
+  border-radius: 16px;
+  background: #0baf83;
+  box-shadow: 0 6px 20px rgba(0, 168, 132, .22);
+  font-weight: 600;
+}
+
+.meeting-preview-view .join-button:active {
+  transform: scale(.99);
+}
+
+/* Chat de réunion : le fil reste scrollable et la zone de réponse reste en bas. */
+.meeting-chat-panel {
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 100vw);
+  height: 100vh;
+  height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  background: #202124;
+}
+
+.meeting-chat-panel .chat-header {
+  flex: 0 0 auto;
+}
+
+.meeting-chat-panel .chat-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.meeting-chat-panel .chat-input-container {
+  flex: 0 0 auto;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.meeting-chat-panel .chat-input {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .meeting-chat-panel {
+    width: 100vw;
+    max-width: none;
+  }
+}
+
 /* ===== DIALOGUE DE DEMANDE D'ACCÈS ===== */
 .pending-request-dialog {
   position: fixed;
