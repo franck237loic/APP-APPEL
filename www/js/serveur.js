@@ -1937,16 +1937,20 @@ class MeetingManager {
     }
 
     let roomId = meeting.roomId;
+    let hostNeedsJoin = false;
     if (meeting.status === "scheduled" || !roomId) {
       const endsAt = meeting.endsAt || (Date.now() + (meeting.durationMin || 60) * 60 * 1000);
       const room = roomManager.createMeetingRoom(meetingId, meeting.isVideo, endsAt);
       roomManager.join(room.roomId, hostId); // hôte aussi si salle créée
       roomManager.join(room.roomId, userId);
       roomId = room.roomId;
+      hostNeedsJoin = true;
       await db.collection("meetings").doc(meetingId).update({ status: "live", roomId });
     } else {
       if (!roomManager.rooms.get(roomId)) {
         roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
+        roomManager.join(roomId, hostId);
+        hostNeedsJoin = true;
       }
       roomManager.join(roomId, userId);
     }
@@ -1959,6 +1963,7 @@ class MeetingManager {
       code: meeting.code,
       createdBy: meeting.createdBy,
       meetingId,
+      hostNeedsJoin,
     };
   }
 
@@ -4089,6 +4094,21 @@ wss.on("connection", (ws) => {
           const result = await meetingManager.approveRequest(meetingId, userId, ws.userId);
 
           if (result.success) {
+            // Si l'approbation a démarré la salle, l'hôte doit aussi rejoindre
+            // le client WebRTC ; l'ajout côté serveur seul laisse l'invité sur
+            // « Connexion… » sans aucun pair actif.
+            if (result.hostNeedsJoin) {
+              ws.send(JSON.stringify({
+                type: "meeting-joined",
+                meetingId,
+                roomId: result.roomId,
+                isVideo: result.isVideo,
+                title: result.title,
+                code: result.code,
+                createdBy: result.createdBy,
+              }));
+            }
+
             // Notifier le participant
             const participantUser = users.get(userId);
             if (participantUser?.ws && participantUser.ws.readyState === WebSocket.OPEN) {

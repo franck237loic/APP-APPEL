@@ -7881,6 +7881,9 @@ showLocalStorageOnScreen = () => {
     if (this.groupIsMeeting && typeof this.updateMeetingParticipantCount === "function") {
       this.updateMeetingParticipantCount();
     }
+    if (this.groupIsMeeting && typeof this.maybeStartMeetingTimer === "function") {
+      this.maybeStartMeetingTimer();
+    }
   };
 
   // Si on est le dernier dans l'appel (plus personne ne sonne), on quitte
@@ -8375,6 +8378,9 @@ showLocalStorageOnScreen = () => {
         screenSharing: !!this.isScreenSharing,
       });
       this.capGroupVideoBitrate(peer.pc);
+      if (this.groupIsMeeting && typeof this.maybeStartMeetingTimer === "function") {
+        this.maybeStartMeetingTimer();
+      }
     } else if (peer.connState === "failed" || peer.connState === "disconnected") {
       console.warn(`⚠️ [GROUPE] Connexion échouée avec ${peerId}: ${peer.connState}`);
       this.retryGroupPeer(peerId);

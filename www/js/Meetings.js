@@ -75,9 +75,33 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
     } catch (error) {
       console.error("❌ [MEETING] Impossible d'acquérir les médias de la réunion:", error);
       this.showCallToast("Accès média impossible");
+      this.sendSignal({ type: "group-leave", roomId: data.roomId });
       this.groupIsMeeting = false;
+      this.pendingMeetingMediaPreferences = null;
       return;
     }
+  }
+
+  // Appliquer ici les choix faits dans l'aperçu. La caméra et le micro ne
+  // doivent pas rester ouverts pendant l'attente de l'approbation de l'hôte.
+  const mediaPreferences = this.pendingMeetingMediaPreferences;
+  if (mediaPreferences) {
+    const audioTrack = this.groupLocalStream?.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !!mediaPreferences.microphoneEnabled;
+      this.groupIsMuted = !mediaPreferences.microphoneEnabled;
+    }
+    const videoTrack = this.groupLocalStream?.getVideoTracks()[0];
+    if (this.groupIsVideo && !mediaPreferences.cameraEnabled) {
+      if (videoTrack) videoTrack.enabled = false;
+      this.groupIsCamOff = true;
+    }
+    this.groupPeerStates.set(this.myId, {
+      micMuted: this.groupIsMuted,
+      camOff: this.groupIsCamOff,
+      screenSharing: false,
+    });
+    this.pendingMeetingMediaPreferences = null;
   }
 
   // Préparer le roster temporaire
@@ -200,6 +224,7 @@ CallManager.prototype.handleMeetingError = function(data) {
   this.instantMeetingPending = false;
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
+  this.pendingMeetingMediaPreferences = null;
   this.showCallToast("Erreur: " + data.reason);
   this.closeMeetingWaitingView();
   this.closeMeetingCreatedView();
@@ -226,6 +251,7 @@ CallManager.prototype.handleMeetingApprovalGranted = async function(data) {
 CallManager.prototype.handleMeetingApprovalDenied = function(data) {
   console.log("📅 [MEETING] Accès refusé:", data);
   this.showCallToast(data.reason || "Accès refusé par l'hôte");
+  this.pendingMeetingMediaPreferences = null;
   this.closeMeetingWaitingView();
 };
 
@@ -633,8 +659,6 @@ CallManager.prototype.showMeetingScreen = function(data) {
     this.renderGroupGrid();
   }
 
-  // Démarrer le timer de réunion
-  this.startMeetingTimer();
   this.updateMeetingParticipantCount();
 };
 
@@ -652,11 +676,8 @@ CallManager.prototype.attachMeetingLocalVideo = function() {
  * Démarrer le timer de réunion
  */
 CallManager.prototype.startMeetingTimer = function() {
+  if (this.meetingTimerInterval) return;
   this.meetingStartTime = Date.now();
-
-  if (this.meetingTimerInterval) {
-    clearInterval(this.meetingTimerInterval);
-  }
 
   this.meetingTimerInterval = setInterval(() => {
     const elapsed = Date.now() - this.meetingStartTime;
@@ -669,6 +690,20 @@ CallManager.prototype.startMeetingTimer = function() {
       timeDisplay.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
   }, 1000);
+};
+
+CallManager.prototype.maybeStartMeetingTimer = function() {
+  if (!this.groupIsMeeting || this.meetingTimerInterval) return;
+  const others = (this.groupRoster || []).filter(
+    participant => participant?.userId !== this.myId && participant?.state === "JOINED",
+  );
+  if (others.length === 0) {
+    if (this.isMeetingHost) this.startMeetingTimer();
+    return;
+  }
+  const hasConnectedPeer = Array.from(this.groupPeers?.values?.() || [])
+    .some(peer => peer.connState === "connected");
+  if (hasConnectedPeer) this.startMeetingTimer();
 };
 
 /**
@@ -2076,9 +2111,11 @@ CallManager.prototype.togglePreviewMic = function() {
     btn.classList.add("inactive");
     btn.innerHTML = '<i class="fa-solid fa-microphone-slash"></i>';
   }
-  
-  // Redémarrer la prévisualisation avec le nouvel état
-  this.startPreview();
+
+  const stream = this.previewStream || meetingMediaAdapter.preparedMedia;
+  const audioTracks = stream?.getAudioTracks?.() || [];
+  audioTracks.forEach(track => { track.enabled = this.previewMicEnabled; });
+  if (this.previewMicEnabled && audioTracks.length === 0) this.startPreview();
 };
 
 CallManager.prototype.togglePreviewCam = function() {
@@ -2094,9 +2131,17 @@ CallManager.prototype.togglePreviewCam = function() {
     btn.classList.add("inactive");
     btn.innerHTML = '<i class="fa-solid fa-video-slash"></i>';
   }
-  
-  // Redémarrer la prévisualisation avec le nouvel état
-  this.startPreview();
+
+  const videoElement = document.getElementById("preview-video");
+  const avatarElement = document.getElementById("preview-avatar");
+  const container = document.getElementById("preview-video-container");
+  const stream = this.previewStream || meetingMediaAdapter.preparedMedia;
+  const videoTracks = stream?.getVideoTracks?.() || [];
+  videoTracks.forEach(track => { track.enabled = this.previewCamEnabled; });
+  if (videoElement) videoElement.style.display = this.previewCamEnabled && videoTracks.length ? "block" : "none";
+  if (avatarElement) avatarElement.style.display = this.previewCamEnabled && videoTracks.length ? "none" : "flex";
+  if (container) container.classList.toggle("audio-only", !this.previewCamEnabled || !videoTracks.length);
+  if (this.previewCamEnabled && videoTracks.length === 0) this.startPreview();
 };
 
 CallManager.prototype.selectCamera = function(deviceId) {
@@ -2115,16 +2160,11 @@ CallManager.prototype.confirmJoinMeetingFromPreview = async function(code) {
   btn.textContent = "Connexion...";
   
   try {
-    // Transférer les médias à CallManager
     const meetingIsVideo = this.previewMeetingIsVideo ?? meetingService.currentMeeting?.isVideo ?? this.previewCamEnabled;
-    await meetingMediaAdapter.transferMediaToCallManager(meetingIsVideo && this.previewCamEnabled);
-    if (!this.previewMicEnabled && !this.groupIsMuted) this.toggleGroupMic();
-    if (meetingIsVideo && !this.previewCamEnabled) {
-      const cameraTrack = this.groupLocalStream?.getVideoTracks()[0];
-      if (cameraTrack && !this.groupIsCamOff) await this.toggleGroupCamera();
-      else if (!cameraTrack) this.groupIsCamOff = true;
-    }
-    
+    this.pendingMeetingMediaPreferences = {
+      microphoneEnabled: this.previewMicEnabled,
+      cameraEnabled: meetingIsVideo && this.previewCamEnabled,
+    };
     // Rejoindre la réunion
     this.joinMeeting(code);
     this.closeMeetingPreviewView();
@@ -2412,3 +2452,1101 @@ if (document.readyState === 'complete') {
     window.callManager.handleDeepLink();
   });
 }
+
+
+// ============================================================================
+// MODULE MEETINGS : services internes, m�dias, participants et chat.
+// Les instances globales ci-dessous gardent les points d'entr�e utilis�s par
+// CallManager et les boutons HTML existants.
+// ============================================================================
+
+
+// --- SERVICE ET �TAT DES R�UNIONS ---
+
+/**
+ * ============================================
+ *  MEETING SERVICE - SERVICE ISOLÉ POUR LES RÉUNIONS
+ * ============================================
+ * 
+ * Ce service gère toute la logique métier des réunions planifiées,
+ * indépendamment du système d'appel classique (CallManager).
+ * 
+ * RESPONSABILITÉS:
+ * - Gestion de l'état des réunions
+ * - Interface avec Firebase Firestore
+ * - Gestion des participants
+ * - Chat de réunion
+ * - Permissions
+ * - Notifications de réunion
+ * 
+ * PRINCIPE: Ne pas modifier CallManager, utiliser MeetingMediaAdapter
+ * pour l'intégration avec le système d'appel de groupe existant.
+ */
+
+class MeetingService {
+  constructor() {
+    // État local du service
+    this.currentMeeting = null;
+    this.meetingParticipants = new Map();
+    this.meetingChatMessages = [];
+    this.meetingPermissions = new Map();
+    this.subscribers = new Map();
+  }
+
+  /**
+   * Abonnement aux changements d'état
+   */
+  subscribe(event, callback) {
+    if (!this.subscribers.has(event)) {
+      this.subscribers.set(event, []);
+    }
+    this.subscribers.get(event).push(callback);
+  }
+
+  unsubscribe(event, callback) {
+    if (this.subscribers.has(event)) {
+      const callbacks = this.subscribers.get(event);
+      const index = callbacks.indexOf(callback);
+      if (index > -1) {
+        callbacks.splice(index, 1);
+      }
+    }
+  }
+
+  emit(event, data) {
+    if (this.subscribers.has(event)) {
+      this.subscribers.get(event).forEach(callback => callback(data));
+    }
+  }
+
+  /**
+   * Charger une réunion par code
+   */
+  async loadMeetingByCode(code) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/by-code/${code}`);
+      if (!response.ok) throw new Error('Réunion introuvable');
+      const meeting = await response.json();
+      this.currentMeeting = meeting;
+      this.emit('meeting-loaded', meeting);
+      return meeting;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur chargement réunion:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Charger une réunion par ID
+   */
+  async loadMeetingById(meetingId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}`);
+      if (!response.ok) throw new Error('Réunion introuvable');
+      const meeting = await response.json();
+      this.currentMeeting = meeting;
+      this.emit('meeting-loaded', meeting);
+      return meeting;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur chargement réunion:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Modifier une réunion
+   */
+  async updateMeeting(meetingId, updates) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (!response.ok) throw new Error('Échec de la modification');
+      const updated = await response.json();
+      this.currentMeeting = updated;
+      this.emit('meeting-updated', updated);
+      return updated;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur modification réunion:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Charger les participants d'une réunion
+   */
+  async loadParticipants(meetingId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/participants`);
+      if (!response.ok) throw new Error('Échec du chargement des participants');
+      const participants = await response.json();
+      this.meetingParticipants.clear();
+      participants.forEach(p => this.meetingParticipants.set(p.userId, p));
+      this.emit('participants-loaded', participants);
+      return participants;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur chargement participants:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Ajouter un participant à la réunion
+   */
+  async addParticipant(meetingId, userId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/participants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      if (!response.ok) throw new Error('Échec de l\'ajout');
+      const participant = await response.json();
+      this.meetingParticipants.set(userId, participant);
+      this.emit('participant-added', participant);
+      return participant;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur ajout participant:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Retirer un participant de la réunion
+   */
+  async removeParticipant(meetingId, userId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/participants/${userId}`, {
+        method: 'DELETE'
+      });
+      if (!response.ok) throw new Error('Échec du retrait');
+      this.meetingParticipants.delete(userId);
+      this.emit('participant-removed', userId);
+      return true;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur retrait participant:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Envoyer un message de chat
+   */
+  async sendChatMessage(meetingId, message) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          userId: window.callManager?.myId,
+          timestamp: Date.now()
+        })
+      });
+      if (!response.ok) throw new Error('Échec de l\'envoi');
+      const chatMessage = await response.json();
+      this.meetingChatMessages.push(chatMessage);
+      this.emit('chat-message-sent', chatMessage);
+      return chatMessage;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur envoi message:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Charger l'historique du chat
+   */
+  async loadChatHistory(meetingId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/chat`);
+      if (!response.ok) throw new Error('Échec du chargement');
+      const messages = await response.json();
+      this.meetingChatMessages = messages;
+      this.emit('chat-history-loaded', messages);
+      return messages;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur chargement chat:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Lever la main
+   */
+  async raiseHand(meetingId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/raise-hand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: window.callManager?.myId })
+      });
+      if (!response.ok) throw new Error('Échec');
+      this.emit('hand-raised', { userId: window.callManager?.myId });
+      return true;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur lever main:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Baisser la main
+   */
+  async lowerHand(meetingId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/lower-hand`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: window.callManager?.myId })
+      });
+      if (!response.ok) throw new Error('Échec');
+      this.emit('hand-lowered', { userId: window.callManager?.myId });
+      return true;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur baisser main:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Envoyer une réaction
+   */
+  async sendReaction(meetingId, reaction) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/reaction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: window.callManager?.myId,
+          reaction,
+          timestamp: Date.now()
+        })
+      });
+      if (!response.ok) throw new Error('Échec');
+      this.emit('reaction-sent', { userId: window.callManager?.myId, reaction });
+      return true;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur réaction:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Obtenir les permissions d'un utilisateur
+   */
+  async getPermissions(meetingId, userId) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/permissions/${userId}`);
+      if (!response.ok) throw new Error('Échec');
+      const permissions = await response.json();
+      this.meetingPermissions.set(userId, permissions);
+      return permissions;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur permissions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Mettre à jour les permissions d'un utilisateur
+   */
+  async updatePermissions(meetingId, userId, permissions) {
+    try {
+      const response = await fetch(`${CallManager.HTTP_SERVER_URL}/api/meeting/${meetingId}/permissions/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(permissions)
+      });
+      if (!response.ok) throw new Error('Échec');
+      const updated = await response.json();
+      this.meetingPermissions.set(userId, updated);
+      this.emit('permissions-updated', { userId, permissions: updated });
+      return updated;
+    } catch (error) {
+      console.error('❌ [MeetingService] Erreur mise à jour permissions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Réinitialiser l'état du service
+   */
+  reset() {
+    this.currentMeeting = null;
+    this.meetingParticipants.clear();
+    this.meetingChatMessages = [];
+    this.meetingPermissions.clear();
+    this.emit('reset');
+  }
+}
+
+// Instance globale
+const meetingService = new MeetingService();
+
+// Export
+window.meetingService = meetingService;
+
+
+// --- M�DIAS ET P�RIPH�RIQUES ---
+
+/**
+ * ============================================
+ *  MEETING MEDIA ADAPTER
+ * ============================================
+ * 
+ * Ce fichier sert d'interface entre le module Meeting et le système d'appel
+ * de groupe existant (CallManager).
+ * 
+ * RESPONSABILITÉS:
+ * - Adapter les meetings aux appels de groupe existants
+ * - Gérer la transition meeting → salle live
+ * - Gérer les médias (caméra/micro) pour les meetings
+ * - Ne PAS modifier CallManager.js
+ * 
+ * PRINCIPE: Utiliser les interfaces existantes de CallManager pour les appels
+ * de groupe, mais isoler la logique spécifique aux meetings.
+ */
+
+class MeetingMediaAdapter {
+  constructor() {
+    this.callManager = null;
+    this.preparedMedia = null;
+    this.selectedCamera = null;
+    this.selectedMicrophone = null;
+    this.selectedSpeaker = null;
+  }
+
+  /**
+   * Initialiser l'adaptateur avec CallManager
+   */
+  initialize(callManager) {
+    this.callManager = callManager;
+  }
+
+  /**
+   * Obtenir la liste des périphériques disponibles
+   */
+  async getDevices() {
+    try {
+      // enumerateDevices n'a pas besoin d'ouvrir le micro ni la caméra. Ouvrir
+      // un flux ici puis un second pour l'aperçu fait échouer la caméra sur Android.
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return {
+        cameras: devices.filter(d => d.kind === 'videoinput'),
+        microphones: devices.filter(d => d.kind === 'audioinput'),
+        speakers: devices.filter(d => d.kind === 'audiooutput')
+      };
+    } catch (error) {
+      console.error('❌ [MeetingMediaAdapter] Erreur obtention périphériques:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Sélectionner une caméra
+   */
+  selectCamera(deviceId) {
+    this.selectedCamera = deviceId;
+  }
+
+  /**
+   * Sélectionner un microphone
+   */
+  selectMicrophone(deviceId) {
+    this.selectedMicrophone = deviceId;
+  }
+
+  /**
+   * Sélectionner un haut-parleur
+   */
+  selectSpeaker(deviceId) {
+    this.selectedSpeaker = deviceId;
+  }
+
+  /**
+   * Préparer les médias pour un aperçu
+   */
+  async preparePreview(isVideo = true, isAudio = true) {
+    try {
+      const constraints = {
+        video: isVideo ? {
+          deviceId: this.selectedCamera ? { exact: this.selectedCamera } : undefined,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        } : false,
+        audio: isAudio ? {
+          deviceId: this.selectedMicrophone ? { exact: this.selectedMicrophone } : undefined
+        } : false
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.preparedMedia = stream;
+      return stream;
+    } catch (error) {
+      console.error('❌ [MeetingMediaAdapter] Erreur préparation média:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Arrêter l'aperçu
+   */
+  stopPreview() {
+    if (this.preparedMedia) {
+      this.preparedMedia.getTracks().forEach(track => track.stop());
+      this.preparedMedia = null;
+    }
+  }
+
+  /**
+   * Obtenir le niveau audio du microphone
+   */
+  async getAudioLevel(stream) {
+    return new Promise((resolve, reject) => {
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = audioContext.createAnalyser();
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+        
+        analyser.fftSize = 256;
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        
+        const checkLevel = () => {
+          analyser.getByteFrequencyData(dataArray);
+          const sum = dataArray.reduce((a, b) => a + b, 0);
+          const average = sum / dataArray.length;
+          resolve(average);
+        };
+        
+        checkLevel();
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Transférer les médias préparés à CallManager pour rejoindre une réunion
+   */
+  async transferMediaToCallManager(isVideo) {
+    if (!this.callManager) {
+      throw new Error('CallManager non initialisé');
+    }
+
+    if (!this.preparedMedia) {
+      // Si pas de média préparé, en acquérir un
+      const wantsVideo = isVideo ?? meetingService.currentMeeting?.isVideo ?? true;
+      await this.preparePreview(wantsVideo);
+    }
+
+    // CallManager utilise déjà acquireGroupMedia, on peut l'utiliser
+    // mais on s'assure d'utiliser les périphériques sélectionnés
+    const wantsVideo = isVideo ?? meetingService.currentMeeting?.isVideo ?? true;
+    // Libérer l'aperçu avant d'ouvrir la caméra d'appel : Android n'autorise
+    // souvent qu'une seule capture simultanée dans la WebView.
+    if (this.callManager.stopPreview) {
+      this.callManager.stopPreview();
+    } else {
+      this.stopPreview();
+    }
+    await this.callManager.acquireGroupMedia(wantsVideo);
+  }
+
+  /**
+   * Basculer la caméra (on/off)
+   */
+  async toggleCamera(enabled) {
+    if (!this.callManager) return;
+    
+    if (enabled) {
+      await this.callManager.enableGroupCamera();
+    } else {
+      this.callManager.disableGroupCamera();
+    }
+  }
+
+  /**
+   * Basculer le microphone (on/off)
+   */
+  async toggleMicrophone(enabled) {
+    if (!this.callManager) return;
+    
+    if (enabled) {
+      await this.callManager.enableGroupMicrophone();
+    } else {
+      this.callManager.disableGroupMicrophone();
+    }
+  }
+
+  /**
+   * Rejoindre une réunion via CallManager
+   */
+  async joinMeeting(code) {
+    if (!this.callManager) {
+      throw new Error('CallManager non initialisé');
+    }
+
+    // Utiliser la méthode existante de CallManager pour rejoindre
+    return this.callManager.joinMeeting(code);
+  }
+
+  /**
+   * Démarrer une réunion via CallManager
+   */
+  async startMeeting(code) {
+    if (!this.callManager) {
+      throw new Error('CallManager non initialisé');
+    }
+
+    // Utiliser la méthode existante de CallManager pour démarrer
+    return this.callManager.startMeeting(code);
+  }
+
+  /**
+   * Quitter la réunion via CallManager
+   */
+  async leaveMeeting() {
+    if (!this.callManager) return;
+
+    // Utiliser la méthode existante de CallManager pour quitter
+    this.callManager.endGroupCall();
+  }
+
+  /**
+   * Réinitialiser l'adaptateur
+   */
+  reset() {
+    this.stopPreview();
+    this.selectedCamera = null;
+    this.selectedMicrophone = null;
+    this.selectedSpeaker = null;
+  }
+}
+
+// Instance globale
+const meetingMediaAdapter = new MeetingMediaAdapter();
+
+// Export
+window.meetingMediaAdapter = meetingMediaAdapter;
+
+
+// --- PANNEAU DES PARTICIPANTS ---
+
+/**
+ * ============================================
+ *  MEETING PARTICIPANTS - GESTION DES PARTICIPANTS
+ * ============================================
+ * 
+ * Ce fichier gère l'affichage et la gestion des participants
+ * pendant une réunion en cours.
+ */
+
+class MeetingParticipants {
+  constructor() {
+    this.panel = null;
+    this.participants = new Map();
+    this.currentMeetingId = null;
+    this.currentRoomId = null;
+    this.isHost = false;
+  }
+
+  /**
+   * Afficher le panneau des participants
+   */
+  show(meetingId, roomId, isHost = false) {
+    this.currentMeetingId = meetingId;
+    this.currentRoomId = roomId;
+    this.isHost = isHost;
+
+    if (this.panel) {
+      this.panel.classList.add("open");
+      this.loadParticipants();
+      return;
+    }
+
+    const html = `
+      <div class="meeting-participants-panel" id="meeting-participants-panel">
+        <div class="chat-header">
+          <button class="icon-btn-top" onclick="window.meetingParticipants.close()">
+            <i class="fa-solid fa-arrow-left"></i>
+          </button>
+          <div class="chat-title">Participants</div>
+          <div style="width: 40px;"></div>
+        </div>
+        
+        <div class="participants-list" id="participants-list">
+          <div class="loading-spinner"></div>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", html);
+    this.panel = document.getElementById("meeting-participants-panel");
+    this.panel.classList.add("open");
+
+    this.loadParticipants();
+  }
+
+  /**
+   * Fermer le panneau
+   */
+  close() {
+    if (this.panel) {
+      this.panel.classList.remove("open");
+    }
+  }
+
+  /**
+   * Charger les participants
+   */
+  async loadParticipants() {
+    try {
+      const listContainer = document.getElementById("participants-list");
+      if (!listContainer) return;
+
+      // Priorité au roster live (WebRTC) — source de vérité pendant la réunion
+      if (window.callManager && Array.isArray(window.callManager.groupRoster) && window.callManager.groupRoster.length) {
+        const roster = window.callManager.groupRoster.map(r => {
+          const st = window.callManager.groupPeerStates?.get(r.userId) || {};
+          const isSelf = r.userId === window.callManager.myId;
+          return {
+            userId: r.userId,
+            name: r.name || null,
+            state: r.state || "JOINED",
+            micEnabled: isSelf ? !window.callManager.groupIsMuted : !st.micMuted,
+            camEnabled: isSelf ? !window.callManager.groupIsCamOff : !st.camOff,
+          };
+        });
+        this.renderParticipants(roster);
+        return;
+      }
+
+      if (window.meetingService) {
+        const participants = await meetingService.loadParticipants(this.currentMeetingId);
+        this.renderParticipants(participants);
+      }
+    } catch (error) {
+      console.error("Erreur chargement participants:", error);
+    }
+  }
+
+  /**
+   * Afficher les participants
+   */
+  renderParticipants(participants) {
+    const listContainer = document.getElementById("participants-list");
+    if (!listContainer) return;
+
+    if (!participants || participants.length === 0) {
+      listContainer.innerHTML = `
+        <div class="empty-state">
+          <i class="fa-solid fa-users"></i>
+          <div class="empty-state-text">Aucun participant</div>
+        </div>
+      `;
+      return;
+    }
+
+    const hostId = window.callManager?.meetingCreatedBy || null;
+    const myId = window.callManager?.myId;
+    let html = "";
+    participants.forEach(p => {
+      const userId = p.userId || p.id;
+      const state = p.state || "JOINED";
+      const isOrganizer = hostId && userId === hostId;
+      const isSelf = userId === myId;
+      const micEnabled = p.micEnabled !== false;
+      const camEnabled = p.camEnabled !== false;
+
+      html += `
+        <div class="participant-item" data-user-id="${userId}">
+          <div class="participant-avatar">
+            ${p.name ? String(p.name).slice(0, 2).toUpperCase() : String(userId).slice(-2).toUpperCase()}
+          </div>
+          <div class="participant-info">
+            <div class="participant-name">
+              ${isSelf ? "Vous" : userId}
+              ${isOrganizer ? '<span style="color: #00a884; font-size: 11px; margin-left: 4px;">(Organisateur)</span>' : ''}
+            </div>
+            <div class="participant-role">${state}</div>
+          </div>
+          <div class="participant-media-status">
+            <span class="media-status ${micEnabled ? 'enabled' : 'disabled'}" title="Microphone">
+              <i class="fa-solid ${micEnabled ? 'fa-microphone' : 'fa-microphone-slash'}"></i>
+            </span>
+            <span class="media-status ${camEnabled ? 'enabled' : 'disabled'}" title="Caméra">
+              <i class="fa-solid ${camEnabled ? 'fa-video' : 'fa-video-slash'}"></i>
+            </span>
+          </div>
+          ${this.isHost && !isSelf ? `
+            <div class="participant-actions">
+              <button class="participant-action-btn" onclick="window.hostMuteParticipant('${userId}', 'mic', true)" title="Couper le micro">
+                <i class="fa-solid fa-microphone-slash"></i>
+              </button>
+              <button class="participant-action-btn" onclick="window.hostMuteParticipant('${userId}', 'cam', true)" title="Couper la caméra">
+                <i class="fa-solid fa-video-slash"></i>
+              </button>
+              <button class="participant-action-btn" onclick="window.meetingParticipants.removeParticipant('${userId}')" title="Retirer">
+                <i class="fa-solid fa-user-minus"></i>
+              </button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    });
+
+    listContainer.innerHTML = html;
+  }
+
+  /**
+   * Retirer un participant
+   */
+  async removeParticipant(userId) {
+    if (!confirm(`Retirer ${userId} de la réunion ?`)) return;
+
+    const toast = (msg) => {
+      if (window.callManager && typeof window.callManager.showCallToast === "function") {
+        window.callManager.showCallToast(msg);
+      }
+    };
+
+    try {
+      // Priorité WebSocket (évite CORS DELETE)
+      if (window.callManager && window.callManager.groupRoomId) {
+        window.callManager.sendSignal({
+          type: "meeting-kick",
+          meetingId: this.currentMeetingId || window.callManager.currentMeetingId,
+          roomId: this.currentRoomId || window.callManager.groupRoomId,
+          targetUserId: userId,
+        });
+        toast("Participant retiré");
+        setTimeout(() => this.loadParticipants(), 400);
+        return;
+      }
+
+      if (window.meetingService) {
+        await meetingService.removeParticipant(this.currentMeetingId, userId);
+        toast("Participant retiré");
+        this.loadParticipants();
+      }
+    } catch (error) {
+      console.error("Erreur retrait participant:", error);
+      toast("Erreur lors du retrait");
+    }
+  }
+
+  /**
+   * Mettre à jour en temps réel
+   */
+  updateParticipant(userId, state) {
+    const existing = this.participants.get(userId) || { userId };
+    this.participants.set(userId, { ...existing, state });
+    this.renderParticipants(Array.from(this.participants.values()));
+  }
+
+  /**
+   * Mettre à jour l'état média d'un participant
+   */
+  updateParticipantMedia(userId, mediaState) {
+    const existing = this.participants.get(userId) || { userId };
+    this.participants.set(userId, { ...existing, ...mediaState });
+    this.renderParticipants(Array.from(this.participants.values()));
+  }
+
+  /**
+   * Réinitialiser
+   */
+  reset() {
+    this.close();
+    this.participants.clear();
+    this.currentMeetingId = null;
+    this.currentRoomId = null;
+    this.isHost = false;
+  }
+}
+
+// Instance globale
+const meetingParticipants = new MeetingParticipants();
+
+// Export
+window.meetingParticipants = meetingParticipants;
+
+// --- CHAT EN TEMPS R�EL ---
+
+/**
+ * ============================================
+ *  MEETING CHAT - CHAT INTÉGRÉ AUX RÉUNIONS
+ * ============================================
+ * 
+ * Ce fichier gère le chat de réunion avec envoi/réception
+ * de messages en temps réel.
+ */
+
+class MeetingChat {
+  constructor() {
+    this.panel = null;
+    this.messages = [];
+    this.currentMeetingId = null;
+    this.currentRoomId = null;
+    this.pendingSend = null;
+    this.pendingSendTimeout = null;
+  }
+
+  /**
+   * Afficher le panneau de chat
+   */
+  show(meetingId, roomId) {
+    if (this.currentMeetingId !== meetingId) {
+      this.messages = this.messages.filter(message => message.meetingId === meetingId);
+    }
+    this.currentMeetingId = meetingId;
+    this.currentRoomId = roomId;
+
+    if (this.panel) {
+      this.panel.classList.add("open");
+      this.loadHistory();
+      return;
+    }
+
+    const html = `
+      <div class="meeting-chat-panel" id="meeting-chat-panel">
+        <div class="chat-header">
+          <button class="icon-btn-top" onclick="window.meetingChat.close()">
+            <i class="fa-solid fa-arrow-left"></i>
+          </button>
+          <div class="chat-title">Chat</div>
+          <div style="width: 40px;"></div>
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+          <div class="loading-spinner"></div>
+        </div>
+        
+        <div class="chat-input-container">
+          <input type="text" id="chat-input" class="chat-input" maxlength="1000" placeholder="Écrire un message..."
+                 onkeypress="if(event.key === 'Enter') window.meetingChat.sendMessage()">
+          <button class="chat-send-btn" onclick="window.meetingChat.sendMessage()">
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        </div>
+      </div>
+    `;
+
+    document.body.insertAdjacentHTML("beforeend", html);
+    this.panel = document.getElementById("meeting-chat-panel");
+    this.panel.classList.add("open");
+
+    this.loadHistory();
+  }
+
+  /**
+   * Fermer le panneau
+   */
+  close() {
+    if (this.panel) {
+      this.panel.classList.remove("open");
+    }
+  }
+
+  /**
+   * Charger l'historique des messages
+   */
+  async loadHistory() {
+    const requestedMeetingId = this.currentMeetingId;
+    try {
+      const messagesContainer = document.getElementById("chat-messages");
+      if (!messagesContainer) return;
+
+      if (window.meetingService) {
+        const history = await meetingService.loadChatHistory(requestedMeetingId);
+        if (requestedMeetingId !== this.currentMeetingId) return;
+        // Les messages WebSocket reçus pendant le chargement ne doivent pas
+        // disparaître lorsque l'historique REST revient.
+        this.messages = this.mergeMessages(history, this.messages);
+        this.renderMessages();
+      }
+    } catch (error) {
+      console.error("Erreur chargement historique:", error);
+      if (requestedMeetingId === this.currentMeetingId && this.messages.length === 0) {
+        const messagesContainer = document.getElementById("chat-messages");
+        if (messagesContainer) {
+          messagesContainer.innerHTML = '<div class="empty-state"><div class="empty-state-text">Historique indisponible. Vous pouvez toujours envoyer un message.</div></div>';
+        }
+      }
+    }
+  }
+
+  /**
+   * Afficher les messages
+   */
+  renderMessages() {
+    const messagesContainer = document.getElementById("chat-messages");
+    if (!messagesContainer) return;
+
+    if (!this.messages || this.messages.length === 0) {
+      messagesContainer.innerHTML = `
+        <div class="empty-state">
+          <i class="fa-solid fa-comments"></i>
+          <div class="empty-state-text">Aucun message</div>
+        </div>
+      `;
+      return;
+    }
+
+    let html = "";
+    this.messages.forEach(msg => {
+      const isOwn = msg.userId === window.callManager?.myId;
+      const time = new Date(Number(msg.timestamp) || Date.now()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      
+      html += `
+        <div class="chat-message ${isOwn ? 'own' : 'other'}">
+          <div class="chat-message-content">${this.escapeHtml(msg.message)}</div>
+          <div class="chat-message-meta">
+            ${!isOwn ? `${this.escapeHtml(msg.displayName || msg.userId || 'Participant')} • ` : ''}${time}
+          </div>
+        </div>
+      `;
+    });
+
+    messagesContainer.innerHTML = html;
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+
+  /**
+   * Envoyer un message
+   */
+  async sendMessage() {
+    const input = document.getElementById("chat-input");
+    if (!input) return;
+
+    const message = input.value.trim();
+    if (!message) return;
+
+    // Essayer d'envoyer via WebSocket en premier
+    if (window.callManager && window.callManager.groupRoomId) {
+      if (this.pendingSend) return;
+      const payload = {
+        type: "meeting-chat-message",
+        roomId: this.currentRoomId || window.callManager.groupRoomId,
+        meetingId: this.currentMeetingId || window.callManager.currentMeetingId,
+        message,
+        clientMessageId: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+      };
+      this.pendingSend = { id: payload.clientMessageId, text: message };
+      input.disabled = true;
+      const sendButton = document.querySelector("#meeting-chat-panel .chat-send-btn");
+      if (sendButton) sendButton.disabled = true;
+      const sent = window.callManager.sendSignal(payload);
+      if (!sent) {
+        window.callManager.showCallToast("Connexion en cours, message en attente…");
+      }
+      clearTimeout(this.pendingSendTimeout);
+      this.pendingSendTimeout = setTimeout(() => {
+        if (!this.pendingSend) return;
+        input.disabled = false;
+        input.value = this.pendingSend.text;
+        if (sendButton) sendButton.disabled = false;
+        this.pendingSend = null;
+        this.pendingSendTimeout = null;
+        window.callManager?.showCallToast("Message non confirmé. Vous pouvez réessayer.");
+      }, 12000);
+      return;
+    }
+
+    // Fallback REST
+    try {
+      if (window.meetingService) {
+        const sent = await meetingService.sendChatMessage(this.currentMeetingId, message);
+        this.receiveMessage(sent);
+        input.value = "";
+      }
+    } catch (error) {
+      console.error("Erreur envoi message:", error);
+      window.callManager?.showCallToast("Erreur lors de l'envoi");
+    }
+  }
+
+  /**
+   * Recevoir un message (via WebSocket)
+   */
+  receiveMessage(message) {
+    if (!message) return;
+    const normalized = message.message && typeof message.message === "object"
+      ? message.message
+      : message;
+    if (normalized.meetingId && this.currentMeetingId && normalized.meetingId !== this.currentMeetingId) return;
+    if (this.pendingSend && normalized.clientMessageId === this.pendingSend.id) {
+      clearTimeout(this.pendingSendTimeout);
+      this.pendingSendTimeout = null;
+      this.pendingSend = null;
+      const input = document.getElementById("chat-input");
+      const sendButton = document.querySelector("#meeting-chat-panel .chat-send-btn");
+      if (input) {
+        input.value = "";
+        input.disabled = false;
+        input.focus();
+      }
+      if (sendButton) sendButton.disabled = false;
+    }
+    this.messages = this.mergeMessages(this.messages, [normalized]);
+    this.renderMessages();
+  }
+
+  handleSendError(error) {
+    if (!this.pendingSend || (error.clientMessageId && error.clientMessageId !== this.pendingSend.id)) return;
+    clearTimeout(this.pendingSendTimeout);
+    this.pendingSendTimeout = null;
+    const input = document.getElementById("chat-input");
+    const sendButton = document.querySelector("#meeting-chat-panel .chat-send-btn");
+    if (input) {
+      input.value = this.pendingSend.text;
+      input.disabled = false;
+    }
+    if (sendButton) sendButton.disabled = false;
+    this.pendingSend = null;
+  }
+
+  mergeMessages(...groups) {
+    const byKey = new Map();
+    groups.flat().forEach(message => {
+      if (!message || typeof message.message !== "string") return;
+      const key = message.id || message.clientMessageId ||
+        `${message.userId || ""}|${message.timestamp || 0}|${message.message}`;
+      byKey.set(key, { ...byKey.get(key), ...message });
+    });
+    return [...byKey.values()].sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0));
+  }
+
+  /**
+   * Échapper le HTML pour éviter XSS
+   */
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
+   * Réinitialiser
+   */
+  reset() {
+    this.close();
+    clearTimeout(this.pendingSendTimeout);
+    this.pendingSendTimeout = null;
+    this.pendingSend = null;
+    this.messages = [];
+    this.currentMeetingId = null;
+    this.currentRoomId = null;
+  }
+}
+
+// Instance globale
+const meetingChat = new MeetingChat();
+
+// Export
+window.meetingChat = meetingChat;
+
