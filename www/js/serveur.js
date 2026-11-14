@@ -2820,22 +2820,19 @@ app.patch("/api/meeting/:meetingId/permissions/:userId", async (req, res) => {
 const interval = setInterval(() => {
   wss.clients.forEach((ws) => {
     if (ws.isAlive === false) {
-      console.log(`âš ï¸ Client inactif expulsÃ© : ${ws.userId || "Inconnu"}`);
-      if (ws.userId && users.get(ws.userId)?.ws === ws) {
-        // DÃ©connexion : Passe le socket Ã  null sans supprimer l'utilisateur de la Map
-        const existingUser = users.get(ws.userId);
-        users.set(ws.userId, {
-          ws: null,
-          pushToken: existingUser.pushToken,
-        });
-
-        // =========================================================
-        // APPEL DE GROUPE â€” Nettoyage des salles lors de l'expulsion
-        // =========================================================
-        // Marquer l'utilisateur comme LEFT dans toutes ses salles
-        roomManager.markLeftInAllRooms(ws.userId);
+      ws.missedHeartbeatIntervals = (ws.missedHeartbeatIntervals || 0) + 1;
+      if (ws.missedHeartbeatIntervals >= 2) {
+        console.log(`[HEARTBEAT] Client removed after 2 missed checks: ${ws.userId || "unknown"}`);
+        if (ws.userId && users.get(ws.userId)?.ws === ws) {
+          const existingUser = users.get(ws.userId);
+          users.set(ws.userId, { ws: null, pushToken: existingUser.pushToken });
+          roomManager.markLeftInAllRooms(ws.userId);
+        }
+        return ws.terminate();
       }
-      return ws.terminate();
+      console.warn(`[HEARTBEAT] Missed check for ${ws.userId || "unknown"}; verifying again before disconnect.`);
+    } else {
+      ws.missedHeartbeatIntervals = 0;
     }
 
     ws.isAlive = false;
@@ -2858,6 +2855,7 @@ wss.on("close", () => {
 // =========================================================
 wss.on("connection", (ws) => {
   ws.isAlive = true;
+  ws.missedHeartbeatIntervals = 0;
 
   ws.on("pong", () => {
     ws.isAlive = true;
@@ -3476,19 +3474,35 @@ wss.on("connection", (ws) => {
         const { roomId } = data;
 
         // VÃ©rifier que la salle existe
-        const room = roomManager.rooms.get(roomId);
+        // Après un redémarrage, restaurer une salle live depuis Firestore si le
+        // client se reconnecte avant la restauration générale au démarrage.
+        let room = roomManager.rooms.get(roomId);
+        if (!room && typeof roomId === "string" && roomId.startsWith("room_meeting_")) {
+          const meetingId = roomId.slice("room_meeting_".length);
+          try {
+            const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+            if (meetingDoc.exists) {
+              const meeting = meetingDoc.data();
+              if (meeting.status === "live" && meeting.roomId === roomId && meeting.endsAt > Date.now()) {
+                // Plusieurs personnes peuvent revenir simultanément : réutiliser
+                // la salle créée par la première requête arrivée après la lecture.
+                room = roomManager.rooms.get(roomId) ||
+                  roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
+                console.log(`[MEETING] Salle live restaurée à la demande: ${roomId}`);
+              }
+            }
+          } catch (error) {
+            console.error(`[MEETING] Échec restauration salle ${roomId}:`, error);
+          }
+        }
         if (!room) {
-          ws.send(
-            JSON.stringify({
-              type: "group-error",
-              roomId,
-              reason: "Salle introuvable",
-            }),
-          );
+          ws.send(JSON.stringify({
+            type: "group-error",
+            roomId,
+            reason: "Salle introuvable ou réunion terminée",
+          }));
           return;
         }
-
-        // VÃ©rifier que l'utilisateur n'est pas dÃ©jÃ  dans une autre salle
         if (roomManager.isUserInAnyRoom(ws.userId) && !room.participants.has(ws.userId)) {
           ws.send(
             JSON.stringify({
