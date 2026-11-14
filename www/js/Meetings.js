@@ -7,10 +7,17 @@
  * Il doit être inclus après CallManager.js dans index.html
  */
 
-// ===== HANDLERS DES MESSAGES SERVEUR (réunions) =====
-// Ces méthodes sont ajoutées à CallManager.prototype
+// Une seule classe porte d�sormais les m�thodes de r�union. Elle h�rite de
+// CallManager afin de r�utiliser ses appels, son �tat WebRTC et sa connexion.
+class Meetings extends CallManager {}
 
-CallManager.prototype.normalizeMeetingCode = function(code) {
+// CallManager est cr�� � la fin de CallManager.js; on rattache cette instance
+// � la classe sp�cialis�e sans la recr�er ni perdre sa connexion active.
+Object.setPrototypeOf(window.callManager, Meetings.prototype);
+// ===== HANDLERS DES MESSAGES SERVEUR (réunions) =====
+// Ces méthodes sont ajoutées à Meetings.prototype
+
+Meetings.prototype.normalizeMeetingCode = function(code) {
   if (!code && code !== 0) return "";
   const cleaned = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (!cleaned) return "";
@@ -23,7 +30,7 @@ CallManager.prototype.normalizeMeetingCode = function(code) {
   return cleaned;
 };
 
-CallManager.prototype.handleMeetingCreated = function(data) {
+Meetings.prototype.handleMeetingCreated = function(data) {
   console.log("📅 [MEETING] Réunion créée:", data);
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
@@ -38,13 +45,13 @@ CallManager.prototype.handleMeetingCreated = function(data) {
   this.showMeetingCreatedView(data);
 };
 
-CallManager.prototype.handleMeetingLiveReady = function(data) {
+Meetings.prototype.handleMeetingLiveReady = function(data) {
   console.log("📅 [MEETING] Réunion maintenant live:", data);
   // Plus besoin de rejoindre automatiquement - le créateur rejoint comme les autres
   // en utilisant son code ou lien
 };
 
-CallManager.prototype.handleMeetingJoined = async function(data) {
+Meetings.prototype.handleMeetingJoined = async function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
   this.closeMeetingWaitingView();
 
@@ -117,7 +124,7 @@ CallManager.prototype.handleMeetingJoined = async function(data) {
   this.showMeetingScreen(data);
 };
 
-CallManager.prototype.handleMeetingReconnect = async function(data) {
+Meetings.prototype.handleMeetingReconnect = async function(data) {
   console.log("📅 [MEETING] Reconnexion à la réunion demandée:", data.roomId);
   this.showCallToast("Reconnexion à la réunion en cours...");
 
@@ -165,7 +172,7 @@ CallManager.prototype.handleMeetingReconnect = async function(data) {
   this.showMeetingScreen(data);
 };
 
-CallManager.prototype.handleMeetingWaiting = function(data) {
+Meetings.prototype.handleMeetingWaiting = function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
 
   // Ne PAS écraser l'écran live si on est déjà dans la réunion
@@ -185,7 +192,7 @@ CallManager.prototype.handleMeetingWaiting = function(data) {
   this.showMeetingWaitingView(data);
 };
 
-CallManager.prototype.handleMeetingHostStarted = function(data) {
+Meetings.prototype.handleMeetingHostStarted = function(data) {
   console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
   this.showCallToast("L'hôte a démarré la réunion");
 
@@ -219,7 +226,7 @@ CallManager.prototype.handleMeetingHostStarted = function(data) {
   }
 };
 
-CallManager.prototype.handleMeetingError = function(data) {
+Meetings.prototype.handleMeetingError = function(data) {
   console.error("📅 [MEETING] Erreur:", data.reason);
   this.instantMeetingPending = false;
   clearTimeout(this.meetingCreateTimeout);
@@ -230,7 +237,7 @@ CallManager.prototype.handleMeetingError = function(data) {
   this.closeMeetingCreatedView();
 };
 
-CallManager.prototype.handleMeetingApprovalGranted = async function(data) {
+Meetings.prototype.handleMeetingApprovalGranted = async function(data) {
   console.log("📅 [MEETING] Accès accordé:", data);
   this.showCallToast("Accès accepté — connexion…");
   this.closeMeetingWaitingView();
@@ -248,14 +255,14 @@ CallManager.prototype.handleMeetingApprovalGranted = async function(data) {
   });
 };
 
-CallManager.prototype.handleMeetingApprovalDenied = function(data) {
+Meetings.prototype.handleMeetingApprovalDenied = function(data) {
   console.log("📅 [MEETING] Accès refusé:", data);
   this.showCallToast(data.reason || "Accès refusé par l'hôte");
   this.pendingMeetingMediaPreferences = null;
   this.closeMeetingWaitingView();
 };
 
-CallManager.prototype.handleMeetingPendingApproval = function(data) {
+Meetings.prototype.handleMeetingPendingApproval = function(data) {
   console.log("📅 [MEETING] En attente d'approbation:", data);
   this.showCallToast("Demande d'accès envoyée à l'hôte");
   // Fermer prévisualisation / attente classique
@@ -269,7 +276,7 @@ CallManager.prototype.handleMeetingPendingApproval = function(data) {
 /**
  * Écran dédié : en attente d'approbation de l'hôte
  */
-CallManager.prototype.showMeetingApprovalWaitingView = function(data) {
+Meetings.prototype.showMeetingApprovalWaitingView = function(data) {
   if (this.meetingWaitingView) {
     try { this.meetingWaitingView.remove(); } catch (e) {}
     this.meetingWaitingView = null;
@@ -313,14 +320,14 @@ CallManager.prototype.showMeetingApprovalWaitingView = function(data) {
   this.meetingWaitingView = document.getElementById("meeting-waiting-view");
 };
 
-CallManager.prototype.handleMeetingPendingRequest = function(data) {
+Meetings.prototype.handleMeetingPendingRequest = function(data) {
   console.log("📅 [MEETING] Demande d'accès reçue:", data);
   this.showCallToast(`${data.userId} demande à rejoindre`);
   // Toujours afficher le dialogue, même si l'hôte est déjà dans la réunion
   this.showPendingRequestDialog(data);
 };
 
-CallManager.prototype.handleMeetingKicked = function(data) {
+Meetings.prototype.handleMeetingKicked = function(data) {
   console.log("📅 [MEETING] Expulsé de la réunion:", data);
   this.showCallToast(data.reason || "Vous avez été retiré de la réunion");
   if (typeof this.leaveMeeting === "function") {
@@ -339,7 +346,7 @@ CallManager.prototype.handleMeetingKicked = function(data) {
   }
 };
 
-CallManager.prototype.showPendingRequestDialog = function(data) {
+Meetings.prototype.showPendingRequestDialog = function(data) {
   // Toujours recréer avec les bonnes données (nouvelle demande)
   if (this.pendingRequestDialog) {
     try { this.pendingRequestDialog.remove(); } catch (e) {}
@@ -378,7 +385,7 @@ CallManager.prototype.showPendingRequestDialog = function(data) {
   setTimeout(() => dialog.classList.add("active"), 10);
 };
 
-CallManager.prototype.closePendingRequestDialog = function() {
+Meetings.prototype.closePendingRequestDialog = function() {
   if (this.pendingRequestDialog) {
     this.pendingRequestDialog.classList.remove("active");
     setTimeout(() => {
@@ -390,7 +397,7 @@ CallManager.prototype.closePendingRequestDialog = function() {
   }
 };
 
-CallManager.prototype.approveMeetingRequest = function(meetingId, userId) {
+Meetings.prototype.approveMeetingRequest = function(meetingId, userId) {
   this.sendSignal({
     type: "meeting-approve",
     meetingId,
@@ -400,7 +407,7 @@ CallManager.prototype.approveMeetingRequest = function(meetingId, userId) {
   this.showCallToast("Demande acceptée");
 };
 
-CallManager.prototype.rejectMeetingRequest = function(meetingId, userId) {
+Meetings.prototype.rejectMeetingRequest = function(meetingId, userId) {
   this.sendSignal({
     type: "meeting-reject",
     meetingId,
@@ -410,7 +417,7 @@ CallManager.prototype.rejectMeetingRequest = function(meetingId, userId) {
   this.showCallToast("Demande refusée");
 };
 
-CallManager.prototype.handleMeetingParticipantJoined = function(data) {
+Meetings.prototype.handleMeetingParticipantJoined = function(data) {
   console.log("📅 [MEETING] Participant rejoint:", data);
   if (window.meetingParticipants) {
     meetingParticipants.updateParticipant(data.userId, "JOINED");
@@ -419,7 +426,7 @@ CallManager.prototype.handleMeetingParticipantJoined = function(data) {
   this.updateMeetingParticipantCount();
 };
 
-CallManager.prototype.handleMeetingParticipantLeft = function(data) {
+Meetings.prototype.handleMeetingParticipantLeft = function(data) {
   console.log("📅 [MEETING] Parti:", data);
   if (window.meetingParticipants) {
     meetingParticipants.updateParticipant(data.userId, "LEFT");
@@ -428,14 +435,14 @@ CallManager.prototype.handleMeetingParticipantLeft = function(data) {
   this.updateMeetingParticipantCount();
 };
 
-CallManager.prototype.handleMeetingParticipantState = function(data) {
+Meetings.prototype.handleMeetingParticipantState = function(data) {
   console.log("📅 [MEETING] État participant:", data);
   if (window.meetingParticipants) {
     meetingParticipants.updateParticipant(data.userId, data.state);
   }
 };
 
-CallManager.prototype.broadcastParticipantState = function(state) {
+Meetings.prototype.broadcastParticipantState = function(state) {
   if (!this.groupRoomId || !this.myId) return;
 
   this.sendSignal({
@@ -446,7 +453,7 @@ CallManager.prototype.broadcastParticipantState = function(state) {
   });
 };
 
-CallManager.prototype.toggleMeetingMic = function() {
+Meetings.prototype.toggleMeetingMic = function() {
   const btn = document.getElementById("meeting-mic-btn");
   if (!btn) return;
 
@@ -470,7 +477,7 @@ CallManager.prototype.toggleMeetingMic = function() {
   this.broadcastParticipantState({ micEnabled: !muted });
 };
 
-CallManager.prototype.toggleMeetingCam = async function() {
+Meetings.prototype.toggleMeetingCam = async function() {
   const btn = document.getElementById("meeting-cam-btn");
   if (!btn) return;
 
@@ -493,7 +500,7 @@ CallManager.prototype.toggleMeetingCam = async function() {
   this.broadcastParticipantState({ camEnabled: !camOff });
 };
 
-CallManager.prototype.leaveMeeting = function() {
+Meetings.prototype.leaveMeeting = function() {
   // Quitter proprement la salle de groupe (peers WebRTC + médias + signal)
   if (this.groupRoomId) {
     try {
@@ -518,7 +525,7 @@ CallManager.prototype.leaveMeeting = function() {
   this.currentMeetingTitle = null;
 };
 
-CallManager.prototype.endMeetingForEveryone = function() {
+Meetings.prototype.endMeetingForEveryone = function() {
   if (!confirm("Êtes-vous sûr de vouloir terminer la réunion pour tous les participants ?")) {
     return;
   }
@@ -533,13 +540,13 @@ CallManager.prototype.endMeetingForEveryone = function() {
   this.leaveMeeting();
 };
 
-CallManager.prototype.handleMeetingEndedByHost = function(data) {
+Meetings.prototype.handleMeetingEndedByHost = function(data) {
   console.log("📅 [MEETING] Réunion terminée par l'hôte:", data);
   this.showCallToast(data.reason || "Réunion terminée par l'hôte");
   this.leaveMeeting();
 };
 
-CallManager.prototype.handleMeetingChatMessage = function(data) {
+Meetings.prototype.handleMeetingChatMessage = function(data) {
   console.log("📅 [MEETING] Message chat reçu:", data);
   if (window.meetingChat) {
     meetingChat.receiveMessage(data);
@@ -549,7 +556,7 @@ CallManager.prototype.handleMeetingChatMessage = function(data) {
 /**
  * Afficher l'écran de réunion (Google Meet style)
  */
-CallManager.prototype.showMeetingScreen = function(data) {
+Meetings.prototype.showMeetingScreen = function(data) {
   console.log("📅 [MEETING] Affichage écran de réunion:", data);
 
   if (this.meetingScreen) {
@@ -665,7 +672,7 @@ CallManager.prototype.showMeetingScreen = function(data) {
 /**
  * Attacher la vidéo locale à l'écran de réunion
  */
-CallManager.prototype.attachMeetingLocalVideo = function() {
+Meetings.prototype.attachMeetingLocalVideo = function() {
   const localVideo = document.getElementById("meeting-local-video");
   if (localVideo && this.groupLocalStream) {
     localVideo.srcObject = this.groupLocalStream;
@@ -675,7 +682,7 @@ CallManager.prototype.attachMeetingLocalVideo = function() {
 /**
  * Démarrer le timer de réunion
  */
-CallManager.prototype.startMeetingTimer = function() {
+Meetings.prototype.startMeetingTimer = function() {
   if (this.meetingTimerInterval) return;
   this.meetingStartTime = Date.now();
 
@@ -692,7 +699,7 @@ CallManager.prototype.startMeetingTimer = function() {
   }, 1000);
 };
 
-CallManager.prototype.maybeStartMeetingTimer = function() {
+Meetings.prototype.maybeStartMeetingTimer = function() {
   if (!this.groupIsMeeting || this.meetingTimerInterval) return;
   const others = (this.groupRoster || []).filter(
     participant => participant?.userId !== this.myId && participant?.state === "JOINED",
@@ -709,7 +716,7 @@ CallManager.prototype.maybeStartMeetingTimer = function() {
 /**
  * Arrêter le timer de réunion
  */
-CallManager.prototype.stopMeetingTimer = function() {
+Meetings.prototype.stopMeetingTimer = function() {
   if (this.meetingTimerInterval) {
     clearInterval(this.meetingTimerInterval);
     this.meetingTimerInterval = null;
@@ -719,7 +726,7 @@ CallManager.prototype.stopMeetingTimer = function() {
 /**
  * Fermer l'écran de réunion
  */
-CallManager.prototype.closeMeetingScreen = function() {
+Meetings.prototype.closeMeetingScreen = function() {
   this.stopMeetingTimer();
 
   if (this.meetingScreen) {
@@ -737,7 +744,7 @@ CallManager.prototype.closeMeetingScreen = function() {
 /**
  * Lever / baisser la main
  */
-CallManager.prototype.toggleMeetingHand = function() {
+Meetings.prototype.toggleMeetingHand = function() {
   const btn = document.getElementById("meeting-hand-btn");
   if (!btn || !this.groupRoomId) return;
 
@@ -760,7 +767,7 @@ CallManager.prototype.toggleMeetingHand = function() {
   }
 };
 
-CallManager.prototype.handleMeetingHandRaised = function(data) {
+Meetings.prototype.handleMeetingHandRaised = function(data) {
   if (!data || !data.userId) return;
   if (data.userId === this.myId) return;
   this.showCallToast(`${data.userId} a levé la main ✋`);
@@ -778,7 +785,7 @@ CallManager.prototype.handleMeetingHandRaised = function(data) {
   }
 };
 
-CallManager.prototype.handleMeetingHandLowered = function(data) {
+Meetings.prototype.handleMeetingHandLowered = function(data) {
   if (!data || !data.userId) return;
   const tile = this.groupTiles && this.groupTiles.get(data.userId);
   if (tile) {
@@ -791,14 +798,14 @@ CallManager.prototype.handleMeetingHandLowered = function(data) {
 /**
  * Afficher le picker de réactions
  */
-CallManager.prototype.showMeetingReactions = function() {
+Meetings.prototype.showMeetingReactions = function() {
   const picker = document.getElementById("meeting-reaction-picker");
   if (!picker) return;
   const visible = picker.style.display !== "none";
   picker.style.display = visible ? "none" : "flex";
 };
 
-CallManager.prototype.sendMeetingReaction = function(emoji) {
+Meetings.prototype.sendMeetingReaction = function(emoji) {
   if (!this.groupRoomId || !emoji) return;
   this.sendSignal({
     type: "meeting-reaction",
@@ -812,12 +819,12 @@ CallManager.prototype.sendMeetingReaction = function(emoji) {
   if (picker) picker.style.display = "none";
 };
 
-CallManager.prototype.handleMeetingReaction = function(data) {
+Meetings.prototype.handleMeetingReaction = function(data) {
   if (!data) return;
   this.showFloatingReaction(data.userId, data.reaction);
 };
 
-CallManager.prototype.showFloatingReaction = function(userId, emoji) {
+Meetings.prototype.showFloatingReaction = function(userId, emoji) {
   const overlay = document.getElementById("meeting-reaction-overlay");
   if (!overlay || !emoji) return;
   const el = document.createElement("div");
@@ -834,7 +841,7 @@ CallManager.prototype.showFloatingReaction = function(userId, emoji) {
 /**
  * Partage d'écran (réutilise le flux groupe)
  */
-CallManager.prototype.toggleMeetingScreenShare = async function() {
+Meetings.prototype.toggleMeetingScreenShare = async function() {
   const btn = document.getElementById("meeting-screen-btn");
   try {
     if (typeof this.toggleScreenShare === "function") {
@@ -862,7 +869,7 @@ CallManager.prototype.toggleMeetingScreenShare = async function() {
 /**
  * Ordre hôte : couper mon micro ou ma caméra
  */
-CallManager.prototype.handleMeetingForceMute = function(data) {
+Meetings.prototype.handleMeetingForceMute = function(data) {
   if (!data) return;
   const muted = data.muted !== false;
   if (data.media === "mic") {
@@ -908,7 +915,7 @@ CallManager.prototype.handleMeetingForceMute = function(data) {
 /**
  * Hôte : forcer mute micro/cam d'un participant
  */
-CallManager.prototype.hostMuteParticipant = function(targetUserId, media, muted = true) {
+Meetings.prototype.hostMuteParticipant = function(targetUserId, media, muted = true) {
   if (!this.isMeetingHost || !this.groupRoomId || !targetUserId) {
     this.showCallToast("Action réservée à l'hôte");
     return;
@@ -931,13 +938,13 @@ CallManager.prototype.hostMuteParticipant = function(targetUserId, media, muted 
  * Note: la version sans confirm est définie plus haut et appelée par endMeetingForEveryone.
  * Cette version demande confirmation pour le bouton "quitter".
  */
-CallManager.prototype.leaveMeetingWithConfirm = function() {
+Meetings.prototype.leaveMeetingWithConfirm = function() {
   if (confirm("Voulez-vous vraiment quitter la réunion?")) {
     this.leaveMeeting();
   }
 };
 
-CallManager.prototype.updateMeetingParticipantCount = function() {
+Meetings.prototype.updateMeetingParticipantCount = function() {
   const el = document.getElementById("participant-count");
   if (!el) return;
   const roster = this.groupRoster || [];
@@ -968,18 +975,18 @@ window.showMeetingChat = function() {
   }
 };
 
-CallManager.prototype.handleMeetingCancelled = function(data) {
+Meetings.prototype.handleMeetingCancelled = function(data) {
   console.log("📅 [MEETING] Réunion annulée:", data.meetingId);
   this.showCallToast("Réunion annulée");
   this.closeMeetingCreatedView();
 };
 
-CallManager.prototype.handleMeetingList = function(data) {
+Meetings.prototype.handleMeetingList = function(data) {
   console.log("📅 [MEETING] Liste reçue:", data.upcoming.length, "à venir,", data.past.length, "passées");
   this.showMeetingListView(data);
 };
 
-CallManager.prototype.handleMeetingEnded = function(data) {
+Meetings.prototype.handleMeetingEnded = function(data) {
   console.log("📅 [MEETING] Réunion terminée:", data.meetingId, "raison:", data.reason);
   this.showCallToast("Réunion terminée: " + data.reason);
   this.closeMeetingWaitingView();
@@ -993,7 +1000,7 @@ CallManager.prototype.handleMeetingEnded = function(data) {
 
 // ===== UI LISTE DES RÉUNIONS =====
 
-CallManager.prototype.showMeetingListView = function(data) {
+Meetings.prototype.showMeetingListView = function(data) {
   if (this.meetingListView) {
     this.meetingListView.classList.add("active");
     this._renderMeetingList(data);
@@ -1029,7 +1036,7 @@ CallManager.prototype.showMeetingListView = function(data) {
   this._renderMeetingList(data);
 };
 
-CallManager.prototype._renderMeetingList = function(data) {
+Meetings.prototype._renderMeetingList = function(data) {
   const content = document.getElementById("meeting-list-content");
   if (!content) return;
 
@@ -1130,7 +1137,7 @@ CallManager.prototype._renderMeetingList = function(data) {
   content.innerHTML = html;
 };
 
-CallManager.prototype.closeMeetingListView = function() {
+Meetings.prototype.closeMeetingListView = function() {
   if (this.meetingListView) {
     this.meetingListView.classList.remove("active");
     setTimeout(() => {
@@ -1142,24 +1149,24 @@ CallManager.prototype.closeMeetingListView = function() {
   }
 };
 
-CallManager.prototype.createMeetingFromList = function() {
+Meetings.prototype.createMeetingFromList = function() {
   this.closeMeetingListView();
   this.showMeetingCreateView();
 };
 
-CallManager.prototype.startMeetingFromList = function(code) {
+Meetings.prototype.startMeetingFromList = function(code) {
   this.closeMeetingListView();
   this.startMeeting(code);
 };
 
-CallManager.prototype.openMeetingDetails = function(meetingId) {
+Meetings.prototype.openMeetingDetails = function(meetingId) {
   // Ouvrir l'écran de modification
   this.showMeetingCreateView(meetingId);
 };
 
 // ===== MÉTHODES DE RÉUNION =====
 
-CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct") {
+Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct") {
   console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
   
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
@@ -1221,7 +1228,7 @@ CallManager.prototype.createMeeting = function(title, scheduledAt, durationMin, 
   console.log("📅 [MEETING] Demande de création de réunion envoyée avec politique:", accessPolicy);
 };
 
-CallManager.prototype.joinMeeting = function(code) {
+Meetings.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] joinMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
   
   const normalizedCode = this.normalizeMeetingCode(code);
@@ -1273,7 +1280,7 @@ CallManager.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] Demande de rejoindre réunion envoyée pour code:", this.meetingPendingCode);
 };
 
-CallManager.prototype.cancelMeeting = function(meetingId) {
+Meetings.prototype.cancelMeeting = function(meetingId) {
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
   if (!isConnected) {
     this.showCallToast("Connexion requise");
@@ -1288,7 +1295,7 @@ CallManager.prototype.cancelMeeting = function(meetingId) {
   console.log("📅 [MEETING] Demande d'annulation envoyée pour:", meetingId);
 };
 
-CallManager.prototype.listMeetings = function() {
+Meetings.prototype.listMeetings = function() {
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
   if (!isConnected) {
     this.showCallToast("Connexion requise");
@@ -1304,7 +1311,7 @@ CallManager.prototype.listMeetings = function() {
 
 // ===== UI RÉUNIONS =====
 
-CallManager.prototype.showMeetingCreateView = function(editMeetingId = null) {
+Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   this.editingMeetingId = editMeetingId;
   
   if (this.meetingCreateView) {
@@ -1446,7 +1453,7 @@ CallManager.prototype.showMeetingCreateView = function(editMeetingId = null) {
   }
 };
 
-CallManager.prototype.loadMeetingForEdit = async function(meetingId) {
+Meetings.prototype.loadMeetingForEdit = async function(meetingId) {
   try {
     if (window.meetingService) {
       const meeting = await meetingService.loadMeetingById(meetingId);
@@ -1470,7 +1477,7 @@ CallManager.prototype.loadMeetingForEdit = async function(meetingId) {
   }
 };
 
-CallManager.prototype.closeMeetingCreateView = function() {
+Meetings.prototype.closeMeetingCreateView = function() {
   if (this.meetingCreateView) {
     this.meetingCreateView.classList.remove("active");
     setTimeout(() => {
@@ -1482,7 +1489,7 @@ CallManager.prototype.closeMeetingCreateView = function() {
   }
 };
 
-CallManager.prototype.selectMeetingType = function(type) {
+Meetings.prototype.selectMeetingType = function(type) {
   const audioBtn = document.getElementById("meeting-type-audio");
   const videoBtn = document.getElementById("meeting-type-video");
 
@@ -1495,7 +1502,7 @@ CallManager.prototype.selectMeetingType = function(type) {
   }
 };
 
-CallManager.prototype.selectMeetingMode = function(mode) {
+Meetings.prototype.selectMeetingMode = function(mode) {
   const scheduledBtn = document.getElementById("meeting-mode-scheduled");
   const instantBtn = document.getElementById("meeting-mode-instant");
   const datetimeContainer = document.getElementById("datetime-container");
@@ -1511,7 +1518,7 @@ CallManager.prototype.selectMeetingMode = function(mode) {
   }
 };
 
-CallManager.prototype.selectAccessPolicy = function(policy) {
+Meetings.prototype.selectAccessPolicy = function(policy) {
   const directBtn = document.getElementById("access-direct");
   const approvalBtn = document.getElementById("access-approval");
 
@@ -1524,7 +1531,7 @@ CallManager.prototype.selectAccessPolicy = function(policy) {
   }
 };
 
-CallManager.prototype.confirmCreateMeeting = async function() {
+Meetings.prototype.confirmCreateMeeting = async function() {
   const title = document.getElementById("meeting-title").value.trim();
   const description = document.getElementById("meeting-description").value.trim();
   const duration = document.getElementById("meeting-duration").value;
@@ -1601,7 +1608,7 @@ CallManager.prototype.confirmCreateMeeting = async function() {
   }
 };
 
-CallManager.prototype.cancelMeeting = async function() {
+Meetings.prototype.cancelMeeting = async function() {
   if (!this.editingMeetingId) return;
   
   if (confirm("Êtes-vous sûr de vouloir annuler cette réunion ?")) {
@@ -1622,7 +1629,7 @@ CallManager.prototype.cancelMeeting = async function() {
   }
 };
 
-CallManager.prototype.showMeetingCreatedView = function(data) {
+Meetings.prototype.showMeetingCreatedView = function(data) {
   if (this.meetingCreatedView) {
     this.meetingCreatedView.classList.add("active");
     return;
@@ -1715,7 +1722,7 @@ CallManager.prototype.showMeetingCreatedView = function(data) {
   this.meetingCreatedView.classList.add("active");
 };
 
-CallManager.prototype.closeMeetingCreatedView = function() {
+Meetings.prototype.closeMeetingCreatedView = function() {
   if (this.meetingCreatedView) {
     this.meetingCreatedView.classList.remove("active");
     setTimeout(() => {
@@ -1727,7 +1734,7 @@ CallManager.prototype.closeMeetingCreatedView = function() {
   }
 };
 
-CallManager.prototype.copyMeetingCode = function(code) {
+Meetings.prototype.copyMeetingCode = function(code) {
   if (!code) {
     this.showCallToast("Code indisponible");
     return;
@@ -1742,7 +1749,7 @@ CallManager.prototype.copyMeetingCode = function(code) {
   }
 };
 
-CallManager.prototype.shareMeetingLink = function(link) {
+Meetings.prototype.shareMeetingLink = function(link) {
   if (navigator.share) {
     navigator.share({
       title: "Rejoindre ma réunion",
@@ -1760,7 +1767,7 @@ CallManager.prototype.shareMeetingLink = function(link) {
 };
 
 // ===== RÉUNION INSTANTANÉE (équivalent de "Nouvelle réunion" dans Google Meet) =====
-CallManager.prototype.startInstantMeeting = function() {
+Meetings.prototype.startInstantMeeting = function() {
   if (this.instantMeetingPending) return; // anti double-clic
   this.instantMeetingPending = true;
   setTimeout(() => { this.instantMeetingPending = false; }, 25000); // sécurité si la création échoue
@@ -1776,12 +1783,12 @@ CallManager.prototype.startInstantMeeting = function() {
   );
 };
 
-CallManager.prototype.startMeetingFromCreated = function(code) {
+Meetings.prototype.startMeetingFromCreated = function(code) {
   this.closeMeetingCreatedView();
   this.startMeeting(code);
 };
 
-CallManager.prototype.startMeeting = function(code) {
+Meetings.prototype.startMeeting = function(code) {
   console.log("📅 [MEETING] startMeeting appelé pour code:", code);
   
   const cleanCode = this.normalizeMeetingCode(code);
@@ -1809,7 +1816,7 @@ CallManager.prototype.startMeeting = function(code) {
   console.log("📅 [MEETING] Demande de démarrage forcé pour:", cleanCode);
 };
 
-CallManager.prototype.showMeetingJoinView = function(prefillCode) {
+Meetings.prototype.showMeetingJoinView = function(prefillCode) {
   if (this.meetingJoinView) {
     this.meetingJoinView.classList.add("active");
     if (prefillCode) {
@@ -1870,7 +1877,7 @@ CallManager.prototype.showMeetingJoinView = function(prefillCode) {
   }, 100);
 };
 
-CallManager.prototype.closeMeetingJoinView = function() {
+Meetings.prototype.closeMeetingJoinView = function() {
   if (this.meetingJoinView) {
     this.meetingJoinView.classList.remove("active");
     setTimeout(() => {
@@ -1884,7 +1891,7 @@ CallManager.prototype.closeMeetingJoinView = function() {
 
 // ===== ÉCRAN DE PRÉVISUALISATION (NOUVEAU) =====
 
-CallManager.prototype.showMeetingPreviewView = async function(code, meetingIsVideo) {
+Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo) {
   if (this.meetingPreviewView) {
     this.meetingPreviewView.classList.add("active");
     return;
@@ -1996,7 +2003,7 @@ CallManager.prototype.showMeetingPreviewView = async function(code, meetingIsVid
 
 };
 
-CallManager.prototype.closeMeetingPreviewView = function() {
+Meetings.prototype.closeMeetingPreviewView = function() {
   this.stopPreview();
   document.body.classList.remove("meeting-ui-active");
   
@@ -2011,7 +2018,7 @@ CallManager.prototype.closeMeetingPreviewView = function() {
   }
 };
 
-CallManager.prototype.loadPreviewDevices = async function() {
+Meetings.prototype.loadPreviewDevices = async function() {
   try {
     const devices = await meetingMediaAdapter.getDevices();
     
@@ -2044,7 +2051,7 @@ CallManager.prototype.loadPreviewDevices = async function() {
   }
 };
 
-CallManager.prototype.startPreview = async function() {
+Meetings.prototype.startPreview = async function() {
   try {
     this.stopPreview();
 
@@ -2090,7 +2097,7 @@ CallManager.prototype.startPreview = async function() {
   }
 };
 
-CallManager.prototype.stopPreview = function() {
+Meetings.prototype.stopPreview = function() {
   if (this.previewStream) {
     this.previewStream.getTracks().forEach(track => track.stop());
     this.previewStream = null;
@@ -2098,7 +2105,7 @@ CallManager.prototype.stopPreview = function() {
   meetingMediaAdapter.stopPreview();
 };
 
-CallManager.prototype.togglePreviewMic = function() {
+Meetings.prototype.togglePreviewMic = function() {
   this.previewMicEnabled = !this.previewMicEnabled;
   
   const btn = document.getElementById("preview-mic-btn");
@@ -2118,7 +2125,7 @@ CallManager.prototype.togglePreviewMic = function() {
   if (this.previewMicEnabled && audioTracks.length === 0) this.startPreview();
 };
 
-CallManager.prototype.togglePreviewCam = function() {
+Meetings.prototype.togglePreviewCam = function() {
   this.previewCamEnabled = !this.previewCamEnabled;
   
   const btn = document.getElementById("preview-cam-btn");
@@ -2144,17 +2151,17 @@ CallManager.prototype.togglePreviewCam = function() {
   if (this.previewCamEnabled && videoTracks.length === 0) this.startPreview();
 };
 
-CallManager.prototype.selectCamera = function(deviceId) {
+Meetings.prototype.selectCamera = function(deviceId) {
   meetingMediaAdapter.selectCamera(deviceId);
   this.startPreview();
 };
 
-CallManager.prototype.selectMicrophone = function(deviceId) {
+Meetings.prototype.selectMicrophone = function(deviceId) {
   meetingMediaAdapter.selectMicrophone(deviceId);
   this.startPreview();
 };
 
-CallManager.prototype.confirmJoinMeetingFromPreview = async function(code) {
+Meetings.prototype.confirmJoinMeetingFromPreview = async function(code) {
   const btn = document.getElementById("join-meeting-btn");
   btn.disabled = true;
   btn.textContent = "Connexion...";
@@ -2177,7 +2184,7 @@ CallManager.prototype.confirmJoinMeetingFromPreview = async function(code) {
   }
 };
 
-CallManager.prototype.confirmJoinMeeting = function() {
+Meetings.prototype.confirmJoinMeeting = function() {
   const rawCode = document.getElementById("meeting-code-input").value;
   const code = this.normalizeMeetingCode(rawCode);
   if (!code) {
@@ -2188,7 +2195,7 @@ CallManager.prototype.confirmJoinMeeting = function() {
   this.showMeetingPreviewView(code);
 };
 
-CallManager.prototype.showMeetingWaitingView = function(data) {
+Meetings.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
 
@@ -2262,7 +2269,7 @@ CallManager.prototype.showMeetingWaitingView = function(data) {
   this._updateMeetingCountdown(data);
 };
 
-CallManager.prototype._updateMeetingCountdown = function(data) {
+Meetings.prototype._updateMeetingCountdown = function(data) {
   if (this.meetingTimer) {
     clearInterval(this.meetingTimer);
   }
@@ -2302,7 +2309,7 @@ CallManager.prototype._updateMeetingCountdown = function(data) {
   this.meetingTimer = setInterval(update, 1000);
 };
 
-CallManager.prototype.closeMeetingWaitingView = function() {
+Meetings.prototype.closeMeetingWaitingView = function() {
   if (this.meetingTimer) {
     clearInterval(this.meetingTimer);
     this.meetingTimer = null;
@@ -2319,7 +2326,7 @@ CallManager.prototype.closeMeetingWaitingView = function() {
   }
 };
 
-CallManager.prototype.extractMeetingCodeFromURL = function() {
+Meetings.prototype.extractMeetingCodeFromURL = function() {
   try {
     let urlStr = window.location.href;
     
@@ -2364,7 +2371,7 @@ CallManager.prototype.extractMeetingCodeFromURL = function() {
   }
 };
 
-CallManager.prototype.handleDeepLink = function() {
+Meetings.prototype.handleDeepLink = function() {
   const code = this.extractMeetingCodeFromURL();
   if (code) {
     const checkAndJoin = () => {
@@ -2461,7 +2468,9 @@ if (document.readyState === 'complete') {
 // ============================================================================
 
 
-// --- SERVICE ET �TAT DES R�UNIONS ---
+// Une classe unique regroupe les composants internes du meeting.
+
+  // --- SERVICE ET �TAT DES R�UNIONS ---
 
 /**
  * ============================================
@@ -2483,7 +2492,7 @@ if (document.readyState === 'complete') {
  * pour l'intégration avec le système d'appel de groupe existant.
  */
 
-class MeetingService {
+Meetings.MeetingService = class MeetingService {
   constructor() {
     // État local du service
     this.currentMeeting = null;
@@ -2781,13 +2790,7 @@ class MeetingService {
     this.meetingPermissions.clear();
     this.emit('reset');
   }
-}
-
-// Instance globale
-const meetingService = new MeetingService();
-
-// Export
-window.meetingService = meetingService;
+  };
 
 
 // --- M�DIAS ET P�RIPH�RIQUES ---
@@ -2810,7 +2813,7 @@ window.meetingService = meetingService;
  * de groupe, mais isoler la logique spécifique aux meetings.
  */
 
-class MeetingMediaAdapter {
+Meetings.MeetingMediaAdapter = class MeetingMediaAdapter {
   constructor() {
     this.callManager = null;
     this.preparedMedia = null;
@@ -3025,13 +3028,7 @@ class MeetingMediaAdapter {
     this.selectedMicrophone = null;
     this.selectedSpeaker = null;
   }
-}
-
-// Instance globale
-const meetingMediaAdapter = new MeetingMediaAdapter();
-
-// Export
-window.meetingMediaAdapter = meetingMediaAdapter;
+  };
 
 
 // --- PANNEAU DES PARTICIPANTS ---
@@ -3045,7 +3042,7 @@ window.meetingMediaAdapter = meetingMediaAdapter;
  * pendant une réunion en cours.
  */
 
-class MeetingParticipants {
+Meetings.MeetingParticipants = class MeetingParticipants {
   constructor() {
     this.panel = null;
     this.participants = new Map();
@@ -3267,13 +3264,7 @@ class MeetingParticipants {
     this.currentRoomId = null;
     this.isHost = false;
   }
-}
-
-// Instance globale
-const meetingParticipants = new MeetingParticipants();
-
-// Export
-window.meetingParticipants = meetingParticipants;
+  };
 
 // --- CHAT EN TEMPS R�EL ---
 
@@ -3286,7 +3277,7 @@ window.meetingParticipants = meetingParticipants;
  * de messages en temps réel.
  */
 
-class MeetingChat {
+Meetings.MeetingChat = class MeetingChat {
   constructor() {
     this.panel = null;
     this.messages = [];
@@ -3542,11 +3533,16 @@ class MeetingChat {
     this.currentMeetingId = null;
     this.currentRoomId = null;
   }
-}
+};
 
-// Instance globale
-const meetingChat = new MeetingChat();
-
-// Export
+// Instances utilis�es par les fonctions CallManager et l'interface.
+const meetingService = new Meetings.MeetingService();
+const meetingMediaAdapter = new Meetings.MeetingMediaAdapter();
+const meetingParticipants = new Meetings.MeetingParticipants();
+const meetingChat = new Meetings.MeetingChat();
+window.meetingService = meetingService;
+window.meetingMediaAdapter = meetingMediaAdapter;
+window.meetingParticipants = meetingParticipants;
 window.meetingChat = meetingChat;
+
 
