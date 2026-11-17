@@ -53,6 +53,11 @@ Meetings.prototype.handleMeetingLiveReady = function(data) {
 
 Meetings.prototype.handleMeetingJoined = async function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
+  const previousWaitingRoom = this.meetingWaitingRoomId;
+  if (previousWaitingRoom && previousWaitingRoom !== data.roomId) {
+    this.sendSignal({ type: "group-leave", roomId: previousWaitingRoom });
+    this.meetingWaitingRoomId = null;
+  }
   this.closeMeetingWaitingView();
 
   // Marquer que c'est une réunion planifiée pour empêcher la bascule automatique
@@ -172,7 +177,7 @@ Meetings.prototype.handleMeetingReconnect = async function(data) {
   this.showMeetingScreen(data);
 };
 
-Meetings.prototype.handleMeetingWaiting = function(data) {
+Meetings.prototype.handleMeetingWaiting = async function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
 
   // Ne PAS écraser l'écran live si on est déjà dans la réunion
@@ -183,6 +188,18 @@ Meetings.prototype.handleMeetingWaiting = function(data) {
 
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
+  if (data.waitingRoomId && !this.meetingWaitingRoomId) {
+    this.groupIsMeeting = true;
+    this.groupIsVideo = !!data.isVideo;
+    this.groupRoomId = data.waitingRoomId;
+    this.meetingWaitingRoomId = data.waitingRoomId;
+    this.groupIsLeaving = false;
+    this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
+    try {
+      if (!this.groupLocalStream) await this.acquireGroupMedia(this.groupIsVideo);
+      this.sendSignal({ type: "group-join", roomId: data.waitingRoomId });
+    } catch (error) { console.warn("[MEETING] Waiting media unavailable:", error); }
+  }
 
   if (data.serverNow) {
     this.clockOffset = data.serverNow - Date.now();
@@ -2236,6 +2253,7 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
             </div>
           </div>
 
+          ${!isCreator && data.waitingRoomId ? `<div style="width:100%;flex:1;min-height:180px;overflow:auto;margin-top:8px;"><div style="color:#8696a0;font-size:13px;margin-bottom:8px;">Participants en attente</div><div id="meeting-video-grid" class="video-grid" style="min-height:160px;"></div></div>` : ''}
           <div style="width: 100%; max-width: 300px; text-align: center; color: #8696a0; font-size: 13px; line-height: 1.5;">
             ${isCreator
               ? 'En tant qu\'hôte, vous pouvez démarrer la réunion avant l\'heure prévue. Les participants en attente seront notifiés.'
@@ -2323,6 +2341,19 @@ Meetings.prototype.closeMeetingWaitingView = function() {
         this.meetingWaitingView = null;
       }
     }, 300);
+  }
+  if (this.meetingWaitingRoomId) {
+    if (this.meetingPendingMeetingId) this.sendSignal({ type: "meeting-waiting-leave", meetingId: this.meetingPendingMeetingId });
+    this.sendSignal({ type: "group-leave", roomId: this.meetingWaitingRoomId });
+    this.meetingWaitingRoomId = null;
+    this.groupIsMeeting = false;
+    this.groupRoomId = null;
+    this.groupRoster = [];
+    if (this.closeAllGroupPeers) this.closeAllGroupPeers();
+    if (this.groupLocalStream) {
+      this.groupLocalStream.getTracks().forEach((track) => track.stop());
+      this.groupLocalStream = null;
+    }
   }
 };
 

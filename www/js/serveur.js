@@ -1748,6 +1748,12 @@ class MeetingManager {
       const waitTimeMs = meetingStart - now;
       const waitTimeMin = Math.ceil(waitTimeMs / 60000);
       await this._addWaitingUser(meeting.id, userId);
+      // Salle temporaire r?serv?e aux visiteurs; son identifiant n'est jamais
+      // transmis ? l'h?te, qui ne peut donc pas voir leurs flux vid?o.
+      const waitingRoomId = `room_waiting_${meeting.id}`;
+      if (!roomManager.rooms.has(waitingRoomId)) {
+        roomManager.rooms.set(waitingRoomId, { roomId: waitingRoomId, creatorId: null, isVideo: meeting.isVideo, isMeeting: true, isWaitingRoom: true, createdAt: now, endsAt: meeting.endsAt, participants: new Map() });
+      }
       console.log(`📅 [MEETING] - En attente de démarrage : ${waitTimeMin}min restantes`);
       return {
         success: false,
@@ -1763,6 +1769,10 @@ class MeetingManager {
         serverNow: now,
         opensAt: meetingStart,
         startsAt: meetingStart,
+        waitingRoomId,
+        isVideo: meeting.isVideo,
+        title: meeting.title,
+        createdBy: meeting.createdBy,
       };
     }
 
@@ -3503,6 +3513,16 @@ wss.on("connection", (ws) => {
           }));
           return;
         }
+        if (room.isWaitingRoom) {
+          const waitingMeetingId = roomId.slice("room_waiting_".length);
+          const waitingMeetingDoc = await db.collection("meetings").doc(waitingMeetingId).get();
+          const waitingMeeting = waitingMeetingDoc.exists ? waitingMeetingDoc.data() : null;
+          const waitingUsers = Array.isArray(waitingMeeting?.waitingUsers) ? waitingMeeting.waitingUsers : [];
+          if (!waitingMeeting || waitingMeeting.status !== "scheduled" || waitingMeeting.createdBy === ws.userId || !waitingUsers.includes(ws.userId)) {
+            ws.send(JSON.stringify({ type: "group-error", roomId, reason: "Acc?s r?serv? aux visiteurs en attente" }));
+            return;
+          }
+        }
         if (roomManager.isUserInAnyRoom(ws.userId) && !room.participants.has(ws.userId)) {
           ws.send(
             JSON.stringify({
@@ -3910,6 +3930,10 @@ wss.on("connection", (ws) => {
                 meetingId: result.meetingId,
                 serverNow: result.serverNow,
                 opensAt: result.opensAt,
+                waitingRoomId: result.waitingRoomId,
+                isVideo: result.isVideo,
+                title: result.title,
+                createdBy: result.createdBy,
               }),
             );
             console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
@@ -4008,6 +4032,16 @@ wss.on("connection", (ws) => {
       // 19. Annuler une réunion
       // Envoyé par : Host -> Reçu par : Host (confirmation)
       // Pourquoi : Annuler une réunion planifiée (réservé à l'hôte)
+      // Retirer un visiteur de la liste d'attente lorsqu'il quitte.
+      if (type === "meeting-waiting-leave") {
+        if (!ws.userId || typeof data.meetingId !== "string" || data.meetingId.length > 100) return;
+        const meetingDoc = await db.collection("meetings").doc(data.meetingId).get();
+        if (!meetingDoc.exists) return;
+        const waitingUsers = Array.isArray(meetingDoc.data().waitingUsers) ? meetingDoc.data().waitingUsers : [];
+        if (waitingUsers.includes(ws.userId)) await meetingManager._removeWaitingUser(data.meetingId, ws.userId);
+        return;
+      }
+
       if (type === "meeting-cancel") {
         try {
           // Validation des données
