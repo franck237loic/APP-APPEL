@@ -1907,7 +1907,7 @@ Meetings.prototype.showMeetingJoinView = function(prefillCode) {
                           border-radius: 12px; color: white; font-size: 20px; font-weight: 500; text-align: center;
                           letter-spacing: 2px; text-transform: uppercase; outline: none;"
                    oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9-]/g, '')"
-                   value="${prefillCode || ''}">
+                   value="${window.escapeHtml(prefillCode || '')}">
           </div>
 
           <div style="width: 100%;">
@@ -2053,7 +2053,7 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
       if (titleEl) titleEl.textContent = (meeting && meeting.title) || "Réunion";
       if (orgEl) orgEl.innerHTML = `
         <i class="fa-solid fa-user"></i>
-        <span>Organisateur: ${(meeting && meeting.createdBy) || "Inconnu"}</span>
+        <span>Organisateur: ${window.escapeHtml((meeting && meeting.createdBy) || "Inconnu")}</span>
       `;
     }
   } catch (error) {
@@ -3214,14 +3214,14 @@ Meetings.MeetingParticipants = class MeetingParticipants {
       html += `
         <div class="participant-item" data-user-id="${window.escapeHtml(userId)}">
           <div class="participant-avatar">
-            ${p.name ? window.escapeHtml(String(p.name).slice(0, 2).toUpperCase()) : String(userId).slice(-2).toUpperCase()}
+            ${p.name ? window.escapeHtml(String(p.name).slice(0, 2).toUpperCase()) : window.escapeHtml(String(userId).slice(-2).toUpperCase())}
           </div>
           <div class="participant-info">
             <div class="participant-name">
               ${isSelf ? "Vous" : window.escapeHtml(p.displayName || p.name || userId)}
               ${isOrganizer ? '<span style="color: #00a884; font-size: 11px; margin-left: 4px;">(Organisateur)</span>' : ''}
             </div>
-            <div class="participant-role">${state}</div>
+            <div class="participant-role">${window.escapeHtml(state)}</div>
           </div>
           <div class="participant-media-status">
             <span class="media-status ${micEnabled ? 'enabled' : 'disabled'}" title="Microphone">
