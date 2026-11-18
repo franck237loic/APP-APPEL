@@ -12,10 +12,6 @@ function safeSetTimeout(fn, delay) {
   if (delay > MAX_TIMEOUT_MS) return setTimeout(() => safeSetTimeout(fn, delay - MAX_TIMEOUT_MS), MAX_TIMEOUT_MS);
   return setTimeout(fn, Math.max(0, delay));
 }
-if (!process.env.TURN_USERNAME || !process.env.TURN_CREDENTIAL) {
-  throw new Error("Configuration TURN manquante : définissez TURN_USERNAME et TURN_CREDENTIAL.");
-}
-
 // Configuration TURN depuis variables d'environnement
 const TURN_CONFIG = {
   iceServers: [
@@ -24,18 +20,18 @@ const TURN_CONFIG = {
     },
     {
       urls: process.env.TURN_URL || "turn:socialstatus.furthermarket.com:80",
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL
+      username: process.env.TURN_USERNAME || "coturn",
+      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
     },
     {
       urls: process.env.TURN_URL_UDP || "turn:socialstatus.furthermarket.com:443?transport=udp",
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL
+      username: process.env.TURN_USERNAME || "coturn",
+      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
     },
     {
       urls: process.env.TURN_URL_TCP || "turn:socialstatus.furthermarket.com:443?transport=tcp",
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL
+      username: process.env.TURN_USERNAME || "coturn",
+      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
     }
   ],
   iceTransportPolicy: "relay",
