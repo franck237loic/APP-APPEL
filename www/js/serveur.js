@@ -995,6 +995,20 @@ class RoomManager {
    * UTILISATION : Empêcher un utilisateur d'être invité à une autre salle
    *             alors qu'il est déjà occupé
    * 
+  */
+  // A deliberate meeting join moves the user out of stale/previous meetings.
+  leaveUserFromOtherMeetingRooms(userId, keepRoomId) {
+    for (const [roomId, room] of this.rooms.entries()) {
+      if (roomId === keepRoomId || !room.isMeeting) continue;
+      const participant = room.participants.get(userId);
+      if (participant && (participant.state === "JOINED" || participant.state === "RINGING")) {
+        this.leave(roomId, userId);
+        console.log(`[MEETING] Removed stale membership for ${userId} from ${roomId}`);
+      }
+    }
+  }
+
+  /**
    * @param {string} userId - Identifiant de l'utilisateur
    * @returns {boolean} true si l'utilisateur est JOINED ou RINGING dans une salle
    */
@@ -1634,6 +1648,7 @@ class MeetingManager {
     // puis ajouter explicitement l'hôte pour éviter le cas où la réunion est créée
     // sans participant malgré des personnes déjà en attente.
     const room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, newEndsAt);
+    roomManager.leaveUserFromOtherMeetingRooms(userId, room.roomId);
     roomManager.join(room.roomId, userId);
 
     // Mettre à jour Firestore avec le nouveau endsAt
@@ -1823,6 +1838,7 @@ class MeetingManager {
         // afin de garantir que le host voit bien la réunion ouverte et que les participants
         // en attente soient ensuite correctement ajoutés à la salle live.
         room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, finalEndsAt);
+        roomManager.leaveUserFromOtherMeetingRooms(userId, room.roomId);
         roomManager.join(room.roomId, userId);
 
         // Mettre à jour Firestore dans la transaction
@@ -1958,6 +1974,7 @@ class MeetingManager {
       const endsAt = meeting.endsAt || (Date.now() + (meeting.durationMin || 60) * 60 * 1000);
       const room = roomManager.createMeetingRoom(meetingId, meeting.isVideo, endsAt);
       roomManager.join(room.roomId, hostId); // hôte aussi si salle créée
+      roomManager.leaveUserFromOtherMeetingRooms(userId, room.roomId);
       roomManager.join(room.roomId, userId);
       roomId = room.roomId;
       hostNeedsJoin = true;
@@ -3518,6 +3535,9 @@ wss.on("connection", (ws) => {
             reason: "Salle introuvable ou r�union termin�e",
           }));
           return;
+        }
+        if (room.isMeeting && !room.isWaitingRoom) {
+          roomManager.leaveUserFromOtherMeetingRooms(ws.userId, roomId);
         }
         // Recover a stale membership in this meeting's own waiting room.
         if (room.isMeeting && !room.isWaitingRoom && String(roomId).startsWith("room_meeting_")) {
