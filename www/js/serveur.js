@@ -1535,6 +1535,12 @@ class MeetingManager {
 
       // Mode direct : rejoindre immédiatement la salle live
       if (room) {
+        // Leave this meeting's waiting room before adding the participant live.
+        const waitingRoomId = `room_waiting_${meetingId}`;
+        const waitingRoom = roomManager.rooms.get(waitingRoomId);
+        if (waitingRoom?.participants.has(waitingUserId)) {
+          roomManager.leave(waitingRoomId, waitingUserId);
+        }
         roomManager.join(roomId, waitingUserId);
       }
 
@@ -3513,6 +3519,17 @@ wss.on("connection", (ws) => {
           }));
           return;
         }
+        // Recover a stale membership in this meeting's own waiting room.
+        if (room.isMeeting && !room.isWaitingRoom && String(roomId).startsWith("room_meeting_")) {
+          const meetingId = String(roomId).slice("room_meeting_".length);
+          const waitingRoomId = `room_waiting_${meetingId}`;
+          const waitingRoom = roomManager.rooms.get(waitingRoomId);
+          if (waitingRoom?.participants.has(ws.userId)) {
+            roomManager.leave(waitingRoomId, ws.userId);
+            console.log(`[MEETING] ${ws.userId} moved from ${waitingRoomId} to ${roomId}`);
+          }
+        }
+
         if (room.isWaitingRoom) {
           const waitingMeetingId = roomId.slice("room_waiting_".length);
           const waitingMeetingDoc = await db.collection("meetings").doc(waitingMeetingId).get();

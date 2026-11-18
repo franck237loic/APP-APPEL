@@ -8518,7 +8518,25 @@ showLocalStorageOnScreen = () => {
     const gridId = this.groupIsMeeting ? "meeting-video-grid" : "group-grid";
     const grid = document.getElementById(gridId);
     if (!grid) return;
-    const ids = this.getGroupDisplayIds();
+    if (this.groupIsMeeting && !grid.dataset.featuredTileHandler) {
+      grid.dataset.featuredTileHandler = "1";
+      grid.addEventListener("click", (event) => {
+        const tile = event.target.closest(".video-tile");
+        if (!tile || !grid.contains(tile)) return;
+        const selectedId = Array.from(this.groupTiles.entries()).find(([, element]) => element === tile)?.[0];
+        if (!selectedId || selectedId === this.meetingPinnedParticipantId) return;
+        this.meetingPinnedParticipantId = selectedId;
+        this.renderGroupGrid();
+      });
+    }
+    let ids = this.getGroupDisplayIds();
+    if (this.groupIsMeeting) {
+      const featuredId = ids.includes(this.meetingPinnedParticipantId)
+        ? this.meetingPinnedParticipantId
+        : ids.includes(this.meetingCreatedBy) ? this.meetingCreatedBy : ids[0];
+      this.meetingPinnedParticipantId = featuredId;
+      ids = ids.slice().sort((left, right) => left === featuredId ? -1 : right === featuredId ? 1 : 0);
+    }
 
     console.log(`🔧 [GROUPE] renderGroupGrid - Tuiles à afficher: [${ids.join(", ")}]`);
 
@@ -8566,6 +8584,7 @@ showLocalStorageOnScreen = () => {
       if (grid.children[index] !== tile) {
         grid.insertBefore(tile, grid.children[index] || null);
       }
+      tile.classList.toggle("meeting-featured-tile", this.groupIsMeeting && index === 0);
       this.updateGroupTile(id);
     });
 
@@ -8626,9 +8645,9 @@ showLocalStorageOnScreen = () => {
 
     // Badge organisateur uniquement pour le vrai hôte
     let statusEl = tile.querySelector(".group-tile-status");
-    if (statusEl && this.groupIsMeeting) {
-      // status text set below; we inject host badge via dataset
+    if (this.groupIsMeeting) {
       tile.dataset.isHost = isMeetingHostUser ? "1" : "0";
+      tile.classList.toggle("meeting-host-tile", isMeetingHostUser);
     }
     tile.querySelector(".group-initial").textContent = String(userId).charAt(0).toUpperCase();
 

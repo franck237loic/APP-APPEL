@@ -2225,60 +2225,37 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   const isCreator = data.createdBy === this.myId;
 
   const html = `
-    <div class="view-container meeting-waiting-view" id="meeting-waiting-view">
-      <div class="app-container">
-        <div class="header">
-          <button class="icon-btn-top" onclick="window.closeMeetingWaitingView()">
+    <div class="view-container meeting-waiting-view active" id="meeting-waiting-view">
+      <div class="app-container waiting-room-shell">
+        <div class="header waiting-room-header">
+          <button class="icon-btn-top" onclick="window.closeMeetingWaitingView()" aria-label="Quitter la salle d'attente">
             <i class="fa-solid fa-arrow-left"></i>
           </button>
           <div class="contact-info">
-            <div class="contact-name">${isCreator ? 'Vous êtes l\'hôte' : 'Salle d\'attente'}</div>
+            <div class="contact-name">${isCreator ? 'Vous &ecirc;tes l&rsquo;h&ocirc;te' : 'Salle d&rsquo;attente'}</div>
           </div>
-          <div style="width: 40px;"></div>
+          <div class="waiting-room-secure"><i class="fa-solid fa-shield-halved"></i></div>
         </div>
 
-        <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 16px;">
-          <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #2a3942, #1f2c33);
-                     display: flex; align-items: center; justify-content: center;">
-            <i class="fa-solid fa-hourglass-half" style="font-size: 50px; color: #8696a0;"></i>
-          </div>
+        <main class="waiting-room-content">
+          <section class="waiting-room-stage" aria-live="polite">
+            <div class="waiting-room-stage-label"><span class="waiting-room-stage-icon"><i class="fa-regular fa-clock"></i></span> ${isCreator ? 'R&Eacute;UNION PROGRAMM&Eacute;E' : '&Eacute;CRAN DE L&rsquo;H&Ocirc;TE'}</div>
+            <p class="waiting-room-stage-title">${isCreator ? 'Votre r&eacute;union commence dans' : 'La r&eacute;union commence dans'}</p>
+            <div class="waiting-room-countdown" id="meeting-countdown">--:--:--</div>
+            <p class="waiting-room-stage-note">${data.scheduledAt ? new Date(data.scheduledAt).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : 'Heure de d&eacute;marrage pr&eacute;vue'}</p>
+          </section>
 
-          <div style="text-align: center;">
-            <div style="font-size: 16px; color: #8696a0; margin-bottom: 8px;">${isCreator ? 'Vous pouvez démarrer maintenant' : 'La réunion commence bientôt'}</div>
-            <div style="font-size: 24px; font-weight: 500; color: white; margin-bottom: 16px;">
-              Temps restant
-            </div>
-            <div id="meeting-countdown" style="font-size: 42px; font-weight: 600; color: #00a884;">
-              --
-            </div>
-          </div>
+          ${!isCreator && data.waitingRoomId ? `<section class="waiting-room-participants"><div class="waiting-room-participants-heading"><div><h2>Les participants</h2><p>Vous pouvez d&eacute;j&agrave; vous voir en attendant l'h&ocirc;te.</p></div><span class="waiting-room-live"><i class="fa-solid fa-circle"></i> EN ATTENTE</span></div><div id="meeting-video-grid" class="video-grid waiting-room-grid"></div></section>` : ''}
 
-          ${!isCreator && data.waitingRoomId ? `<div style="width:100%;flex:1;min-height:180px;overflow:auto;margin-top:8px;"><div style="color:#8696a0;font-size:13px;margin-bottom:8px;">Participants en attente</div><div id="meeting-video-grid" class="video-grid" style="min-height:160px;"></div></div>` : ''}
-          <div style="width: 100%; max-width: 300px; text-align: center; color: #8696a0; font-size: 13px; line-height: 1.5;">
-            ${isCreator
-              ? 'En tant qu\'hôte, vous pouvez démarrer la réunion avant l\'heure prévue. Les participants en attente seront notifiés.'
-              : 'Vous serez rejoint automatiquement lorsque la réunion commencera. L\'hôte peut également la démarrer avant l\'heure prévue.'}
+          <div class="waiting-room-actions">
+            ${isCreator ? `<button class="waiting-room-start" onclick="window.startMeeting('${data.code}')"><i class="fa-solid fa-play"></i> D&eacute;marrer la r&eacute;union</button>` : ''}
+            <button class="waiting-room-leave" onclick="window.closeMeetingWaitingView()">Quitter la salle d'attente</button>
           </div>
-
-          <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
-            ${isCreator ? `
-              <button onclick="window.startMeeting('${data.code}')"
-                      style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px;
-                             color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
-                <i class="fa-solid fa-play" style="margin-right: 8px;"></i>
-                Démarrer maintenant
-              </button>
-            ` : ''}
-            <button onclick="window.closeMeetingWaitingView()"
-                    style="width: 100%; padding: 14px; background: #374045; border: none; border-radius: 24px;
-                           color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
-              Quitter
-            </button>
-          </div>
-        </div>
+        </main>
       </div>
     </div>
   `;
+
 
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingWaitingView = document.getElementById("meeting-waiting-view");
