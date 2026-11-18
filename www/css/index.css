@@ -24,6 +24,15 @@
     position: relative;
 }
 
+html.home-page, body.home-page {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: var(--bg);
+    color: var(--text);
+}
+body.home-page { align-items: flex-start; }
 body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input, textarea, select { font: inherit; }
 .home-shell { padding: clamp(20px, 4vw, 44px); gap: 20px; }
@@ -31,8 +40,9 @@ button, input, textarea, select { font: inherit; }
 .home-header h1 { margin:0; color:var(--text); font-size:var(--font-xl); letter-spacing:-.04em; }
 .eyebrow { margin:0 0 4px; color:var(--text-muted); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 .status-pill { display:inline-flex; align-items:center; gap:8px; min-height:36px; padding:6px 12px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--text-muted); font-size:13px; }
-.status-pill span { width:9px; height:9px; border-radius:50%; background:var(--danger); }
-.status-pill.is-connected span, .status-pill.connected span { background:var(--success); }
+.status-pill .status-indicator { flex:0 0 9px; width:9px; height:9px; border-radius:50%; background:var(--danger); }
+.status-pill.is-connected .status-indicator, .status-pill.connected .status-indicator { background:var(--success); }
+.status-pill .status-label { width:auto; white-space:nowrap; }
 .home-shell .card { padding:20px; border:1px solid var(--border); border-radius:var(--radius-lg); box-shadow:var(--shadow-card); }
 .home-shell h2 { margin:0; text-align:left; color:var(--text); font-size:var(--font-lg); }
 .id-card { flex-direction:row; align-items:center; justify-content:space-between; gap:16px; }
@@ -59,7 +69,16 @@ button, input, textarea, select { font: inherit; }
 .mt-modal-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:22px; }
 .mt-modal .btn-secondary { color:#fff; background:#263546; border-color:#415065; }
 @media (min-width:760px) { .meeting-home-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-@media (max-width:420px) { .home-shell { padding:18px 14px; gap:14px; } .home-shell .card { padding:16px; } .id-card { align-items:stretch; flex-direction:column; } .id-card .btn { width:100%; } .home-header h1 { font-size:24px; } }
+@media (max-width:600px) {
+    .home-shell { padding:18px 14px; gap:14px; }
+    .home-shell .card { padding:16px; }
+    .id-card { align-items:stretch; flex-direction:column; }
+    .id-card .btn { width:100%; }
+    .home-header { align-items:flex-start; }
+    .home-header h1 { font-size:24px; }
+    .meeting-home-action { min-width:0; grid-template-columns:44px minmax(0,1fr); }
+    .meeting-home-action span, .meeting-home-action small { min-width:0; overflow-wrap:anywhere; }
+}
 
 /* Barre de sélection des interfaces */
 .switcher-bar {

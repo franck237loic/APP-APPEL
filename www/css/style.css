@@ -274,6 +274,12 @@ button:disabled {
     }
 }
 
+/* The terminal home screen uses the full responsive canvas. */
+.home-shell {
+    width: min(1120px, 100%);
+    max-width: 1120px;
+}
+
 @media (min-width: 1024px) {
     body {
         padding: 40px;
