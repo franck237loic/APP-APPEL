@@ -7,6 +7,15 @@ const { initializeApp, cert } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getFirestore } = require("firebase-admin/firestore");
 
+const MAX_TIMEOUT_MS = 2147483647;
+function safeSetTimeout(fn, delay) {
+  if (delay > MAX_TIMEOUT_MS) return setTimeout(() => safeSetTimeout(fn, delay - MAX_TIMEOUT_MS), MAX_TIMEOUT_MS);
+  return setTimeout(fn, Math.max(0, delay));
+}
+if (!process.env.TURN_USERNAME || !process.env.TURN_CREDENTIAL) {
+  throw new Error("Configuration TURN manquante : dÃ©finissez TURN_USERNAME et TURN_CREDENTIAL.");
+}
+
 // Configuration TURN depuis variables d'environnement
 const TURN_CONFIG = {
   iceServers: [
@@ -15,18 +24,18 @@ const TURN_CONFIG = {
     },
     {
       urls: process.env.TURN_URL || "turn:socialstatus.furthermarket.com:80",
-      username: process.env.TURN_USERNAME || "coturn",
-      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
     },
     {
       urls: process.env.TURN_URL_UDP || "turn:socialstatus.furthermarket.com:443?transport=udp",
-      username: process.env.TURN_USERNAME || "coturn",
-      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
     },
     {
       urls: process.env.TURN_URL_TCP || "turn:socialstatus.furthermarket.com:443?transport=tcp",
-      username: process.env.TURN_USERNAME || "coturn",
-      credential: process.env.TURN_CREDENTIAL || "Fm@camtel2026coturn"
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
     }
   ],
   iceTransportPolicy: "relay",
@@ -42,7 +51,7 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 } else {
   // Pour le dÃ©veloppement local : lire depuis un fichier
   try {
-    serviceAccount = require("./serviceAccountKey.json");
+    serviceAccount = require("../serviceAccountKey.json");
   } catch (error) {
     console.error("âŒ Erreur : Impossible de charger la clÃ© Firebase. Veuillez dÃ©finir la variable d'environnement FIREBASE_SERVICE_ACCOUNT ou placer un fichier serviceAccountKey.json");
     process.exit(1);
@@ -1302,7 +1311,7 @@ class MeetingManager {
     
     // Rappel T-10 min
     if (reminderTime > now) {
-      setTimeout(async () => {
+      safeSetTimeout(async () => {
         const doc = await db.collection("meetings").doc(meetingId).get();
         if (doc.exists && doc.data().status === "scheduled") {
           const meeting = doc.data();
@@ -1335,7 +1344,7 @@ class MeetingManager {
     
     // Notification "commence maintenant" Ã  l'heure H
     if (scheduledAt > now) {
-      setTimeout(async () => {
+      safeSetTimeout(async () => {
         const doc = await db.collection("meetings").doc(meetingId).get();
         if (doc.exists && doc.data().status === "scheduled") {
           const meeting = doc.data();
@@ -3507,8 +3516,8 @@ wss.on("connection", (ws) => {
         const { roomId } = data;
 
         // VÃ©rifier que la salle existe
-        // Après un redémarrage, restaurer une salle live depuis Firestore si le
-        // client se reconnecte avant la restauration générale au démarrage.
+        // AprÃ¨s un redÃ©marrage, restaurer une salle live depuis Firestore si le
+        // client se reconnecte avant la restauration gÃ©nÃ©rale au dÃ©marrage.
         let room = roomManager.rooms.get(roomId);
         if (!room && typeof roomId === "string" && roomId.startsWith("room_meeting_")) {
           const meetingId = roomId.slice("room_meeting_".length);
@@ -3517,22 +3526,22 @@ wss.on("connection", (ws) => {
             if (meetingDoc.exists) {
               const meeting = meetingDoc.data();
               if (meeting.status === "live" && meeting.roomId === roomId && meeting.endsAt > Date.now()) {
-                // Plusieurs personnes peuvent revenir simultanément : réutiliser
-                // la salle créée par la première requête arrivée après la lecture.
+                // Plusieurs personnes peuvent revenir simultanÃ©ment : rÃ©utiliser
+                // la salle crÃ©Ã©e par la premiÃ¨re requÃªte arrivÃ©e aprÃ¨s la lecture.
                 room = roomManager.rooms.get(roomId) ||
                   roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
-                console.log(`[MEETING] Salle live restaurée à la demande: ${roomId}`);
+                console.log(`[MEETING] Salle live restaurÃ©e Ã  la demande: ${roomId}`);
               }
             }
           } catch (error) {
-            console.error(`[MEETING] Échec restauration salle ${roomId}:`, error);
+            console.error(`[MEETING] Ã‰chec restauration salle ${roomId}:`, error);
           }
         }
         if (!room) {
           ws.send(JSON.stringify({
             type: "group-error",
             roomId,
-            reason: "Salle introuvable ou réunion terminée",
+            reason: "Salle introuvable ou rÃ©union terminÃ©e",
           }));
           return;
         }

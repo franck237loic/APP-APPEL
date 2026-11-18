@@ -36,3 +36,6 @@ test_group_call.js
 
 # Mais NE PAS ignorer serveur.js à la racine (c'est pour Render)
 !serveur.js
+
+serviceAccountKey.json
+www/js/serviceAccountKey.json

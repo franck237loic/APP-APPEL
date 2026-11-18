@@ -3239,12 +3239,11 @@ button, [role="button"] { cursor: pointer; }
         }
         break;
 
-      case "meeting-ended":
-        if (window.callManager && window.callManager.handleMeetingEndedByHost) {
-          window.callManager.handleMeetingEndedByHost(data);
+      case "meeting-reconnect":
+        if (window.callManager && window.callManager.handleMeetingReconnect) {
+          window.callManager.handleMeetingReconnect(data);
         }
         break;
-
       case "video-upgrade-offer":
         this.handleVideoUpgradeOffer(data);
         break;
@@ -5017,6 +5016,12 @@ showLocalStorageOnScreen = () => {
     const statusElement = document.querySelectorAll(".status-bar");
     for (let i = 0; i < statusElement.length; i++) {
       statusElement[i].innerText = message;
+    }
+    const homeStatus = document.getElementById("status");
+    if (homeStatus) {
+      const label = homeStatus.querySelector(".status-label");
+      if (label) label.textContent = message;
+      homeStatus.classList.toggle("is-connected", /^(en ligne|connecté)$/i.test(message.trim()));
     }
   };
 
@@ -8518,6 +8523,11 @@ showLocalStorageOnScreen = () => {
     const gridId = this.groupIsMeeting ? "meeting-video-grid" : "group-grid";
     const grid = document.getElementById(gridId);
     if (!grid) return;
+    if (this.groupIsMeeting) {
+      for (let n = 1; n <= 6; n++) grid.classList.remove(`count-${n}`);
+      grid.classList.add(`count-${Math.max(1, Math.min(this.getGroupDisplayIds().length, 6))}`);
+      grid.classList.toggle("has-screen-share", Array.from(this.groupPeerStates.values()).some((state) => state && state.screenSharing));
+    }
     if (this.groupIsMeeting && !grid.dataset.featuredTileHandler) {
       grid.dataset.featuredTileHandler = "1";
       grid.addEventListener("click", (event) => {

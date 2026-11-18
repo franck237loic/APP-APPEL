@@ -2,17 +2,41 @@
  * ============================================
  *  RÉUNIONS PLANIFIÉES - EXTENSION CALLMANAGER
  * ============================================
- * 
+ *
  * Ce fichier étend CallManager avec les fonctionnalités de réunions planifiées.
  * Il doit être inclus après CallManager.js dans index.html
  */
 
-// Une seule classe porte d�sormais les m�thodes de r�union. Elle h�rite de
-// CallManager afin de r�utiliser ses appels, son �tat WebRTC et sa connexion.
+// Une seule classe porte désormais les méthodes de réunion. Elle hérite de
+// CallManager afin de réutiliser ses appels, son état WebRTC et sa connexion.
 class Meetings extends CallManager {}
+window.escapeHtml = function(value) {
+  return String(value == null ? "" : value).replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char]));
+};
+Meetings.prototype.confirmMeetingAction = function(title, message) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "mt-modal-backdrop";
+    overlay.innerHTML = `<section class="mt-modal" role="dialog" aria-modal="true" aria-labelledby="mt-modal-title"><h2 id="mt-modal-title">${window.escapeHtml(title)}</h2><p>${window.escapeHtml(message)}</p><div class="mt-modal-actions"><button type="button" data-choice="cancel" class="btn btn-secondary">Annuler</button><button type="button" data-choice="confirm" class="btn btn-danger">Confirmer</button></div></section>`;
+    const finish = (answer) => { document.removeEventListener("keydown", onKey); overlay.remove(); resolve(answer); };
+    const onKey = (event) => { if (event.key === "Escape") finish(false); if (event.key === "Tab") { event.preventDefault(); buttons[1 - active] .focus(); active = 1 - active; } };
+    const buttons = overlay.querySelectorAll("button"); let active = 0;
+    buttons[0].addEventListener("click", () => finish(false)); buttons[1].addEventListener("click", () => finish(true));
+    overlay.addEventListener("click", (event) => { if (event.target === overlay) finish(false); });
+    document.addEventListener("keydown", onKey); document.body.appendChild(overlay); buttons[1].focus();
+  });
+};
+Meetings.prototype.copyMeetingText = async function(value, label) {
+  try { await navigator.clipboard.writeText(String(value)); this.showCallToast(`${label} copié`); }
+  catch (_) {
+    const overlay = document.createElement("div"); overlay.className = "mt-modal-backdrop";
+    overlay.innerHTML = `<section class="mt-modal" role="dialog" aria-modal="true"><h2>Copier le ${window.escapeHtml(label.toLowerCase())}</h2><input class="mt-copy-value" readonly value="${window.escapeHtml(value)}"><div class="mt-modal-actions"><button type="button" class="btn btn-secondary">Fermer</button></div></section>`;
+    const input = overlay.querySelector("input"); overlay.querySelector("button").addEventListener("click", () => overlay.remove()); overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); input.focus(); input.select();
+  }
+};
 
-// CallManager est cr�� � la fin de CallManager.js; on rattache cette instance
-// � la classe sp�cialis�e sans la recr�er ni perdre sa connexion active.
+// CallManager est créé à la fin de CallManager.js; on rattache cette instance
+// à la classe spécialisée sans la recréer ni perdre sa connexion active.
 Object.setPrototypeOf(window.callManager, Meetings.prototype);
 // ===== HANDLERS DES MESSAGES SERVEUR (réunions) =====
 // Ces méthodes sont ajoutées à Meetings.prototype
@@ -353,7 +377,7 @@ Meetings.prototype.showMeetingApprovalWaitingView = function(data) {
 
 Meetings.prototype.handleMeetingPendingRequest = function(data) {
   console.log("📅 [MEETING] Demande d'accès reçue:", data);
-  this.showCallToast(`${data.userId} demande à rejoindre`);
+  this.showCallToast(`${window.escapeHtml(data.displayName || data.userId || "Participant")} demande à rejoindre`);
   // Toujours afficher le dialogue, même si l'hôte est déjà dans la réunion
   this.showPendingRequestDialog(data);
 };
@@ -389,28 +413,31 @@ Meetings.prototype.showPendingRequestDialog = function(data) {
   dialog.id = "pending-request-dialog";
   dialog.style.zIndex = "5000";
   dialog.innerHTML = `
-    <div class="dialog-overlay" onclick="window.closePendingRequestDialog()"></div>
+    <div class="dialog-overlay" data-close-pending></div>
     <div class="dialog-content">
       <div class="dialog-header">
         <h3>Demande d'accès</h3>
-        <button class="dialog-close" onclick="window.closePendingRequestDialog()">
+        <button class="dialog-close" data-close-pending aria-label="Fermer">
           <i class="fa-solid fa-times"></i>
         </button>
       </div>
       <div class="dialog-body">
-        <p>${data.userId} souhaite rejoindre la réunion "${data.title}"</p>
+        <p>${window.escapeHtml(data.displayName || data.userId || "Participant")} souhaite rejoindre la réunion "${window.escapeHtml(data.title || "R\u00e9union")}"</p>
       </div>
       <div class="dialog-footer">
-        <button class="btn-secondary" onclick="window.rejectMeetingRequest('${data.meetingId}', '${data.userId}')">
+        <button class="btn-secondary" data-request-action="reject">
           Refuser
         </button>
-        <button class="btn-primary" onclick="window.approveMeetingRequest('${data.meetingId}', '${data.userId}')">
+        <button class="btn-primary" data-request-action="approve">
           Accepter
         </button>
       </div>
     </div>
   `;
 
+  dialog.querySelector("[data-close-pending]").addEventListener("click", () => this.closePendingRequestDialog());
+  dialog.querySelector("[data-request-action=reject]").addEventListener("click", () => window.rejectMeetingRequest(data.meetingId, data.userId));
+  dialog.querySelector("[data-request-action=approve]").addEventListener("click", () => window.approveMeetingRequest(data.meetingId, data.userId));
   document.body.appendChild(dialog);
   this.pendingRequestDialog = dialog;
   setTimeout(() => dialog.classList.add("active"), 10);
@@ -556,8 +583,8 @@ Meetings.prototype.leaveMeeting = function() {
   this.currentMeetingTitle = null;
 };
 
-Meetings.prototype.endMeetingForEveryone = function() {
-  if (!confirm("Êtes-vous sûr de vouloir terminer la réunion pour tous les participants ?")) {
+Meetings.prototype.endMeetingForEveryone = async function() {
+  if (!(await this.confirmMeetingAction("Terminer la R\u00e9union", "Voulez-vous terminer la r\u00e9union pour tous les participants ?"))) {
     return;
   }
 
@@ -568,12 +595,6 @@ Meetings.prototype.endMeetingForEveryone = function() {
     });
   }
 
-  this.leaveMeeting();
-};
-
-Meetings.prototype.handleMeetingEndedByHost = function(data) {
-  console.log("📅 [MEETING] Réunion terminée par l'hôte:", data);
-  this.showCallToast(data.reason || "Réunion terminée par l'hôte");
   this.leaveMeeting();
 };
 
@@ -601,19 +622,19 @@ Meetings.prototype.showMeetingScreen = function(data) {
       <div class="meeting-container">
         <!-- Header de réunion -->
         <div class="meeting-header">
-          <div class="meeting-info">
-            <h1 class="meeting-title">${this.currentMeetingTitle}</h1>
+          <div class="meeting-room-info">
+            <h1 class="meeting-title">${window.escapeHtml(this.currentMeetingTitle || "R\u00e9union")}</h1>
             <div class="meeting-time">${new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</div>
           </div>
           <div class="meeting-actions">
-            <button class="meeting-action-btn" onclick="window.meetingParticipants.show('${this.currentMeetingId}', '${this.groupRoomId}', ${!!this.isMeetingHost})" title="Participants">
+            <button class="meeting-action-btn" aria-label="Participants" data-meeting-action="participants" title="Participants">
               <i class="fa-solid fa-users"></i>
               <span id="participant-count">1</span>
             </button>
-            <button class="meeting-action-btn" onclick="window.meetingChat.show('${this.currentMeetingId}', '${this.groupRoomId}')" title="Chat">
+            <button class="meeting-action-btn" aria-label="Ouvrir le chat" data-meeting-action="chat" title="Chat">
               <i class="fa-solid fa-comment"></i>
             </button>
-            <button class="meeting-action-btn" onclick="window.copyMeetingCode('${this.currentMeetingCode || ''}')" title="Copier le code de la réunion">
+            <button class="meeting-action-btn" aria-label="Copier le code" data-meeting-action="copy" title="Copier le code de la réunion">
               <i class="fa-solid fa-key"></i>
             </button>
           </div>
@@ -633,22 +654,22 @@ Meetings.prototype.showMeetingScreen = function(data) {
         <div class="meeting-controls meeting-controls-raised">
           <div class="meeting-time-display" id="meeting-time-display">00:00:00</div>
           <div class="meeting-control-buttons">
-            <button class="meeting-control-btn active" id="meeting-mic-btn" onclick="window.toggleMeetingMic()" title="Micro">
+            <button class="meeting-control-btn active" id="meeting-mic-btn" aria-label="Activer ou couper le micro" onclick="window.toggleMeetingMic()" title="Micro">
               <i class="fa-solid fa-microphone"></i>
             </button>
-            <button class="meeting-control-btn active" id="meeting-cam-btn" onclick="window.toggleMeetingCam()" title="Caméra">
+            <button class="meeting-control-btn active" id="meeting-cam-btn" aria-label="Activer ou couper la cam\u00e9ra" onclick="window.toggleMeetingCam()" title="Caméra">
               <i class="fa-solid fa-video"></i>
             </button>
-            <button class="meeting-control-btn" id="meeting-screen-btn" onclick="window.toggleMeetingScreenShare()" title="Partager l'écran">
+            <button class="meeting-control-btn" id="meeting-screen-btn" aria-label="Partager l\u2019\u00e9cran" onclick="window.toggleMeetingScreenShare()" title="Partager l'écran">
               <i class="fa-solid fa-desktop"></i>
             </button>
-            <button class="meeting-control-btn" id="meeting-hand-btn" onclick="window.toggleMeetingHand()" title="Lever la main">
+            <button class="meeting-control-btn" id="meeting-hand-btn" aria-label="Lever ou baisser la main" onclick="window.toggleMeetingHand()" title="Lever la main">
               <i class="fa-solid fa-hand"></i>
             </button>
-            <button class="meeting-control-btn" id="meeting-reaction-btn" onclick="window.showMeetingReactions()" title="Réactions">
+            <button class="meeting-control-btn" id="meeting-reaction-btn" aria-label="Afficher les r\u00e9actions" onclick="window.showMeetingReactions()" title="Réactions">
               <i class="fa-solid fa-face-smile"></i>
             </button>
-            <button class="meeting-control-btn meeting-hangup" onclick="window.leaveMeeting()" title="Quitter">
+            <button class="meeting-control-btn meeting-hangup" aria-label="Quitter la r\u00e9union" onclick="window.leaveMeeting()" title="Quitter">
               <i class="fa-solid fa-phone-slash"></i>
             </button>
             ${this.isMeetingHost ? `<button class="meeting-control-btn meeting-end" onclick="window.endMeetingForEveryone()" title="Terminer pour tous">
@@ -673,6 +694,12 @@ Meetings.prototype.showMeetingScreen = function(data) {
 
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingScreen = document.getElementById("meeting-screen");
+  this.meetingScreen.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-meeting-action]")?.dataset.meetingAction;
+    if (action === "participants") window.meetingParticipants.show(this.currentMeetingId, this.groupRoomId, !!this.isMeetingHost);
+    if (action === "chat") window.meetingChat.show(this.currentMeetingId, this.groupRoomId);
+    if (action === "copy") this.copyMeetingCode(this.currentMeetingCode);
+  });
   this.meetingScreen.classList.add("active");
   document.body.classList.add("meeting-ui-active");
 
@@ -703,13 +730,6 @@ Meetings.prototype.showMeetingScreen = function(data) {
 /**
  * Attacher la vidéo locale à l'écran de réunion
  */
-Meetings.prototype.attachMeetingLocalVideo = function() {
-  const localVideo = document.getElementById("meeting-local-video");
-  if (localVideo && this.groupLocalStream) {
-    localVideo.srcObject = this.groupLocalStream;
-  }
-};
-
 /**
  * Démarrer le timer de réunion
  */
@@ -969,8 +989,8 @@ Meetings.prototype.hostMuteParticipant = function(targetUserId, media, muted = t
  * Note: la version sans confirm est définie plus haut et appelée par endMeetingForEveryone.
  * Cette version demande confirmation pour le bouton "quitter".
  */
-Meetings.prototype.leaveMeetingWithConfirm = function() {
-  if (confirm("Voulez-vous vraiment quitter la réunion?")) {
+Meetings.prototype.leaveMeetingWithConfirm = async function() {
+  if (await this.confirmMeetingAction("Quitter la r\u00e9union", "Voulez-vous vraiment quitter la r\u00e9union ?")) {
     this.leaveMeeting();
   }
 };
@@ -1019,7 +1039,7 @@ Meetings.prototype.handleMeetingList = function(data) {
 
 Meetings.prototype.handleMeetingEnded = function(data) {
   console.log("📅 [MEETING] Réunion terminée:", data.meetingId, "raison:", data.reason);
-  this.showCallToast("Réunion terminée: " + data.reason);
+  this.showCallToast(data.reason || "La réunion est terminée");
   this.closeMeetingWaitingView();
   this.closeMeetingCreatedView();
   this.closeMeetingScreen();
@@ -1085,10 +1105,10 @@ Meetings.prototype._renderMeetingList = function(data) {
 
       html += `
         <div style="background: #222d34; border-radius: 12px; padding: 16px; margin-bottom: 12px; cursor: pointer;"
-             onclick="window.openMeetingDetails('${meeting.id}')">
+             data-action="details" data-meeting-id="${window.escapeHtml(meeting.id)}">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
             <div style="flex: 1;">
-              <div style="font-size: 16px; font-weight: 500; color: white; margin-bottom: 4px;">${meeting.title}</div>
+              <div style="font-size: 16px; font-weight: 500; color: white; margin-bottom: 4px;">${window.escapeHtml(meeting.title || "R\u00e9union sans titre")}</div>
               <div style="font-size: 13px; color: #8696a0;">${dateStr} à ${timeStr}</div>
             </div>
             <div style="background: ${meeting.isVideo ? '#00a884' : '#374045'}; padding: 4px 8px; border-radius: 6px; font-size: 11px; color: white;">
@@ -1096,11 +1116,11 @@ Meetings.prototype._renderMeetingList = function(data) {
             </div>
           </div>
           <div style="display: flex; gap: 8px; margin-top: 12px;">
-            <button onclick="event.stopPropagation(); window.startMeetingFromList('${meeting.code}')"
+            <button data-action="start" data-meeting-code="${window.escapeHtml(meeting.code)}"
                     style="flex: 1; padding: 10px; background: #00a884; border: none; border-radius: 8px; color: white; font-size: 14px; cursor: pointer;">
               Démarrer
             </button>
-            <button onclick="event.stopPropagation(); window.copyMeetingCode('${meeting.code}')"
+            <button data-action="copy" data-meeting-code="${window.escapeHtml(meeting.code)}" aria-label="Copier le code"
                     style="padding: 10px 16px; background: #374045; border: none; border-radius: 8px; color: white; font-size: 14px; cursor: pointer;">
               <i class="fa-solid fa-copy"></i>
             </button>
@@ -1135,11 +1155,11 @@ Meetings.prototype._renderMeetingList = function(data) {
         <div style="background: #1f2c33; border-radius: 12px; padding: 16px; margin-bottom: 12px; opacity: 0.7;">
           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
             <div style="flex: 1;">
-              <div style="font-size: 16px; font-weight: 500; color: white; margin-bottom: 4px;">${meeting.title}</div>
+              <div style="font-size: 16px; font-weight: 500; color: white; margin-bottom: 4px;">${window.escapeHtml(meeting.title || "R\u00e9union sans titre")}</div>
               <div style="font-size: 13px; color: #8696a0;">${dateStr} à ${timeStr}</div>
             </div>
             <div style="background: ${statusColors[meeting.status] || '#374045'}; padding: 4px 8px; border-radius: 6px; font-size: 11px; color: white;">
-              ${statusLabels[meeting.status] || meeting.status}
+              ${window.escapeHtml(statusLabels[meeting.status] || meeting.status || "\u00c9tat inconnu")}
             </div>
           </div>
         </div>
@@ -1166,6 +1186,13 @@ Meetings.prototype._renderMeetingList = function(data) {
   }
 
   content.innerHTML = html;
+  content.onclick = (event) => {
+    const button = event.target.closest("[data-action]"); if (!button) return;
+    const action = button.dataset.action;
+    if (action === "details") this.openMeetingDetails(button.dataset.meetingId);
+    if (action === "start") this.startMeetingFromList(button.dataset.meetingCode);
+    if (action === "copy") this.copyMeetingText(button.dataset.meetingCode, "Code");
+  };
 };
 
 Meetings.prototype.closeMeetingListView = function() {
@@ -1199,10 +1226,10 @@ Meetings.prototype.openMeetingDetails = function(meetingId) {
 
 Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct") {
   console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
-  
+
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
-  
+
   if (!isConnected) {
     if (this.meetingConnectionRetryPending) return;
     this.meetingConnectionRetryPending = true;
@@ -1227,18 +1254,18 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     setTimeout(retryCreate, 150);
     return;
   }
-  
+
   if (!this.myId) {
     this.showCallToast("ID utilisateur requis - veuillez patienter");
     return;
   }
-  
+
   const scheduledAtTimestamp = new Date(scheduledAt).getTime();
   if (isNaN(scheduledAtTimestamp) || scheduledAtTimestamp <= Date.now()) {
     this.showCallToast("Date invalide (doit être dans le futur)");
     return;
   }
-  
+
   this.sendSignal({
     type: "meeting-create",
     title,
@@ -1255,13 +1282,13 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     this.meetingCreateTimeout = null;
     this.showCallToast("Le serveur n'a pas confirmé la création de la réunion.");
   }, 20000);
-  
+
   console.log("📅 [MEETING] Demande de création de réunion envoyée avec politique:", accessPolicy);
 };
 
 Meetings.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] joinMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
-  
+
   const normalizedCode = this.normalizeMeetingCode(code);
   if (!normalizedCode) {
     this.showCallToast("Code requis");
@@ -1270,18 +1297,18 @@ Meetings.prototype.joinMeeting = function(code) {
 
   // Stocker le code pour les réessais
   this.meetingPendingCode = normalizedCode;
-  
+
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
-  
+
   if (!isConnected) {
     // Tenter de connecter automatiquement
     this.showCallToast("Connexion en cours...");
     console.log("📅 [MEETING] WebSocket non connecté, tentative de connexion...");
-    
+
     this.connectWebSocket().then(() => {
       console.log("📅 [MEETING] Connexion terminée, nouvel état wsReadyState:", this.wsReadyState);
-      
+
       // Attendre un peu pour s'assurer que la connexion est stable
       setTimeout(() => {
         const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
@@ -1294,36 +1321,21 @@ Meetings.prototype.joinMeeting = function(code) {
         }
       }, 1000);
     });
-    
+
     return;
   }
-  
+
   if (!this.myId) {
     this.showCallToast("ID utilisateur requis - veuillez patienter");
     return;
   }
-  
+
   this.sendSignal({
     type: "meeting-join",
     code: this.meetingPendingCode,
   });
-  
-  console.log("📅 [MEETING] Demande de rejoindre réunion envoyée pour code:", this.meetingPendingCode);
-};
 
-Meetings.prototype.cancelMeeting = function(meetingId) {
-  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
-  if (!isConnected) {
-    this.showCallToast("Connexion requise");
-    return;
-  }
-  
-  this.sendSignal({
-    type: "meeting-cancel",
-    meetingId,
-  });
-  
-  console.log("📅 [MEETING] Demande d'annulation envoyée pour:", meetingId);
+  console.log("📅 [MEETING] Demande de rejoindre réunion envoyée pour code:", this.meetingPendingCode);
 };
 
 Meetings.prototype.listMeetings = function() {
@@ -1332,11 +1344,11 @@ Meetings.prototype.listMeetings = function() {
     this.showCallToast("Connexion requise");
     return;
   }
-  
+
   this.sendSignal({
     type: "meeting-list",
   });
-  
+
   console.log("📅 [MEETING] Demande de liste de réunions envoyée");
 };
 
@@ -1344,7 +1356,7 @@ Meetings.prototype.listMeetings = function() {
 
 Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   this.editingMeetingId = editMeetingId;
-  
+
   if (this.meetingCreateView) {
     this.meetingCreateView.classList.add("active");
     if (editMeetingId) {
@@ -1352,7 +1364,7 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
     }
     return;
   }
-  
+
   const html = `
     <div class="view-container meeting-create-view" id="meeting-create-view">
       <div class="app-container">
@@ -1365,22 +1377,22 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
           </div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div style="flex: 1; width: 100%; display: flex; flex-direction: column; gap: 20px; padding: 0 16px; overflow-y: auto;">
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Titre *</label>
             <input type="text" id="meeting-title" placeholder="Ex: Réunion d'équipe" maxlength="100"
-                   style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
+                   style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045;
                           border-radius: 8px; color: white; font-size: 15px; outline: none;">
           </div>
-          
+
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Description (optionnel)</label>
             <textarea id="meeting-description" placeholder="Ajoutez une description..."
-                      style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
+                      style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045;
                              border-radius: 8px; color: white; font-size: 15px; outline: none; resize: vertical; min-height: 80px;"></textarea>
           </div>
-          
+
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Mode de réunion</label>
             <div style="display: flex; gap: 10px;">
@@ -1415,11 +1427,11 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
                    style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045;
                           border-radius: 8px; color: white; font-size: 15px; outline: none;">
           </div>
-          
+
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Durée (minutes) *</label>
-            <select id="meeting-duration" 
-                    style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045; 
+            <select id="meeting-duration"
+                    style="width: 100%; padding: 12px; background: #222d34; border: 1px solid #374045;
                            border-radius: 8px; color: white; font-size: 15px; outline: none; cursor: pointer;">
               <option value="15">15 minutes</option>
               <option value="30">30 minutes</option>
@@ -1432,7 +1444,7 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
               <option value="480">8 heures</option>
             </select>
           </div>
-          
+
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Type</label>
             <div style="display: flex; gap: 10px;">
@@ -1446,19 +1458,19 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
               </button>
             </div>
           </div>
-          
+
           <div id="edit-actions" style="display: none; gap: 8px;">
-            <button onclick="window.cancelMeeting()" 
-                    style="flex: 1; padding: 12px; background: #ef5350; border: none; border-radius: 20px; 
+            <button onclick="window.cancelMeeting()"
+                    style="flex: 1; padding: 12px; background: #ef5350; border: none; border-radius: 20px;
                            color: white; font-size: 15px; font-weight: 500; cursor: pointer;">
               Annuler la réunion
             </button>
           </div>
         </div>
-        
+
         <div style="width: 100%; padding: 0 16px;">
-          <button onclick="window.confirmCreateMeeting()" 
-                  style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px; 
+          <button onclick="window.confirmCreateMeeting()"
+                  style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px;
                          color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
             ${editMeetingId ? 'Enregistrer les modifications' : 'Créer la réunion'}
           </button>
@@ -1466,18 +1478,18 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
       </div>
     </div>
   `;
-  
+
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingCreateView = document.getElementById("meeting-create-view");
   this.meetingCreateView.classList.add("active");
-  
+
   // Date par défaut (demain à 9h)
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(9, 0, 0, 0);
   tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset());
   document.getElementById("meeting-datetime").value = tomorrow.toISOString().slice(0, 16);
-  
+
   // Charger si édition
   if (editMeetingId) {
     this.loadMeetingForEdit(editMeetingId);
@@ -1488,18 +1500,18 @@ Meetings.prototype.loadMeetingForEdit = async function(meetingId) {
   try {
     if (window.meetingService) {
       const meeting = await meetingService.loadMeetingById(meetingId);
-      
+
       document.getElementById("meeting-title").value = meeting.title || "";
       document.getElementById("meeting-description").value = meeting.description || "";
-      
+
       const date = new Date(meeting.scheduledAt);
       date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
       document.getElementById("meeting-datetime").value = date.toISOString().slice(0, 16);
-      
+
       document.getElementById("meeting-duration").value = meeting.durationMin || 60;
-      
+
       this.selectMeetingType(meeting.isVideo ? "video" : "audio");
-      
+
       document.getElementById("edit-actions").style.display = "flex";
     }
   } catch (error) {
@@ -1641,14 +1653,19 @@ Meetings.prototype.confirmCreateMeeting = async function() {
 
 Meetings.prototype.cancelMeeting = async function() {
   if (!this.editingMeetingId) return;
-  
-  if (confirm("Êtes-vous sûr de vouloir annuler cette réunion ?")) {
+
+  if (await this.confirmMeetingAction("Annuler la r\u00e9union", "\u00cates-vous s\u00fbr de vouloir annuler cette r\u00e9union ?")) {
     try {
-      await this.cancelMeetingById(this.editingMeetingId);
+      const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+      if (!isConnected) {
+        this.showCallToast("Connexion requise");
+        return;
+      }
+      this.sendSignal({ type: "meeting-cancel", meetingId: this.editingMeetingId });
       this.showCallToast("Réunion annulée");
       this.closeMeetingCreateView();
       this.editingMeetingId = null;
-      
+
       // Rafraîchir la liste si affichée
       if (this.meetingListView) {
         this.listMeetings();
@@ -1665,7 +1682,7 @@ Meetings.prototype.showMeetingCreatedView = function(data) {
     this.meetingCreatedView.classList.add("active");
     return;
   }
-  
+
   const html = `
     <div class="view-container meeting-created-view" id="meeting-created-view">
       <div class="app-container">
@@ -1678,64 +1695,64 @@ Meetings.prototype.showMeetingCreatedView = function(data) {
           </div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 15px; padding: 0 16px; overflow-y: auto;">
-          <div style="width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(145deg, #00a884, #008f6f); 
+          <div style="width: 80px; height: 80px; border-radius: 50%; background: linear-gradient(145deg, #00a884, #008f6f);
                      display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
             <i class="fa-solid fa-calendar-check" style="font-size: 35px; color: white;"></i>
           </div>
-          
+
           <div style="text-align: center;">
-            <div style="font-size: 18px; font-weight: 500; color: white; margin-bottom: 4px;">${data.title}</div>
+            <div style="font-size: 18px; font-weight: 500; color: white; margin-bottom: 4px;">${window.escapeHtml(data.title || "R\u00e9union sans titre")}</div>
             <div style="font-size: 12px; color: #8696a0;">
-              ${new Date(data.scheduledAt).toLocaleString('fr-FR', { 
-                weekday: 'short', 
-                day: 'numeric', 
-                month: 'short', 
-                hour: '2-digit', 
-                minute: '2-digit' 
+              ${new Date(data.scheduledAt).toLocaleString('fr-FR', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
               })}
             </div>
             <div style="font-size: 12px; color: #8696a0; margin-top: 2px;">
               Durée: ${data.durationMin} min • ${data.isVideo ? 'Vidéo' : 'Audio'}
             </div>
           </div>
-          
+
           <div style="background: #222d34; padding: 12px; border-radius: 10px; width: 100%; text-align: center;">
             <div style="font-size: 11px; color: #8696a0; margin-bottom: 6px;">Code de la réunion</div>
             <div style="font-size: 22px; font-weight: 600; color: #00a884; letter-spacing: 2px; margin-bottom: 8px;">
-              ${data.code}
+              ${window.escapeHtml(data.code || "") }
             </div>
-            <button onclick="window.copyMeetingCode('${data.code}')" 
-                    style="padding: 8px 16px; background: #374045; border: none; border-radius: 16px; 
+            <button data-created-action="copy-code"
+                    style="padding: 8px 16px; background: #374045; border: none; border-radius: 16px;
                            color: white; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
               <i class="fa-solid fa-copy"></i>
               Copier
             </button>
           </div>
-          
+
           <div style="background: #222d34; padding: 12px; border-radius: 10px; width: 100%; text-align: center;">
             <div style="font-size: 11px; color: #8696a0; margin-bottom: 6px;">Lien de partage</div>
             <div style="font-size: 12px; color: white; word-break: break-all; margin-bottom: 8px; padding: 6px; background: #1f2c33; border-radius: 6px;">
-              ${data.link}
+              ${window.escapeHtml(data.link || "")}
             </div>
-            <button onclick="window.copyMeetingCode('${data.link}')" 
-                    style="padding: 8px 16px; background: #374045; border: none; border-radius: 16px; 
+            <button data-created-action="copy-link"
+                    style="padding: 8px 16px; background: #374045; border: none; border-radius: 16px;
                            color: white; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
               <i class="fa-solid fa-copy"></i>
               Copier
             </button>
           </div>
-          
+
           <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
-            <button onclick="window.startMeetingFromCreated('${data.code}')"
+            <button data-created-action="start"
                     style="width: 100%; padding: 12px; background: #00a884; border: none; border-radius: 20px;
                            color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex;
                            align-items: center; justify-content: center; gap: 8px;">
               <i class="fa-solid fa-play"></i>
               Démarrer maintenant
             </button>
-            <button onclick="window.shareMeetingLink('${data.link}')"
+            <button data-created-action="share"
                     style="width: 100%; padding: 12px; background: #374045; border: none; border-radius: 20px;
                            color: white; font-size: 15px; font-weight: 500; cursor: pointer; display: flex;
                            align-items: center; justify-content: center; gap: 8px;">
@@ -1747,9 +1764,16 @@ Meetings.prototype.showMeetingCreatedView = function(data) {
       </div>
     </div>
   `;
-  
+
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingCreatedView = document.getElementById("meeting-created-view");
+  this.meetingCreatedView.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-created-action]")?.dataset.createdAction;
+    if (action === "copy-code") this.copyMeetingCode(data.code);
+    if (action === "copy-link") this.copyMeetingText(data.link, "Lien");
+    if (action === "start") this.startMeeting(data.code);
+    if (action === "share") this.shareMeetingLink(data.link);
+  });
   this.meetingCreatedView.classList.add("active");
 };
 
@@ -1776,7 +1800,7 @@ Meetings.prototype.copyMeetingCode = function(code) {
       () => this.showCallToast("Échec de la copie")
     );
   } else {
-    prompt("Copiez le code:", code);
+    this.copyMeetingText(code, "Code");
   }
 };
 
@@ -1793,7 +1817,7 @@ Meetings.prototype.shareMeetingLink = function(link) {
       () => this.showCallToast("Échec de la copie")
     );
   } else {
-    prompt("Copiez le lien:", link);
+    this.copyMeetingText(link, "Lien");
   }
 };
 
@@ -1821,13 +1845,13 @@ Meetings.prototype.startMeetingFromCreated = function(code) {
 
 Meetings.prototype.startMeeting = function(code) {
   console.log("📅 [MEETING] startMeeting appelé pour code:", code);
-  
+
   const cleanCode = this.normalizeMeetingCode(code);
   if (!cleanCode) {
     this.showCallToast("Code requis");
     return;
   }
-  
+
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
   if (!isConnected) {
     this.showCallToast("Connexion requise");
@@ -1843,7 +1867,7 @@ Meetings.prototype.startMeeting = function(code) {
     type: "meeting-force-start",
     code: cleanCode,
   });
-  
+
   console.log("📅 [MEETING] Demande de démarrage forcé pour:", cleanCode);
 };
 
@@ -1856,7 +1880,7 @@ Meetings.prototype.showMeetingJoinView = function(prefillCode) {
     }
     return;
   }
-  
+
   const html = `
     <div class="view-container meeting-join-view" id="meeting-join-view">
       <div class="app-container">
@@ -1869,26 +1893,26 @@ Meetings.prototype.showMeetingJoinView = function(prefillCode) {
           </div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div style="flex: 1; width: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; padding: 0 16px;">
-          <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #2a3942, #1f2c33); 
+          <div style="width: 120px; height: 120px; border-radius: 50%; background: linear-gradient(145deg, #2a3942, #1f2c33);
                      display: flex; align-items: center; justify-content: center;">
             <i class="fa-solid fa-key" style="font-size: 50px; color: #8696a0;"></i>
           </div>
-          
+
           <div style="width: 100%;">
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Code de la réunion</label>
             <input type="text" id="meeting-code-input" placeholder="ABC-123-XYZ" maxlength="11"
-                   style="width: 100%; padding: 16px; background: #222d34; border: 1px solid #374045; 
-                          border-radius: 12px; color: white; font-size: 20px; font-weight: 500; text-align: center; 
+                   style="width: 100%; padding: 16px; background: #222d34; border: 1px solid #374045;
+                          border-radius: 12px; color: white; font-size: 20px; font-weight: 500; text-align: center;
                           letter-spacing: 2px; text-transform: uppercase; outline: none;"
                    oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9-]/g, '')"
                    value="${prefillCode || ''}">
           </div>
-          
+
           <div style="width: 100%;">
-            <button onclick="window.confirmJoinMeeting()" 
-                    style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px; 
+            <button onclick="window.confirmJoinMeeting()"
+                    style="width: 100%; padding: 14px; background: #00a884; border: none; border-radius: 24px;
                            color: white; font-size: 16px; font-weight: 500; cursor: pointer;">
               Rejoindre
             </button>
@@ -1897,11 +1921,11 @@ Meetings.prototype.showMeetingJoinView = function(prefillCode) {
       </div>
     </div>
   `;
-  
+
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingJoinView = document.getElementById("meeting-join-view");
   this.meetingJoinView.classList.add("active");
-  
+
   setTimeout(() => {
     const input = document.getElementById("meeting-code-input");
     if (input) input.focus();
@@ -1946,23 +1970,23 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
           </div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div class="preview-container">
-          <div class="meeting-info">
+          <div class="meeting-preview-info">
             <h2 id="preview-meeting-title">Chargement...</h2>
             <div class="organizer" id="preview-meeting-organizer">
               <i class="fa-solid fa-user"></i>
               <span>Organisateur: --</span>
             </div>
           </div>
-          
+
           <div class="preview-video" id="preview-video-container">
             <video id="preview-video" autoplay muted playsinline></video>
             <div class="avatar" id="preview-avatar" style="display: none;">
               <i class="fa-solid fa-user"></i>
             </div>
           </div>
-          
+
           <div class="preview-controls">
             <button class="preview-control-btn active" id="preview-mic-btn" onclick="window.togglePreviewMic()">
               <i class="fa-solid fa-microphone"></i>
@@ -1971,14 +1995,14 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
               <i class="fa-solid fa-video"></i>
             </button>
           </div>
-          
+
           <div class="device-selector" id="camera-selector-container" style="display: none;">
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Caméra</label>
             <select id="camera-select" onchange="window.selectCamera(this.value)">
               <option value="">Caméra par défaut</option>
             </select>
           </div>
-          
+
           <div class="device-selector" id="mic-selector-container" style="display: none;">
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Microphone</label>
             <select id="mic-select" onchange="window.selectMicrophone(this.value)">
@@ -1988,14 +2012,14 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
           <div class="meeting-code-card">
             <div>
               <span>Code de la réunion</span>
-              <strong>${code}</strong>
+              <strong>${window.escapeHtml(code)}</strong>
             </div>
-            <button class="meeting-code-copy" onclick="window.copyMeetingCode('${code}')" aria-label="Copier le code de la réunion">
+            <button class="meeting-code-copy" data-action="copy-meeting-code" aria-label="Copier le code de la réunion">
               <i class="fa-solid fa-copy"></i>
             </button>
           </div>
         </div>
-        <button class="join-button" id="join-meeting-btn" onclick="window.confirmJoinMeetingFromPreview('${code}')">
+        <button class="join-button" id="join-meeting-btn" data-action="join-meeting-code">
           Rejoindre la réunion
         </button>
       </div>
@@ -2006,6 +2030,10 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
   this.meetingPreviewView = document.getElementById("meeting-preview-view");
   this.meetingPreviewView.classList.add("active");
   document.body.classList.add("meeting-ui-active");
+  this.meetingPreviewView.addEventListener("click", (event) => {
+    if (event.target.closest("[data-action=copy-meeting-code]")) this.copyMeetingText(code, "Code");
+    if (event.target.closest("[data-action=join-meeting-code]")) this.confirmJoinMeetingFromPreview(code);
+  });
 
   // Afficher la prévisualisation sans attendre la requête réseau des détails.
   this.previewMicEnabled = true;
@@ -2037,7 +2065,7 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
 Meetings.prototype.closeMeetingPreviewView = function() {
   this.stopPreview();
   document.body.classList.remove("meeting-ui-active");
-  
+
   if (this.meetingPreviewView) {
     this.meetingPreviewView.classList.remove("active");
     setTimeout(() => {
@@ -2052,12 +2080,12 @@ Meetings.prototype.closeMeetingPreviewView = function() {
 Meetings.prototype.loadPreviewDevices = async function() {
   try {
     const devices = await meetingMediaAdapter.getDevices();
-    
+
     const cameraSelect = document.getElementById("camera-select");
     const micSelect = document.getElementById("mic-select");
     const camContainer = document.getElementById("camera-selector-container");
     const micContainer = document.getElementById("mic-selector-container");
-    
+
     if (cameraSelect && camContainer && devices.cameras && devices.cameras.length > 1) {
       camContainer.style.display = "block";
       devices.cameras.forEach(device => {
@@ -2067,7 +2095,7 @@ Meetings.prototype.loadPreviewDevices = async function() {
         cameraSelect.appendChild(option);
       });
     }
-    
+
     if (micSelect && micContainer && devices.microphones && devices.microphones.length > 1) {
       micContainer.style.display = "block";
       devices.microphones.forEach(device => {
@@ -2095,15 +2123,15 @@ Meetings.prototype.startPreview = async function() {
         throw new Error("Autorisation caméra ou microphone refusée");
       }
     }
-    
+
     const isVideo = this.previewCamEnabled;
     this.previewStream = await meetingMediaAdapter.preparePreview(isVideo, this.previewMicEnabled);
-    
+
     const videoElement = document.getElementById("preview-video");
     const avatarElement = document.getElementById("preview-avatar");
     const container = document.getElementById("preview-video-container");
     if (!videoElement || !container) return;
-    
+
     if (isVideo && this.previewStream && this.previewStream.getVideoTracks().length > 0) {
       videoElement.srcObject = this.previewStream;
       videoElement.style.display = "block";
@@ -2138,7 +2166,7 @@ Meetings.prototype.stopPreview = function() {
 
 Meetings.prototype.togglePreviewMic = function() {
   this.previewMicEnabled = !this.previewMicEnabled;
-  
+
   const btn = document.getElementById("preview-mic-btn");
   if (this.previewMicEnabled) {
     btn.classList.remove("inactive");
@@ -2158,7 +2186,7 @@ Meetings.prototype.togglePreviewMic = function() {
 
 Meetings.prototype.togglePreviewCam = function() {
   this.previewCamEnabled = !this.previewCamEnabled;
-  
+
   const btn = document.getElementById("preview-cam-btn");
   if (this.previewCamEnabled) {
     btn.classList.remove("inactive");
@@ -2196,7 +2224,7 @@ Meetings.prototype.confirmJoinMeetingFromPreview = async function(code) {
   const btn = document.getElementById("join-meeting-btn");
   btn.disabled = true;
   btn.textContent = "Connexion...";
-  
+
   try {
     const meetingIsVideo = this.previewMeetingIsVideo ?? meetingService.currentMeeting?.isVideo ?? this.previewCamEnabled;
     this.pendingMeetingMediaPreferences = {
@@ -2262,7 +2290,7 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
           ${!isCreator && data.waitingRoomId ? `<section class="waiting-room-participants"><div class="waiting-room-participants-heading"><div><h2>Les participants</h2><p>Vous pouvez d&eacute;j&agrave; vous voir en attendant l'h&ocirc;te.</p></div><span class="waiting-room-live"><i class="fa-solid fa-circle"></i> EN ATTENTE</span></div><div id="meeting-video-grid" class="video-grid waiting-room-grid"></div></section>` : ''}
 
           <div class="waiting-room-actions">
-            ${isCreator ? `<button class="waiting-room-start" onclick="window.startMeeting('${data.code}')"><i class="fa-solid fa-play"></i> D&eacute;marrer la r&eacute;union</button>` : ''}
+            ${isCreator ? `<button class="waiting-room-start" data-meeting-code="${window.escapeHtml(data.code)}"><i class="fa-solid fa-play"></i> D&eacute;marrer la r&eacute;union</button>` : ''}
             <button class="waiting-room-leave" onclick="window.closeMeetingWaitingView()">Quitter la salle d'attente</button>
           </div>
         </main>
@@ -2274,6 +2302,8 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingWaitingView = document.getElementById("meeting-waiting-view");
   this.meetingWaitingView.classList.add("active");
+  const startButton = this.meetingWaitingView.querySelector("[data-meeting-code]");
+  if (startButton) startButton.addEventListener("click", () => this.startMeeting(startButton.dataset.meetingCode));
 
   this._updateMeetingCountdown(data);
 };
@@ -2323,7 +2353,7 @@ Meetings.prototype.closeMeetingWaitingView = function() {
     clearInterval(this.meetingTimer);
     this.meetingTimer = null;
   }
-  
+
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.remove("active");
     setTimeout(() => {
@@ -2351,41 +2381,41 @@ Meetings.prototype.closeMeetingWaitingView = function() {
 Meetings.prototype.extractMeetingCodeFromURL = function() {
   try {
     let urlStr = window.location.href;
-    
+
     if (window.cordova && window.cordova.plugins && window.cordova.plugins.launcher) {
       const launchUrl = window.cordova.plugins.launcher.getLaunchUrl();
       if (launchUrl) {
         urlStr = launchUrl;
       }
     }
-    
+
     const url = new URL(urlStr);
     let code = null;
-    
+
     const pathMatch = url.pathname.match(/\/join\/([A-Z0-9-]{9,11})/i);
     if (pathMatch) {
       code = pathMatch[1].toUpperCase();
     }
-    
+
     if (!code) {
       code = url.searchParams.get('code');
       if (code) {
         code = code.toUpperCase();
       }
     }
-    
+
     if (code) {
       code = code.replace(/[^A-Z0-9-]/g, '');
       if (code.length === 9 && !code.includes('-')) {
         code = code.slice(0, 3) + '-' + code.slice(3, 6) + '-' + code.slice(6);
       }
     }
-    
+
     if (code) {
       console.log("📅 [MEETING] Code extrait de l'URL:", code);
       return code;
     }
-    
+
     return null;
   } catch (e) {
     console.error("❌ Erreur extraction code URL:", e);
@@ -2409,7 +2439,7 @@ Meetings.prototype.handleDeepLink = function() {
         }
       }
     };
-    
+
     setTimeout(checkAndJoin, 500);
   }
 };
@@ -2484,24 +2514,24 @@ if (document.readyState === 'complete') {
 
 
 // ============================================================================
-// MODULE MEETINGS : services internes, m�dias, participants et chat.
-// Les instances globales ci-dessous gardent les points d'entr�e utilis�s par
+// MODULE MEETINGS : services internes, médias, participants et chat.
+// Les instances globales ci-dessous gardent les points d'entrée utilisés par
 // CallManager et les boutons HTML existants.
 // ============================================================================
 
 
 // Une classe unique regroupe les composants internes du meeting.
 
-  // --- SERVICE ET �TAT DES R�UNIONS ---
+  // --- SERVICE ET ÉTAT DES RÉUNIONS ---
 
 /**
  * ============================================
  *  MEETING SERVICE - SERVICE ISOLÉ POUR LES RÉUNIONS
  * ============================================
- * 
+ *
  * Ce service gère toute la logique métier des réunions planifiées,
  * indépendamment du système d'appel classique (CallManager).
- * 
+ *
  * RESPONSABILITÉS:
  * - Gestion de l'état des réunions
  * - Interface avec Firebase Firestore
@@ -2509,7 +2539,7 @@ if (document.readyState === 'complete') {
  * - Chat de réunion
  * - Permissions
  * - Notifications de réunion
- * 
+ *
  * PRINCIPE: Ne pas modifier CallManager, utiliser MeetingMediaAdapter
  * pour l'intégration avec le système d'appel de groupe existant.
  */
@@ -2815,22 +2845,22 @@ Meetings.MeetingService = class MeetingService {
   };
 
 
-// --- M�DIAS ET P�RIPH�RIQUES ---
+// --- MÉDIAS ET PÉRIPHÉRIQUES ---
 
 /**
  * ============================================
  *  MEETING MEDIA ADAPTER
  * ============================================
- * 
+ *
  * Ce fichier sert d'interface entre le module Meeting et le système d'appel
  * de groupe existant (CallManager).
- * 
+ *
  * RESPONSABILITÉS:
  * - Adapter les meetings aux appels de groupe existants
  * - Gérer la transition meeting → salle live
  * - Gérer les médias (caméra/micro) pour les meetings
  * - Ne PAS modifier CallManager.js
- * 
+ *
  * PRINCIPE: Utiliser les interfaces existantes de CallManager pour les appels
  * de groupe, mais isoler la logique spécifique aux meetings.
  */
@@ -2936,17 +2966,17 @@ Meetings.MeetingMediaAdapter = class MeetingMediaAdapter {
         const analyser = audioContext.createAnalyser();
         const source = audioContext.createMediaStreamSource(stream);
         source.connect(analyser);
-        
+
         analyser.fftSize = 256;
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        
+
         const checkLevel = () => {
           analyser.getByteFrequencyData(dataArray);
           const sum = dataArray.reduce((a, b) => a + b, 0);
           const average = sum / dataArray.length;
           resolve(average);
         };
-        
+
         checkLevel();
       } catch (error) {
         reject(error);
@@ -2986,7 +3016,7 @@ Meetings.MeetingMediaAdapter = class MeetingMediaAdapter {
    */
   async toggleCamera(enabled) {
     if (!this.callManager) return;
-    
+
     if (enabled) {
       await this.callManager.enableGroupCamera();
     } else {
@@ -2999,7 +3029,7 @@ Meetings.MeetingMediaAdapter = class MeetingMediaAdapter {
    */
   async toggleMicrophone(enabled) {
     if (!this.callManager) return;
-    
+
     if (enabled) {
       await this.callManager.enableGroupMicrophone();
     } else {
@@ -3059,7 +3089,7 @@ Meetings.MeetingMediaAdapter = class MeetingMediaAdapter {
  * ============================================
  *  MEETING PARTICIPANTS - GESTION DES PARTICIPANTS
  * ============================================
- * 
+ *
  * Ce fichier gère l'affichage et la gestion des participants
  * pendant une réunion en cours.
  */
@@ -3096,7 +3126,7 @@ Meetings.MeetingParticipants = class MeetingParticipants {
           <div class="chat-title">Participants</div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div class="participants-list" id="participants-list">
           <div class="loading-spinner"></div>
         </div>
@@ -3182,13 +3212,13 @@ Meetings.MeetingParticipants = class MeetingParticipants {
       const camEnabled = p.camEnabled !== false;
 
       html += `
-        <div class="participant-item" data-user-id="${userId}">
+        <div class="participant-item" data-user-id="${window.escapeHtml(userId)}">
           <div class="participant-avatar">
-            ${p.name ? String(p.name).slice(0, 2).toUpperCase() : String(userId).slice(-2).toUpperCase()}
+            ${p.name ? window.escapeHtml(String(p.name).slice(0, 2).toUpperCase()) : String(userId).slice(-2).toUpperCase()}
           </div>
           <div class="participant-info">
             <div class="participant-name">
-              ${isSelf ? "Vous" : userId}
+              ${isSelf ? "Vous" : window.escapeHtml(p.displayName || p.name || userId)}
               ${isOrganizer ? '<span style="color: #00a884; font-size: 11px; margin-left: 4px;">(Organisateur)</span>' : ''}
             </div>
             <div class="participant-role">${state}</div>
@@ -3203,13 +3233,13 @@ Meetings.MeetingParticipants = class MeetingParticipants {
           </div>
           ${this.isHost && !isSelf ? `
             <div class="participant-actions">
-              <button class="participant-action-btn" onclick="window.hostMuteParticipant('${userId}', 'mic', true)" title="Couper le micro">
+              <button class="participant-action-btn" data-participant-action="mic" title="Couper le micro">
                 <i class="fa-solid fa-microphone-slash"></i>
               </button>
-              <button class="participant-action-btn" onclick="window.hostMuteParticipant('${userId}', 'cam', true)" title="Couper la caméra">
+              <button class="participant-action-btn" data-participant-action="cam" title="Couper la caméra">
                 <i class="fa-solid fa-video-slash"></i>
               </button>
-              <button class="participant-action-btn" onclick="window.meetingParticipants.removeParticipant('${userId}')" title="Retirer">
+              <button class="participant-action-btn" data-participant-action="remove" title="Retirer">
                 <i class="fa-solid fa-user-minus"></i>
               </button>
             </div>
@@ -3219,13 +3249,21 @@ Meetings.MeetingParticipants = class MeetingParticipants {
     });
 
     listContainer.innerHTML = html;
+    listContainer.onclick = (event) => {
+      const btn = event.target.closest("[data-participant-action]"); if (!btn) return;
+      const userId = btn.closest("[data-user-id]")?.dataset.userId; if (!userId) return;
+      if (btn.dataset.participantAction === "mic") window.hostMuteParticipant(userId, "mic", true);
+      if (btn.dataset.participantAction === "cam") window.hostMuteParticipant(userId, "cam", true);
+      if (btn.dataset.participantAction === "remove") this.removeParticipant(userId);
+    };
   }
 
   /**
    * Retirer un participant
    */
   async removeParticipant(userId) {
-    if (!confirm(`Retirer ${userId} de la réunion ?`)) return;
+    const displayName = this.participants?.[userId]?.displayName || userId;
+    if (!await window.callManager.confirmMeetingAction("Retirer un participant", `Retirer ${displayName} de la r\u00e9union ?`)) return;
 
     const toast = (msg) => {
       if (window.callManager && typeof window.callManager.showCallToast === "function") {
@@ -3288,13 +3326,13 @@ Meetings.MeetingParticipants = class MeetingParticipants {
   }
   };
 
-// --- CHAT EN TEMPS R�EL ---
+// --- CHAT EN TEMPS RÉEL ---
 
 /**
  * ============================================
  *  MEETING CHAT - CHAT INTÉGRÉ AUX RÉUNIONS
  * ============================================
- * 
+ *
  * Ce fichier gère le chat de réunion avec envoi/réception
  * de messages en temps réel.
  */
@@ -3334,11 +3372,11 @@ Meetings.MeetingChat = class MeetingChat {
           <div class="chat-title">Chat</div>
           <div style="width: 40px;"></div>
         </div>
-        
+
         <div class="chat-messages" id="chat-messages">
           <div class="loading-spinner"></div>
         </div>
-        
+
         <div class="chat-input-container">
           <input type="text" id="chat-input" class="chat-input" maxlength="1000" placeholder="Écrire un message..."
                  onkeypress="if(event.key === 'Enter') window.meetingChat.sendMessage()">
@@ -3414,7 +3452,7 @@ Meetings.MeetingChat = class MeetingChat {
     this.messages.forEach(msg => {
       const isOwn = msg.userId === window.callManager?.myId;
       const time = new Date(Number(msg.timestamp) || Date.now()).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-      
+
       html += `
         <div class="chat-message ${isOwn ? 'own' : 'other'}">
           <div class="chat-message-content">${this.escapeHtml(msg.message)}</div>
@@ -3557,7 +3595,7 @@ Meetings.MeetingChat = class MeetingChat {
   }
 };
 
-// Instances utilis�es par les fonctions CallManager et l'interface.
+// Instances utilisées par les fonctions CallManager et l'interface.
 const meetingService = new Meetings.MeetingService();
 const meetingMediaAdapter = new Meetings.MeetingMediaAdapter();
 const meetingParticipants = new Meetings.MeetingParticipants();
@@ -3566,5 +3604,3 @@ window.meetingService = meetingService;
 window.meetingMediaAdapter = meetingMediaAdapter;
 window.meetingParticipants = meetingParticipants;
 window.meetingChat = meetingChat;
-
-
