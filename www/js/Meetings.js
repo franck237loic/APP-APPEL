@@ -120,6 +120,13 @@ Meetings.prototype.handleMeetingJoined = async function(data) {
   this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
 
   // Enchaîner sur l'appel de groupe existant
+  this.groupJoinPending = true;
+  clearTimeout(this.groupRequestTimer);
+  this.groupRequestTimer = setTimeout(() => {
+    if (this.groupJoinPending && this.groupRoomId === data.roomId) {
+      this.finishGroupCall("Impossible de rejoindre la reunion. Reessayez.");
+    }
+  }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
   this.sendSignal({
     type: "group-join",
     roomId: data.roomId,
@@ -168,6 +175,13 @@ Meetings.prototype.handleMeetingReconnect = async function(data) {
   this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
 
   // Rejoindre la salle
+  this.groupJoinPending = true;
+  clearTimeout(this.groupRequestTimer);
+  this.groupRequestTimer = setTimeout(() => {
+    if (this.groupJoinPending && this.groupRoomId === data.roomId) {
+      this.finishGroupCall("Impossible de se reconnecter a la reunion.");
+    }
+  }, CallManager.GROUP_REQUEST_TIMEOUT_MS);
   this.sendSignal({
     type: "group-join",
     roomId: data.roomId,
