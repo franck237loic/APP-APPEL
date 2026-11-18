@@ -18,57 +18,13 @@
       — ne pas les dupliquer ici, sinon CallManager refuse d'injecter son HTML complet
       (bascule caméra, haut-parleur, badges, etc.).
     -->
-  <div class="container">
-    <h2>Appel Audio P2P</h2>
-    <!-- Les éléments audio distants sont aussi créés par CallManager ; on garde
-           remoteAudio ici pour compatibilité si besoin. -->
+  <main class="container home-shell">
     <audio id="remoteAudio" autoplay playsinline></audio>
-
-    <!-- Mon ID généré -->
-    <div class="card">
-      <span class="label">Votre ID d'installation :</span>
-      <div id="my-id-display" class="id-box">Génération...</div>
-      <button id="btn-copy" type="button" onclick="copyMyId()">
-        Copier mon ID
-      </button>
-    </div>
-
-    <!-- Zone pour composer un ID -->
-    <div class="card">
-      <label for="target-id-input">ID du destinataire (plusieurs IDs séparés par une virgule = appel de groupe) :</label>
-      <input type="text" id="target-id-input" placeholder="Ex: ID-111 ou ID-111, ID-222" />
-
-      <!-- ===== BOUTONS D'APPEL ======================================
-           Uniquement 2 actions sur l'écran d'accueil :
-             - Appel audio  -> makeCall()      (CallManager.makeCall(false))
-             - Appel vidéo  -> makeVideoCall() (CallManager.makeCall(true))
-           Les autres boutons (Couper le serveur, Raccrocher, Voir localStorage)
-           ont été retirés : le raccrochage se fait depuis les écrans d'appel
-           (interface-1 / interface-3) injectés par CallManager.js.
-      ============================================================= -->
-      <div class="actions">
-        <button id="btn-call" class="btn-green" type="button" onclick="makeCall()">
-          📞 Appel audio
-        </button>
-        <button id="btn-video-call" class="btn-green" type="button" onclick="makeVideoCall()">
-          🎥 Appel vidéo
-        </button>
-          <button id="btn-meeting-instant" class="btn-green" type="button" onclick="startInstantMeeting()">
-          ⚡ Nouvelle réunion
-        </button>
-        <button id="btn-meeting-create" class="btn-green" type="button" onclick="showMeetingCreateView()">
-          📅 Planifier une réunion
-        </button>
-        <button id="btn-meeting-join" class="btn-green" type="button" onclick="showMeetingJoinView()">
-          📅 Rejoindre une réunion
-        </button>
-        
-      </div>
-    </div>
-
-    <!-- Indicateur de statut (CallManager met aussi à jour .status-bar) -->
-    <div id="status" class="status-bar">Hors ligne</div>
-  </div>
+    <header class="home-header"><div><p class="eyebrow">Communication s&eacute;curis&eacute;e</p><h1>Terminal</h1></div><div id="status" class="status-pill" role="status"><span class="status-indicator"></span><span class="status-label">Hors ligne</span></div></header>
+    <section class="card id-card" aria-label="Identifiant du terminal"><div><span class="label">Votre identifiant</span><div id="my-id-display" class="id-box">G&eacute;n&eacute;ration...</div></div><button id="btn-copy" class="btn btn-secondary" type="button" onclick="copyMyId()" aria-label="Copier mon identifiant"><i class="fa-regular fa-copy"></i> Copier l'ID</button></section>
+    <section class="card call-card"><div><p class="eyebrow">Communication directe</p><h2>Appeler</h2></div><label class="sr-only" for="target-id-input">Identifiant &agrave; appeler</label><input type="text" id="target-id-input" placeholder="Saisir un identifiant" autocomplete="off"/><div class="actions"><button id="btn-call" class="btn btn-primary" type="button" onclick="makeCall()"><i class="fa-solid fa-phone"></i> Audio</button><button id="btn-video-call" class="btn btn-secondary" type="button" onclick="makeVideoCall()"><i class="fa-solid fa-video"></i> Video</button></div></section>
+    <section class="meeting-home-section"><div><p class="eyebrow">&Eacute;changez &agrave; plusieurs</p><h2>R&eacute;unions</h2></div><div class="meeting-home-grid"><button id="btn-meeting-instant" class="meeting-home-action" type="button" onclick="startInstantMeeting()"><i class="fa-solid fa-video"></i><span>Nouvelle r&eacute;union</span><small>D&eacute;marrer tout de suite</small></button><button id="btn-meeting-join" class="meeting-home-action" type="button" onclick="showMeetingJoinView()"><i class="fa-solid fa-keyboard"></i><span>Rejoindre avec un code</span><small>Entrer dans une r&eacute;union</small></button><button id="btn-meeting-create" class="meeting-home-action" type="button" onclick="showMeetingCreateView()"><i class="fa-solid fa-calendar-plus"></i><span>Planifier</span><small>Cr&eacute;er un rendez-vous</small></button></div></section>
+  </main>
 
   <script src="cordova.js"></script>
   <script src="js/effet.js"></script>
