@@ -1331,7 +1331,7 @@ Meetings.prototype.openMeetingDetails = function(meetingId) {
 
 // ===== MÉTHODES DE RÉUNION =====
 
-Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct") {
+Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct", waitingMusicTracks = []) {
   console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
 
   // Pour Cordova : utiliser wsReadyState, pour navigateur : utiliser ws.readyState
@@ -1349,7 +1349,7 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
       const nowConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
       if (nowConnected) {
         this.meetingConnectionRetryPending = false;
-        this.createMeeting(title, scheduledAt, durationMin, isVideo, participants, description, accessPolicy);
+        this.createMeeting(title, scheduledAt, durationMin, isVideo, participants, description, accessPolicy, waitingMusicTracks);
       } else if (Date.now() < deadline) {
         setTimeout(retryCreate, 200);
       } else {
@@ -1382,6 +1382,7 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     isVideo: !!isVideo,
     participants: participants || [],
     accessPolicy: accessPolicy || "direct",
+    waitingMusicTracks,
   });
 
   clearTimeout(this.meetingCreateTimeout);
@@ -1552,6 +1553,13 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
             </select>
           </div>
 
+          ${editMeetingId ? '' : `<div class="scheduled-waiting-music-picker">
+            <label style="color:#8696a0;font-size:13px;margin-bottom:8px;display:block;">Musique pendant l’attente (optionnel)</label>
+            <label class="waiting-music-choose" for="meeting-scheduled-music-files">Choisir une liste de morceaux</label>
+            <input id="meeting-scheduled-music-files" type="file" accept="audio/*" multiple hidden>
+            <div id="meeting-scheduled-music-names" style="color:#8696a0;font-size:12px;margin-top:8px;">Aucune musique sélectionnée · 10 morceaux maximum, 2 Mo au total</div>
+          </div>`}
+
           <div>
             <label style="color: #8696a0; font-size: 13px; margin-bottom: 8px; display: block;">Type</label>
             <div style="display: flex; gap: 10px;">
@@ -1589,6 +1597,12 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingCreateView = document.getElementById("meeting-create-view");
   this.meetingCreateView.classList.add("active");
+  const musicInput = document.getElementById("meeting-scheduled-music-files");
+  if (musicInput) musicInput.addEventListener("change", () => {
+    const files = Array.from(musicInput.files || []);
+    const names = document.getElementById("meeting-scheduled-music-names");
+    if (names) names.textContent = files.length ? files.map((file) => file.name).join(" • ") : "Aucune musique sélectionnée · 10 morceaux maximum, 2 Mo au total";
+  });
 
   // Date par défaut (demain à 9h)
   const tomorrow = new Date();
@@ -1687,6 +1701,7 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   const duration = document.getElementById("meeting-duration").value;
   const isVideo = document.getElementById("meeting-type-video").classList.contains("active");
   const isInstant = document.getElementById("meeting-mode-instant").classList.contains("active");
+  const musicFiles = Array.from(document.getElementById("meeting-scheduled-music-files")?.files || []);
 
   if (!title) {
     this.showCallToast("Veuillez entrer un titre");
@@ -1746,8 +1761,23 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   // Récupérer la politique d'accès
   const accessPolicy = document.getElementById("access-approval").classList.contains("active") ? "approval" : "direct";
 
+  if (musicFiles.length > 10 || musicFiles.some((file) => !/^audio\//i.test(file.type)) || musicFiles.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 * 1024) {
+    this.showCallToast("Choisis jusqu’à 10 fichiers audio, 2 Mo au total maximum");
+    return;
+  }
+  const waitingMusicTracks = await Promise.all(musicFiles.map((file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ dataUrl: reader.result, name: file.name });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  })));
+  this.waitingMusicTracks = waitingMusicTracks;
+  this.waitingMusicTrackIndex = 0;
+  this.waitingMusicDataUrl = waitingMusicTracks[0]?.dataUrl || null;
+  this.waitingMusicTitle = waitingMusicTracks.map((track) => track.name).join(" • ");
+
   // Mode création
-  this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy);
+  this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy, waitingMusicTracks);
   this.closeMeetingCreateView();
 
   // Si réunion immédiate, attendre un peu puis rejoindre automatiquement
@@ -2367,14 +2397,14 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
   this.waitingMusicStoppedForMeeting = false;
+  const isCreator = data.createdBy === this.myId;
 
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.add("active");
     this._updateMeetingCountdown(data);
+    if (isCreator && this.waitingMusicTracks?.length) this.playWaitingMusicLocally();
     return;
   }
-
-  const isCreator = data.createdBy === this.myId;
 
   const html = `
     <div class="view-container meeting-waiting-view active" id="meeting-waiting-view">
@@ -2427,6 +2457,7 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   const stopAll = this.meetingWaitingView.querySelector("#meeting-waiting-music-stop-all");
   if (stopAll) stopAll.addEventListener("click", () => this.stopWaitingMusicForEveryone());
   this.updateWaitingMusicControls();
+  if (isCreator && this.waitingMusicTracks?.length) this.playWaitingMusicLocally();
 
   this._updateMeetingCountdown(data);
 };

@@ -3822,6 +3822,14 @@ wss.on("connection", (ws) => {
           }
 
           const { title, description, scheduledAt, durationMin, isVideo, participants, accessPolicy } = data;
+          const waitingMusicTracks = Array.isArray(data.waitingMusicTracks) ? data.waitingMusicTracks : [];
+          const validWaitingMusic = waitingMusicTracks.length <= 10 && waitingMusicTracks.every((track) =>
+            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl) && track.dataUrl.length <= 2 * 1024 * 1024
+          ) && waitingMusicTracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= 3 * 1024 * 1024;
+          if (!validWaitingMusic) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Liste audio invalide (10 fichiers et 2 Mo au total maximum)" }));
+            return;
+          }
 
           console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"} accessPolicy=${accessPolicy || "direct"}`);
 
@@ -3863,6 +3871,15 @@ wss.on("connection", (ws) => {
             );
             console.log(`[MEETING] meeting-create refusé: ${meeting.reason}`);
             return;
+          }
+
+          if (waitingMusicTracks.length) {
+            meetingWaitingMusic.set(meeting.meetingId, {
+              tracks: waitingMusicTracks.map((track) => ({
+                dataUrl: track.dataUrl,
+                name: String(track.name || "Musique d’attente").slice(0, 120),
+              })),
+            });
           }
 
 
