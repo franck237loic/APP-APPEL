@@ -2288,6 +2288,7 @@ const roomManager = new RoomManager();
 const meetingManager = new MeetingManager();
 // Musique d'attente transmise en direct aux appareils (non persistée entre redémarrages).
 const meetingWaitingMusic = new Map();
+const MAX_WAITING_MUSIC_TRANSFER_BYTES = 90 * 1024 * 1024;
 
 function notifyWaitingMusicStopped(meetingId, waitingUsers = [], hostId = null) {
   meetingWaitingMusic.delete(meetingId);
@@ -3823,11 +3824,11 @@ wss.on("connection", (ws) => {
 
           const { title, description, scheduledAt, durationMin, isVideo, participants, accessPolicy } = data;
           const waitingMusicTracks = Array.isArray(data.waitingMusicTracks) ? data.waitingMusicTracks : [];
-          const validWaitingMusic = waitingMusicTracks.length <= 10 && waitingMusicTracks.every((track) =>
-            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl) && track.dataUrl.length <= 2 * 1024 * 1024
-          ) && waitingMusicTracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= 3 * 1024 * 1024;
+          const validWaitingMusic = waitingMusicTracks.every((track) =>
+            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
+          ) && waitingMusicTracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= MAX_WAITING_MUSIC_TRANSFER_BYTES;
           if (!validWaitingMusic) {
-            ws.send(JSON.stringify({ type: "meeting-error", reason: "Liste audio invalide (10 fichiers et 2 Mo au total maximum)" }));
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "La liste audio est trop volumineuse pour être transmise" }));
             return;
           }
 
@@ -4064,11 +4065,11 @@ wss.on("connection", (ws) => {
             return;
           }
           const tracks = Array.isArray(data.tracks) ? data.tracks : [{ dataUrl: data.dataUrl, name: data.name }];
-          const validTracks = tracks.length > 0 && tracks.length <= 10 && tracks.every((track) =>
-            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl) && track.dataUrl.length <= 2 * 1024 * 1024
-          ) && tracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= 3 * 1024 * 1024;
+          const validTracks = tracks.length > 0 && tracks.every((track) =>
+            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
+          ) && tracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= MAX_WAITING_MUSIC_TRANSFER_BYTES;
           if (!validTracks) {
-            ws.send(JSON.stringify({ type: "meeting-error", reason: "Liste audio invalide (10 fichiers et 2 Mo au total maximum)" }));
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Liste audio invalide ou trop volumineuse pour être transmise" }));
             return;
           }
           const music = { tracks: tracks.map((track) => ({

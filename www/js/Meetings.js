@@ -56,6 +56,7 @@ Meetings.prototype.normalizeMeetingCode = function(code) {
 
 Meetings.prototype.handleMeetingCreated = function(data) {
   console.log("📅 [MEETING] Réunion créée:", data);
+  this.meetingCreateSubmitting = false;
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
 
@@ -314,8 +315,8 @@ Meetings.prototype.toggleWaitingMusicLocally = function() {
 
 Meetings.prototype.selectWaitingMusic = async function(fileList) {
   const files = Array.from(fileList || []);
-  if (!files.length || files.length > 10 || files.some((file) => !/^audio\//i.test(file.type)) || files.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 * 1024) {
-    this.showCallToast("Choisis jusqu’à 10 fichiers audio, 2 Mo au total maximum");
+  if (!files.length || files.some((file) => !/^audio\//i.test(file.type))) {
+    this.showCallToast("Choisis un ou plusieurs fichiers audio");
     return;
   }
   const tracks = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
@@ -390,6 +391,7 @@ Meetings.prototype.handleMeetingHostStarted = function(data) {
 
 Meetings.prototype.handleMeetingError = function(data) {
   console.error("📅 [MEETING] Erreur:", data.reason);
+  this.meetingCreateSubmitting = false;
   this.instantMeetingPending = false;
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
@@ -1388,6 +1390,7 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = setTimeout(() => {
     this.meetingCreateTimeout = null;
+    this.meetingCreateSubmitting = false;
     this.showCallToast("Le serveur n'a pas confirmé la création de la réunion.");
   }, 20000);
 
@@ -1555,9 +1558,9 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
 
           ${editMeetingId ? '' : `<div class="scheduled-waiting-music-picker">
             <label style="color:#8696a0;font-size:13px;margin-bottom:8px;display:block;">Musique pendant l’attente (optionnel)</label>
-            <label class="waiting-music-choose" for="meeting-scheduled-music-files">Choisir une liste de morceaux</label>
+            <label class="waiting-music-choose" for="meeting-scheduled-music-files">Choisir un morceau ou une liste</label>
             <input id="meeting-scheduled-music-files" type="file" accept="audio/*" multiple hidden>
-            <div id="meeting-scheduled-music-names" style="color:#8696a0;font-size:12px;margin-top:8px;">Aucune musique sélectionnée · 10 morceaux maximum, 2 Mo au total</div>
+            <div id="meeting-scheduled-music-names" style="color:#8696a0;font-size:12px;margin-top:8px;">Aucun morceau sélectionné</div>
           </div>`}
 
           <div>
@@ -1601,7 +1604,7 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   if (musicInput) musicInput.addEventListener("change", () => {
     const files = Array.from(musicInput.files || []);
     const names = document.getElementById("meeting-scheduled-music-names");
-    if (names) names.textContent = files.length ? files.map((file) => file.name).join(" • ") : "Aucune musique sélectionnée · 10 morceaux maximum, 2 Mo au total";
+    if (names) names.textContent = files.length ? files.map((file) => file.name).join(" • ") : "Aucun morceau sélectionné";
   });
 
   // Date par défaut (demain à 9h)
@@ -1696,6 +1699,7 @@ Meetings.prototype.selectAccessPolicy = function(policy) {
 };
 
 Meetings.prototype.confirmCreateMeeting = async function() {
+  if (this.meetingCreateSubmitting) return;
   const title = document.getElementById("meeting-title").value.trim();
   const description = document.getElementById("meeting-description").value.trim();
   const duration = document.getElementById("meeting-duration").value;
@@ -1761,16 +1765,25 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   // Récupérer la politique d'accès
   const accessPolicy = document.getElementById("access-approval").classList.contains("active") ? "approval" : "direct";
 
-  if (musicFiles.length > 10 || musicFiles.some((file) => !/^audio\//i.test(file.type)) || musicFiles.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 * 1024) {
-    this.showCallToast("Choisis jusqu’à 10 fichiers audio, 2 Mo au total maximum");
+  if (musicFiles.some((file) => !/^audio\//i.test(file.type))) {
+    this.showCallToast("Choisis des fichiers audio valides");
     return;
   }
-  const waitingMusicTracks = await Promise.all(musicFiles.map((file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({ dataUrl: reader.result, name: file.name });
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  })));
+  this.meetingCreateSubmitting = true;
+  let waitingMusicTracks;
+  try {
+    waitingMusicTracks = await Promise.all(musicFiles.map((file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({ dataUrl: reader.result, name: file.name });
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    })));
+  } catch (error) {
+    this.meetingCreateSubmitting = false;
+    console.error("Erreur lecture de la musique d’attente:", error);
+    this.showCallToast("Impossible de lire un des fichiers audio");
+    return;
+  }
   this.waitingMusicTracks = waitingMusicTracks;
   this.waitingMusicTrackIndex = 0;
   this.waitingMusicDataUrl = waitingMusicTracks[0]?.dataUrl || null;
