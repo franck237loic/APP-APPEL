@@ -77,6 +77,7 @@ Meetings.prototype.handleMeetingLiveReady = function(data) {
 
 Meetings.prototype.handleMeetingJoined = async function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
+  this.stopWaitingMusicLocally();
   const previousWaitingRoom = this.meetingWaitingRoomId;
   if (previousWaitingRoom && previousWaitingRoom !== data.roomId) {
     this.sendSignal({ type: "group-leave", roomId: previousWaitingRoom });
@@ -245,6 +246,112 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
   }
 
   this.showMeetingWaitingView(data);
+  if (data.waitingMusic && (data.waitingMusic.dataUrl || data.waitingMusic.tracks)) {
+    this.receiveWaitingMusic(data.waitingMusic);
+  }
+};
+
+Meetings.prototype.receiveWaitingMusic = function(music) {
+  const tracks = Array.isArray(music?.tracks) ? music.tracks : (music?.dataUrl ? [{ dataUrl: music.dataUrl, name: music.name }] : []);
+  if (!tracks.length || this.waitingMusicStoppedForMeeting) return;
+  this.waitingMusicTracks = tracks;
+  this.waitingMusicTrackIndex = 0;
+  this.waitingMusicDataUrl = tracks[0].dataUrl;
+  this.waitingMusicTitle = tracks.map((track) => track.name).join(" • ");
+  this.updateWaitingMusicControls();
+  // L’autoplay n’est pas autorisé sur tous les appareils : le bouton reste disponible.
+  this.playWaitingMusicLocally();
+};
+
+Meetings.prototype.playWaitingMusicLocally = function() {
+  if (!this.waitingMusicDataUrl) return;
+  if (!this.waitingMusicAudio) {
+    this.waitingMusicAudio = new Audio();
+    this.waitingMusicAudio.addEventListener("ended", () => {
+      const tracks = this.waitingMusicTracks || [];
+      if (!tracks.length) return;
+      this.waitingMusicTrackIndex = (this.waitingMusicTrackIndex + 1) % tracks.length;
+      this.waitingMusicAudio.src = tracks[this.waitingMusicTrackIndex].dataUrl;
+      this.waitingMusicAudio.play().catch(() => {});
+    });
+  }
+  const tracks = this.waitingMusicTracks || [];
+  this.waitingMusicAudio.src = tracks[this.waitingMusicTrackIndex || 0]?.dataUrl || this.waitingMusicDataUrl;
+  this.waitingMusicAudio.play().then(() => {
+    this.waitingMusicLocallyEnabled = true;
+    this.updateWaitingMusicControls();
+  }).catch(() => {
+    this.waitingMusicLocallyEnabled = false;
+    this.updateWaitingMusicControls();
+  });
+};
+
+Meetings.prototype.stopWaitingMusicLocally = function() {
+  if (this.waitingMusicAudio) {
+    this.waitingMusicAudio.pause();
+    this.waitingMusicAudio.currentTime = 0;
+  }
+  this.waitingMusicLocallyEnabled = false;
+  this.updateWaitingMusicControls();
+};
+
+Meetings.prototype.updateWaitingMusicControls = function() {
+  const title = document.getElementById("meeting-waiting-music-title");
+  if (title) title.textContent = this.waitingMusicTitle || "Aucune musique sélectionnée";
+  const toggle = document.getElementById("meeting-waiting-music-toggle");
+  if (toggle) {
+    toggle.disabled = !this.waitingMusicDataUrl;
+    toggle.textContent = this.waitingMusicLocallyEnabled ? "Couper la musique chez moi" : "Écouter la musique";
+  }
+  const hostStop = document.getElementById("meeting-waiting-music-stop-all");
+  if (hostStop) hostStop.disabled = !this.waitingMusicDataUrl;
+};
+
+Meetings.prototype.toggleWaitingMusicLocally = function() {
+  if (this.waitingMusicLocallyEnabled) this.stopWaitingMusicLocally();
+  else this.playWaitingMusicLocally();
+};
+
+Meetings.prototype.selectWaitingMusic = async function(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length || files.length > 10 || files.some((file) => !/^audio\//i.test(file.type)) || files.reduce((sum, file) => sum + file.size, 0) > 2 * 1024 * 1024) {
+    this.showCallToast("Choisis jusqu’à 10 fichiers audio, 2 Mo au total maximum");
+    return;
+  }
+  const tracks = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ dataUrl: reader.result, name: file.name });
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  })));
+  this.waitingMusicTracks = tracks;
+  this.waitingMusicTrackIndex = 0;
+  this.waitingMusicDataUrl = tracks[0].dataUrl;
+  this.waitingMusicTitle = tracks.map((track) => track.name).join(" • ");
+  this.waitingMusicStoppedForMeeting = false;
+  this.updateWaitingMusicControls();
+  this.playWaitingMusicLocally();
+  this.sendSignal({ type: "meeting-waiting-music-set", meetingId: this.meetingPendingMeetingId, tracks });
+};
+
+Meetings.prototype.stopWaitingMusicForEveryone = function() {
+  this.sendSignal({ type: "meeting-waiting-music-stop", meetingId: this.meetingPendingMeetingId });
+};
+
+Meetings.prototype.handleWaitingMusicMessage = function(data) {
+  if (data.meetingId && this.meetingPendingMeetingId && data.meetingId !== this.meetingPendingMeetingId) return;
+  if (data.type === "meeting-waiting-music-set") {
+    this.waitingMusicStoppedForMeeting = false;
+    this.receiveWaitingMusic(data);
+  }
+  if (data.type === "meeting-waiting-music-stop") {
+    this.waitingMusicStoppedForMeeting = true;
+    this.waitingMusicDataUrl = null;
+    this.waitingMusicTracks = [];
+    this.stopWaitingMusicLocally();
+    this.waitingMusicTitle = "La musique a été arrêtée par l’hôte";
+    this.updateWaitingMusicControls();
+  }
 };
 
 Meetings.prototype.handleMeetingHostStarted = function(data) {
@@ -1861,6 +1968,8 @@ Meetings.prototype.startMeeting = function(code) {
   // On marque immédiatement la réunion comme live côté client pour empêcher toute
   // rebasculer automatiquement en 1-à-1 tant que la confirmation serveur n'est pas revenue.
   this.groupIsMeeting = true;
+  this.waitingMusicStoppedForMeeting = true;
+  this.stopWaitingMusicLocally();
   this.groupDowngradingToOneToOne = false;
   this.meetingPendingCode = cleanCode;
   this.sendSignal({
@@ -2257,6 +2366,7 @@ Meetings.prototype.confirmJoinMeeting = function() {
 Meetings.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
+  this.waitingMusicStoppedForMeeting = false;
 
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.add("active");
@@ -2279,7 +2389,7 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
           <div class="waiting-room-secure"><i class="fa-solid fa-shield-halved"></i></div>
         </div>
 
-        <main class="waiting-room-content">
+        <main class="waiting-room-content${isCreator ? ' is-host' : ''}">
           <section class="waiting-room-stage" aria-live="polite">
             <div class="waiting-room-stage-label"><span class="waiting-room-stage-icon"><i class="fa-regular fa-clock"></i></span> ${isCreator ? 'R&Eacute;UNION PROGRAMM&Eacute;E' : '&Eacute;CRAN DE L&rsquo;H&Ocirc;TE'}</div>
             <p class="waiting-room-stage-title">${isCreator ? 'Votre r&eacute;union commence dans' : 'La r&eacute;union commence dans'}</p>
@@ -2291,6 +2401,12 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
 
           <div class="waiting-room-actions">
             ${isCreator ? `<button class="waiting-room-start" data-meeting-code="${window.escapeHtml(data.code)}"><i class="fa-solid fa-play"></i> D&eacute;marrer la r&eacute;union</button>` : ''}
+            <section class="waiting-music-controls" aria-label="Musique d’attente">
+              <strong>Musique d’attente</strong>
+              <span id="meeting-waiting-music-title">Aucune musique sélectionnée</span>
+              ${isCreator ? `<label class="waiting-music-choose">Choisir une liste audio<input id="meeting-waiting-music-file" type="file" accept="audio/*" multiple hidden></label><button id="meeting-waiting-music-stop-all" type="button" disabled>Arrêter chez tout le monde</button>` : ''}
+              <button id="meeting-waiting-music-toggle" type="button" disabled>Écouter la musique</button>
+            </section>
             <button class="waiting-room-leave" onclick="window.closeMeetingWaitingView()">Quitter la salle d'attente</button>
           </div>
         </main>
@@ -2304,6 +2420,13 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   this.meetingWaitingView.classList.add("active");
   const startButton = this.meetingWaitingView.querySelector("[data-meeting-code]");
   if (startButton) startButton.addEventListener("click", () => this.startMeeting(startButton.dataset.meetingCode));
+  const musicFile = this.meetingWaitingView.querySelector("#meeting-waiting-music-file");
+  if (musicFile) musicFile.addEventListener("change", () => this.selectWaitingMusic(musicFile.files));
+  const musicToggle = this.meetingWaitingView.querySelector("#meeting-waiting-music-toggle");
+  if (musicToggle) musicToggle.addEventListener("click", () => this.toggleWaitingMusicLocally());
+  const stopAll = this.meetingWaitingView.querySelector("#meeting-waiting-music-stop-all");
+  if (stopAll) stopAll.addEventListener("click", () => this.stopWaitingMusicForEveryone());
+  this.updateWaitingMusicControls();
 
   this._updateMeetingCountdown(data);
 };
@@ -2349,6 +2472,7 @@ Meetings.prototype._updateMeetingCountdown = function(data) {
 };
 
 Meetings.prototype.closeMeetingWaitingView = function() {
+  this.stopWaitingMusicLocally();
   if (this.meetingTimer) {
     clearInterval(this.meetingTimer);
     this.meetingTimer = null;

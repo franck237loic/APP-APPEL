@@ -1665,6 +1665,7 @@ class MeetingManager {
     });
 
     await this._removeWaitingUser(meeting.id, userId);
+    notifyWaitingMusicStopped(meeting.id, waitingUsers, userId);
     await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
 
     // Mode DIRECT uniquement : notifier "hôte a démarré" pour auto-join
@@ -1858,6 +1859,7 @@ class MeetingManager {
         throw error;
       });
 
+      notifyWaitingMusicStopped(meeting.id, waitingUsers, userId);
       await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
       await this._removeWaitingUser(meeting.id, userId);
       console.log(`📅 Réunion ${meeting.id} passée à live (salle ${room.roomId})`);
@@ -2284,6 +2286,19 @@ const roomManager = new RoomManager();
 
 // Instance globale du MeetingManager
 const meetingManager = new MeetingManager();
+// Musique d'attente transmise en direct aux appareils (non persistée entre redémarrages).
+const meetingWaitingMusic = new Map();
+
+function notifyWaitingMusicStopped(meetingId, waitingUsers = [], hostId = null) {
+  meetingWaitingMusic.delete(meetingId);
+  const targets = new Set([...(Array.isArray(waitingUsers) ? waitingUsers : []), hostId].filter(Boolean));
+  for (const userId of targets) {
+    const user = users.get(userId);
+    if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+      user.ws.send(JSON.stringify({ type: "meeting-waiting-music-stop", meetingId }));
+    }
+  }
+}
 
 // =========================================================
 // CHARGEMENT DES RÉUNIONS AU DÉMARRAGE
@@ -3976,6 +3991,7 @@ wss.on("connection", (ws) => {
                 isVideo: result.isVideo,
                 title: result.title,
                 createdBy: result.createdBy,
+                waitingMusic: meetingWaitingMusic.get(result.meetingId) || null,
               }),
             );
             console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
@@ -4014,6 +4030,48 @@ wss.on("connection", (ws) => {
       // 18. Démarrer une réunion avant l'heure prévue (hôte)
       // Envoyé par : Host -> Reçu par : Host + participants en attente
       // Pourquoi : Forcer le lancement de la réunion et intégrer les utilisateurs en attente
+      if (type === "meeting-waiting-music-set" || type === "meeting-waiting-music-stop") {
+        try {
+          const meetingId = typeof data.meetingId === "string" ? data.meetingId : "";
+          if (!ws.userId || !meetingId || meetingId.length > 100) return;
+          const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+          if (!meetingDoc.exists) return;
+          const meeting = meetingDoc.data();
+          if (meeting.createdBy !== ws.userId || meeting.status !== "scheduled") {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Seul l’hôte peut contrôler la musique d’attente" }));
+            return;
+          }
+          const waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+          if (type === "meeting-waiting-music-stop") {
+            notifyWaitingMusicStopped(meetingId, waitingUsers, ws.userId);
+            return;
+          }
+          const tracks = Array.isArray(data.tracks) ? data.tracks : [{ dataUrl: data.dataUrl, name: data.name }];
+          const validTracks = tracks.length > 0 && tracks.length <= 10 && tracks.every((track) =>
+            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl) && track.dataUrl.length <= 2 * 1024 * 1024
+          ) && tracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= 3 * 1024 * 1024;
+          if (!validTracks) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: "Liste audio invalide (10 fichiers et 2 Mo au total maximum)" }));
+            return;
+          }
+          const music = { tracks: tracks.map((track) => ({
+            dataUrl: track.dataUrl,
+            name: String(track.name || "Musique d’attente").slice(0, 120),
+          })) };
+          meetingWaitingMusic.set(meetingId, music);
+          const recipients = new Set(waitingUsers);
+          for (const recipientId of recipients) {
+            const user = users.get(recipientId);
+            if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+              user.ws.send(JSON.stringify({ type: "meeting-waiting-music-set", meetingId, ...music }));
+            }
+          }
+        } catch (error) {
+          console.error("[MEETING] Erreur musique d’attente:", error);
+        }
+        return;
+      }
+
       if (type === "meeting-force-start") {
         try {
           // Validation des données

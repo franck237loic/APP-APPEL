@@ -32,10 +32,11 @@ html.home-page, body.home-page {
     background: var(--bg);
     color: var(--text);
 }
-body.home-page { align-items: flex-start; }
+/* Keep the home content tied to the viewport width in Cordova WebViews. */
+body.home-page { display: block; width: 100%; padding: 0; }
 body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 button, input, textarea, select { font: inherit; }
-.home-shell { padding: clamp(20px, 4vw, 44px); gap: 20px; }
+.home-shell { width: 100%; max-width: 1120px; margin-inline: auto; padding: clamp(20px, 4vw, 44px); gap: 20px; }
 .home-header { display:flex; align-items:center; justify-content:space-between; gap:16px; }
 .home-header h1 { margin:0; color:var(--text); font-size:var(--font-xl); letter-spacing:-.04em; }
 .eyebrow { margin:0 0 4px; color:var(--text-muted); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }

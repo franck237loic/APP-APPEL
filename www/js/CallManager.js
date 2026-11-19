@@ -3124,6 +3124,13 @@ button, [role="button"] { cursor: pointer; }
         this.handleMeetingWaiting(data);
         break;
 
+      case "meeting-waiting-music-set":
+      case "meeting-waiting-music-stop":
+        if (window.callManager && window.callManager.handleWaitingMusicMessage) {
+          window.callManager.handleWaitingMusicMessage(data);
+        }
+        break;
+
       case "meeting-error":
         this.handleMeetingError(data);
         break;
