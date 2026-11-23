@@ -88,7 +88,7 @@ const testMeetingFlow = () => {
   try {
     // Vérifier que le code existe dans le fichier serveur.js
     const fs = require('fs');
-    const serveurContent = fs.readFileSync('www/js/serveur.js', 'utf8');
+    const serveurContent = fs.readFileSync('server/serveur.js', 'utf8');
     
     if (serveurContent.includes('where("code", "==", code)')) {
       console.log("✅ Test 3 passé: Requête where trouvée\n");
@@ -106,7 +106,7 @@ const testMeetingFlow = () => {
   console.log("Test 4: loadMeetingsOnStartup() charge les codes existants");
   try {
     const fs = require('fs');
-    const serveurContent = fs.readFileSync('www/js/serveur.js', 'utf8');
+    const serveurContent = fs.readFileSync('server/serveur.js', 'utf8');
     
     if (serveurContent.includes('meetingManager.usedCodes.add(meeting.code)')) {
       console.log("✅ Test 4 passé: Chargement des codes trouvé\n");
@@ -124,7 +124,7 @@ const testMeetingFlow = () => {
   console.log("Test 5: join() vérifie endsAt avant de rejoindre");
   try {
     const fs = require('fs');
-    const serveurContent = fs.readFileSync('www/js/serveur.js', 'utf8');
+    const serveurContent = fs.readFileSync('server/serveur.js', 'utf8');
     
     if (serveurContent.includes('if (now > meeting.endsAt)')) {
       console.log("✅ Test 5 passé: Vérification endsAt trouvée\n");
@@ -142,7 +142,7 @@ const testMeetingFlow = () => {
   console.log("Test 6: handler meeting-create vérifie meeting.success");
   try {
     const fs = require('fs');
-    const serveurContent = fs.readFileSync('www/js/serveur.js', 'utf8');
+    const serveurContent = fs.readFileSync('server/serveur.js', 'utf8');
     
     if (serveurContent.includes('if (meeting.success === false)')) {
       console.log("✅ Test 6 passé: Vérification succès trouvée\n");

@@ -59,6 +59,7 @@ Meetings.prototype.handleMeetingCreated = function(data) {
   this.meetingCreateSubmitting = false;
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
+  this.closeMeetingCreateView();
 
   // Réunion instantanée : on va directement à l'aperçu caméra, sans écran intermédiaire
   if (this.instantMeetingPending) {
@@ -74,6 +75,42 @@ Meetings.prototype.handleMeetingLiveReady = function(data) {
   console.log("📅 [MEETING] Réunion maintenant live:", data);
   // Plus besoin de rejoindre automatiquement - le créateur rejoint comme les autres
   // en utilisant son code ou lien
+};
+
+// Apporte aux 3 points d'acquisition média les périphériques choisis dans
+// l'écran de prévisualisation (sinon comportement par défaut).
+Meetings.prototype._mediaDeviceOptionsForMeeting = function() {
+  const adapter = window.meetingMediaAdapter;
+  if (!adapter) return {};
+  return {
+    cameraDeviceId: adapter.selectedCamera || undefined,
+    microphoneDeviceId: adapter.selectedMicrophone || undefined,
+  };
+};
+
+// Réapplique les choix micro/caméra faits en prévisualisation (ou en salle
+// d'attente) à la salle live de la réunion. Condense la logique historique
+// de handleMeetingJoined pour être partagée avec la salle d'attente.
+Meetings.prototype._applyPendingMeetingMediaPreferences = function() {
+  const mediaPreferences = this.pendingMeetingMediaPreferences;
+  if (!mediaPreferences) return;
+  const stream = this.groupLocalStream;
+  const audioTrack = stream?.getAudioTracks()[0];
+  if (audioTrack) {
+    audioTrack.enabled = !!mediaPreferences.microphoneEnabled;
+    this.groupIsMuted = !mediaPreferences.microphoneEnabled;
+  }
+  const videoTrack = stream?.getVideoTracks()[0];
+  if (this.groupIsVideo && !mediaPreferences.cameraEnabled) {
+    if (videoTrack) videoTrack.enabled = false;
+    this.groupIsCamOff = true;
+  }
+  this.groupPeerStates.set(this.myId, {
+    micMuted: this.groupIsMuted,
+    camOff: this.groupIsCamOff,
+    screenSharing: false,
+  });
+  this.pendingMeetingMediaPreferences = null;
 };
 
 Meetings.prototype.handleMeetingJoined = async function(data) {
@@ -109,7 +146,7 @@ Meetings.prototype.handleMeetingJoined = async function(data) {
   // sensation "personne présente" alors qu'un participant est en attente.
   if (!this.groupLocalStream) {
     try {
-      await this.acquireGroupMedia(this.groupIsVideo);
+      await this.acquireGroupMedia(this.groupIsVideo, this._mediaDeviceOptionsForMeeting());
     } catch (error) {
       console.error("❌ [MEETING] Impossible d'acquérir les médias de la réunion:", error);
       this.showCallToast("Accès média impossible");
@@ -120,27 +157,8 @@ Meetings.prototype.handleMeetingJoined = async function(data) {
     }
   }
 
-  // Appliquer ici les choix faits dans l'aperçu. La caméra et le micro ne
-  // doivent pas rester ouverts pendant l'attente de l'approbation de l'hôte.
-  const mediaPreferences = this.pendingMeetingMediaPreferences;
-  if (mediaPreferences) {
-    const audioTrack = this.groupLocalStream?.getAudioTracks()[0];
-    if (audioTrack) {
-      audioTrack.enabled = !!mediaPreferences.microphoneEnabled;
-      this.groupIsMuted = !mediaPreferences.microphoneEnabled;
-    }
-    const videoTrack = this.groupLocalStream?.getVideoTracks()[0];
-    if (this.groupIsVideo && !mediaPreferences.cameraEnabled) {
-      if (videoTrack) videoTrack.enabled = false;
-      this.groupIsCamOff = true;
-    }
-    this.groupPeerStates.set(this.myId, {
-      micMuted: this.groupIsMuted,
-      camOff: this.groupIsCamOff,
-      screenSharing: false,
-    });
-    this.pendingMeetingMediaPreferences = null;
-  }
+  // Appliquer ici les choix faits dans l'aperçu / la salle d'attente.
+  this._applyPendingMeetingMediaPreferences();
 
   // Préparer le roster temporaire
   this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
@@ -188,7 +206,7 @@ Meetings.prototype.handleMeetingReconnect = async function(data) {
   // Acquérir les médias
   if (!this.groupLocalStream) {
     try {
-      await this.acquireGroupMedia(this.groupIsVideo);
+      await this.acquireGroupMedia(this.groupIsVideo, this._mediaDeviceOptionsForMeeting());
     } catch (error) {
       console.error("❌ [MEETING] Impossible d'acquérir les médias:", error);
       this.showCallToast("Accès média impossible");
@@ -236,9 +254,16 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
     this.groupIsLeaving = false;
     this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
     try {
-      if (!this.groupLocalStream) await this.acquireGroupMedia(this.groupIsVideo);
+      if (!this.groupLocalStream) {
+        await this.acquireGroupMedia(this.groupIsVideo, this._mediaDeviceOptionsForMeeting());
+        // Respecter micro/caméra choisis en prévisualisation pendant l'attente
+        this._applyPendingMeetingMediaPreferences();
+      }
       this.sendSignal({ type: "group-join", roomId: data.waitingRoomId });
-    } catch (error) { console.warn("[MEETING] Waiting media unavailable:", error); }
+    } catch (error) {
+      console.warn("[MEETING] Waiting media unavailable:", error);
+      // L'utilisateur peut quand même attendre sans caméra ni micro
+    }
   }
 
   if (data.serverNow) {
@@ -252,133 +277,522 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
   }
 };
 
+// ===== LECTEUR DE MUSIQUE D'ATTENTE =====
+// Playlist transmise par l'hôte, lecture locale chez chaque participant.
+// - passage automatique au morceau suivant + boucle de playlist
+// - progression, volume, pause/reprise (contrôles 100% locaux)
+// - gestion de l'autoplay refusé (bouton "Activer la musique", pas de faux état)
+// - synchronisation approximative via syncAt (horodatage serveur) + clockOffset
+// - libération complète des ressources audio à l'arrêt
 Meetings.prototype.receiveWaitingMusic = function(music) {
-  const tracks = Array.isArray(music?.tracks) ? music.tracks : (music?.dataUrl ? [{ dataUrl: music.dataUrl, name: music.name }] : []);
+  const tracks = Array.isArray(music?.tracks) && music.tracks.length
+    ? music.tracks
+    : (music?.dataUrl ? [{ dataUrl: music.dataUrl, name: music.name }] : []);
   if (!tracks.length || this.waitingMusicStoppedForMeeting) return;
+  // Nouvelle playlist (ou arrivée tardive) : repartir du début proprement
+  this._destroyWaitingMusicNode();
   this.waitingMusicTracks = tracks;
   this.waitingMusicTrackIndex = 0;
   this.waitingMusicDataUrl = tracks[0].dataUrl;
-  this.waitingMusicTitle = tracks.map((track) => track.name).join(" • ");
+  this.waitingMusicTitle = tracks[0].name || "Musique d'attente";
+  this.waitingMusicLocallyEnabled = true;
+  this.waitingMusicLocallyPaused = false;
+  this.waitingMusicBlocked = false;
+  // Synchronisation approximative : position de lecture calculée depuis
+  // l'horodatage serveur (syncAt) et le décalage d'horloge mesuré (clockOffset).
+  const syncAt = music?.syncAt ? Number(music.syncAt) : null;
+  this.waitingMusicPendingSeekSec = 0;
+  if (syncAt) {
+    const nowSync = Date.now() + (this.clockOffset || 0);
+    const elapsed = Math.max(0, (nowSync - syncAt) / 1000);
+    // Garde-fou : au-delà de 2 h on repart simplement du début
+    this.waitingMusicPendingSeekSec = elapsed > 7200 ? 0 : elapsed;
+  }
+  this.renderWaitingMusicPlaylist();
   this.updateWaitingMusicControls();
-  // L’autoplay n’est pas autorisé sur tous les appareils : le bouton reste disponible.
-  this.playWaitingMusicLocally();
+  this.playWaitingMusicLocally(this.waitingMusicPendingSeekSec);
 };
 
-Meetings.prototype.playWaitingMusicLocally = function() {
-  if (!this.waitingMusicDataUrl) return;
-  if (!this.waitingMusicAudio) {
-    this.waitingMusicAudio = new Audio();
-    this.waitingMusicAudio.addEventListener("ended", () => {
-      const tracks = this.waitingMusicTracks || [];
-      if (!tracks.length) return;
-      this.waitingMusicTrackIndex = (this.waitingMusicTrackIndex + 1) % tracks.length;
-      this.waitingMusicAudio.src = tracks[this.waitingMusicTrackIndex].dataUrl;
-      this.waitingMusicAudio.play().catch(() => {});
+Meetings.prototype._ensureWaitingMusicAudio = function() {
+  if (this.waitingMusicAudio) return this.waitingMusicAudio;
+  const audio = new Audio();
+  audio.preload = "auto";
+  audio.volume = typeof this.waitingMusicVolume === "number" ? this.waitingMusicVolume : 1;
+  this.waitingMusicAudio = audio;
+  return audio;
+};
+
+// Lecture locale. `seekSec` optionnel : position de départ (synchronisation).
+Meetings.prototype.playWaitingMusicLocally = async function(seekSec = 0) {
+  const tracks = this.waitingMusicTracks || [];
+  if (!tracks.length) return;
+  const index = Math.min(this.waitingMusicTrackIndex || 0, tracks.length - 1);
+  const track = tracks[index];
+  const audio = this._ensureWaitingMusicAudio();
+  this.waitingMusicTrackIndex = index;
+
+  // Écouteurs installés une fois (le ouï-dire "ended" avance la playlist)
+  if (!audio.dataset.cmWired) {
+    audio.dataset.cmWired = "1";
+    audio.addEventListener("ended", () => {
+      this._advanceWaitingTrack(true);
+    });
+    audio.addEventListener("timeupdate", () => this._updateWaitingMusicProgress());
+    audio.addEventListener("loadedmetadata", () => {
+      // Appliquer la position de synchronisation dès que la durée est connue
+      if (this.waitingMusicPendingSeekSec > 0 && isFinite(audio.duration)) {
+        try { audio.currentTime = this.waitingMusicPendingSeekSec % Math.max(audio.duration, 1); } catch (e) {}
+      }
+      this.waitingMusicPendingSeekSec = 0;
+    });
+    audio.addEventListener("error", () => {
+      // Fichier illisible : ignorer ce morceau et essayer le suivant
+      console.warn("[MEETING] Morceau audio illisible, passage au suivant");
+      this._advanceWaitingTrack(true);
     });
   }
+
+  if (audio.src !== track.dataUrl) {
+    audio.src = track.dataUrl;
+    this.waitingMusicPendingSeekSec = seekSec || 0;
+    this.waitingMusicTitle = track.name || "Musique d'attente";
+  } else if (seekSec > 0) {
+    try { audio.currentTime = seekSec; } catch (e) {}
+  }
+
+  this.waitingMusicLocallyEnabled = true;
+  try {
+    await audio.play();
+    this.waitingMusicLocallyPaused = false;
+    this.waitingMusicBlocked = false;
+  } catch (err) {
+    if (err && (err.name === "NotAllowedError" || err.name === "NotSupportedError" || /permission/i.test(err.message || ""))) {
+      // Autoplay refusé par le navigateur / WebView : NE PAS mentir sur l'état.
+      // Un bouton "Activer la musique" s'affiche ; le prochain geste utilisateur débloque.
+      console.warn("[MEETING] Lecture musique bloquée par l'autoplay :", err.name);
+      this.waitingMusicBlocked = true;
+      this.waitingMusicLocallyPaused = true;
+    } else {
+      console.warn("[MEETING] Lecture musique impossible :", err);
+      this.waitingMusicBlocked = true;
+      this.waitingMusicLocallyPaused = true;
+    }
+  }
+  this.updateWaitingMusicControls();
+};
+
+// Avance d'un morceau (boucle de playlist). `auto` = fin ou erreur du morceau.
+Meetings.prototype._advanceWaitingTrack = function(auto = false) {
   const tracks = this.waitingMusicTracks || [];
-  this.waitingMusicAudio.src = tracks[this.waitingMusicTrackIndex || 0]?.dataUrl || this.waitingMusicDataUrl;
-  this.waitingMusicAudio.play().then(() => {
-    this.waitingMusicLocallyEnabled = true;
-    this.updateWaitingMusicControls();
-  }).catch(() => {
-    this.waitingMusicLocallyEnabled = false;
-    this.updateWaitingMusicControls();
+  if (!tracks.length) return;
+  const wasPlaying = this.waitingMusicLocallyEnabled && !this.waitingMusicLocallyPaused;
+  this.waitingMusicTrackIndex = ((this.waitingMusicTrackIndex || 0) + 1) % tracks.length;
+  // Autoplay autorisé seulement si la lecture était déjà en cours (geste utilisateur
+  // antérieur) : après "ended" le navigateur accepte en général ; en cas d'erreur
+  // d'autoplay, passer en mode "bloqué" sans boucle infinie.
+  this.playWaitingMusicLocally(0).then(() => {
+    if (this.waitingMusicBlocked && wasPlaying) {
+      // Re-tentative unique via geste : l'UI affichera "Activer la musique"
+      this.updateWaitingMusicControls();
+    }
   });
+};
+
+Meetings.prototype.pauseWaitingMusicLocally = function() {
+  this.waitingMusicLocallyPaused = true;
+  if (this.waitingMusicAudio) {
+    try { this.waitingMusicAudio.pause(); } catch (e) {}
+  }
+  this.waitingMusicLocallyEnabled = true; // en pause, pas coupé
+  this.updateWaitingMusicControls();
+};
+
+// Détruit complètement le nœud audio et libère ses ressources.
+Meetings.prototype._destroyWaitingMusicNode = function() {
+  if (this.waitingMusicAudio) {
+    try {
+      this.waitingMusicAudio.pause();
+      this.waitingMusicAudio.removeAttribute("src");
+      this.waitingMusicAudio.load();
+    } catch (e) {}
+    this.waitingMusicAudio = null;
+  }
 };
 
 Meetings.prototype.stopWaitingMusicLocally = function() {
   if (this.waitingMusicAudio) {
-    this.waitingMusicAudio.pause();
-    this.waitingMusicAudio.currentTime = 0;
+    try {
+      this.waitingMusicAudio.pause();
+      this.waitingMusicAudio.currentTime = 0;
+    } catch (e) {}
   }
   this.waitingMusicLocallyEnabled = false;
+  this.waitingMusicLocallyPaused = false;
+  this.waitingMusicTrackIndex = 0;
   this.updateWaitingMusicControls();
+};
+
+Meetings.prototype.setWaitingMusicVolume = function(volume) {
+  const v = Math.min(1, Math.max(0, Number(volume)));
+  if (isNaN(v)) return;
+  this.waitingMusicVolume = v;
+  if (this.waitingMusicAudio) this.waitingMusicAudio.volume = v;
+  this.updateWaitingMusicControls();
+};
+
+// L'utilisateur accepte la lecture depuis un geste (anti-autoplay)
+Meetings.prototype.unlockWaitingMusic = function() {
+  this.waitingMusicBlocked = false;
+  this.waitingMusicLocallyEnabled = true;
+  this.waitingMusicLocallyPaused = false;
+  this.playWaitingMusicLocally(0);
+};
+
+// Toggle local : lecture ↔ pause (couper CHEZ MOI n'arrête pas chez les autres)
+Meetings.prototype.toggleWaitingMusicLocally = function() {
+  if (this.waitingMusicBlocked) {
+    // Autoplay refusé : le tap sur le bouton est le geste utilisateur attendu
+    this.unlockWaitingMusic();
+    return;
+  }
+  if (this.waitingMusicLocallyEnabled && !this.waitingMusicLocallyPaused) {
+    this.pauseWaitingMusicLocally();
+  } else {
+    this.playWaitingMusicLocally(0);
+  }
+};
+
+// Sélection des musiques par l'hôte : validation type / taille / décodage,
+// ajout à la playlist, lecture locale et diffusion aux participants.
+Meetings.WAITING_MUSIC_MAX_PER_FILE_BYTES = 10 * 1024 * 1024; // 10 Mo / morceau
+Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES = 30 * 1024 * 1024;    // 30 Mo total
+Meetings.prototype.selectWaitingMusic = async function(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  // 1) Validation du format (type MIME audio ou extension connue)
+  const audioExtOk = (name) => /\.(mp3|aac|m4a|ogg|oga|opus|wav|webm|flac)$/i.test(name || "");
+  const invalid = files.filter((file) => !/^audio\//i.test(file.type) && !audioExtOk(file.name));
+  if (invalid.length) {
+    this.showCallToast(`Format non audio : ${invalid[0].name}`);
+    return;
+  }
+
+  // 2) Validation de la taille (évite de saturer la WS et la RAM du serveur)
+  for (const file of files) {
+    if (file.size > Meetings.WAITING_MUSIC_MAX_PER_FILE_BYTES) {
+      this.showCallToast(`« ${file.name} » dépasse 10 Mo — non ajouté`);
+      return;
+    }
+  }
+  const currentBytes = (this.waitingMusicTracks || [])
+    .reduce((sum, track) => sum + (track.dataUrl ? track.dataUrl.length * 0.75 : 0), 0);
+  const newBytes = files.reduce((sum, file) => sum + file.size, 0);
+  if (currentBytes + newBytes > Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES) {
+    this.showCallToast("Playlist trop lourde (max 30 Mo au total)");
+    return;
+  }
+
+  // 3) Décodage en dataURL + vérification de décodabilité (durée lisible)
+  const existingTracks = this.waitingMusicTracks || [];
+  this.showCallToast("Lecture des fichiers audio…");
+  for (const file of files) {
+    const existing = existingTracks.some((t) => t.name === file.name && t.fileSize === file.size);
+    if (existing) continue;
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error("read error"));
+        reader.readAsDataURL(file);
+      });
+      // Vérifier que le navigateur sait décoder le fichier et récupérer la durée
+      const duration = await new Promise((resolve) => {
+        const probe = new Audio();
+        const done = (value) => { probe.removeAttribute("src"); probe.load(); resolve(value); };
+        probe.preload = "metadata";
+        probe.onloadedmetadata = () => done(isFinite(probe.duration) ? probe.duration : 0);
+        probe.onerror = () => done(-1);
+        probe.src = dataUrl;
+        setTimeout(() => done(-1), 8000);
+      });
+      if (duration === -1) {
+        this.showCallToast(`« ${file.name} » illisible — ignoré`);
+        continue;
+      }
+      if (duration > 15 * 60) {
+        this.showCallToast(`« ${file.name} » dépasse 15 min — ignoré`);
+        continue;
+      }
+      existingTracks.push({ dataUrl, name: file.name, fileSize: file.size, duration: Math.round(duration) });
+    } catch (error) {
+      console.warn("[MEETING] Fichier audio ignoré:", file.name, error);
+    }
+  }
+
+  if (!existingTracks.length) {
+    this.showCallToast("Aucun fichier audio valide");
+    return;
+  }
+
+  const firstAdded = (this.waitingMusicTracks || []).length !== existingTracks.length;
+  this.waitingMusicTracks = existingTracks;
+  if (firstAdded && !this.waitingMusicAudio) {
+    this.waitingMusicTrackIndex = 0;
+    this.waitingMusicLocallyEnabled = true;
+    this.waitingMusicLocallyPaused = false;
+  }
+  this.waitingMusicDataUrl = this.waitingMusicTracks[0].dataUrl;
+  this.waitingMusicTrackIndex = Math.min(this.waitingMusicTrackIndex || 0, this.waitingMusicTracks.length - 1);
+  const current = this.waitingMusicTracks[this.waitingMusicTrackIndex];
+  this.waitingMusicTitle = current?.name || "Musique d'attente";
+  this.waitingMusicStoppedForMeeting = false;
+  this.updateWaitingMusicControls();
+  // Lecture locale immédiate pour l'hôte, puis diffusion synchronisée
+  this.playWaitingMusicLocally(0).then(() => this._broadcastWaitingMusicPlaylist());
+};
+
+// Message serveur : playlist à jour (set) ou arrêt collectif (stop)
+Meetings.prototype.handleWaitingMusicMessage = function(data) {
+  if (data.meetingId && this.meetingPendingMeetingId && data.meetingId !== this.meetingPendingMeetingId) return;
+  if (data.type === "meeting-waiting-music-set") {
+    // L'hôte reçoit son propre écho : pas d'écrasement brutal si identique
+    const incoming = Array.isArray(data.tracks) ? data.tracks : [];
+    const current = this.waitingMusicTracks || [];
+    if (data.clientOnly) return;
+    if (incoming.length && incoming.length === current.length &&
+        incoming.every((t, i) => t.dataUrl === current[i]?.dataUrl) &&
+        data.syncAt && this.waitingMusicLastSyncAt === data.syncAt) {
+      return;
+    }
+    this.waitingMusicLastSyncAt = data.syncAt || null;
+    this.waitingMusicStoppedForMeeting = false;
+    this.receiveWaitingMusic(data);
+  }
+  if (data.type === "meeting-waiting-music-stop") {
+    this._broadcastWaitingMusicStop(); // purge complète + libération ressources
+  }
+};
+
+Meetings.prototype._updateWaitingMusicProgress = function() {
+  const audio = this.waitingMusicAudio;
+  if (!audio) return;
+  const bar = document.getElementById("waiting-music-progress-fill");
+  const cur = document.getElementById("waiting-music-current-time");
+  const total = document.getElementById("waiting-music-total-time");
+  if (bar && isFinite(audio.duration) && audio.duration > 0) {
+    bar.style.width = `${Math.min(100, (audio.currentTime / audio.duration) * 100)}%`;
+  }
+  const fmt = (s) => {
+    if (!isFinite(s)) return "--:--";
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, "0")}`;
+  };
+  if (cur) cur.textContent = fmt(audio.currentTime);
+  if (total) total.textContent = fmt(audio.duration);
 };
 
 Meetings.prototype.updateWaitingMusicControls = function() {
   const title = document.getElementById("meeting-waiting-music-title");
   if (title) title.textContent = this.waitingMusicTitle || "Aucune musique sélectionnée";
+  const hasTracks = (this.waitingMusicTracks || []).length > 0;
+
   const toggle = document.getElementById("meeting-waiting-music-toggle");
   if (toggle) {
-    toggle.disabled = !this.waitingMusicDataUrl;
-    toggle.textContent = this.waitingMusicLocallyEnabled ? "Couper la musique chez moi" : "Écouter la musique";
+    toggle.disabled = !hasTracks;
+    toggle.classList.toggle(
+      "playing",
+      !!(this.waitingMusicLocallyEnabled && !this.waitingMusicLocallyPaused && !this.waitingMusicBlocked),
+    );
+    if (this.waitingMusicBlocked) {
+      toggle.textContent = "🔊 Activer la musique";
+    } else if (this.waitingMusicLocallyEnabled && !this.waitingMusicLocallyPaused) {
+      toggle.textContent = "⏸ Pause (chez moi)";
+    } else {
+      toggle.textContent = "▶︎ Reprendre la musique";
+    }
   }
+
   const hostStop = document.getElementById("meeting-waiting-music-stop-all");
-  if (hostStop) hostStop.disabled = !this.waitingMusicDataUrl;
+  if (hostStop) hostStop.disabled = !hasTracks;
+
+  const trackPos = document.getElementById("waiting-music-track-pos");
+  if (trackPos && hasTracks) {
+    trackPos.textContent = `${(this.waitingMusicTrackIndex || 0) + 1}/${this.waitingMusicTracks.length}`;
+  }
+  const volume = document.getElementById("waiting-music-volume");
+  if (volume && document.activeElement !== volume) {
+    volume.value = String(typeof this.waitingMusicVolume === "number" ? this.waitingMusicVolume : 1);
+  }
+
+  // État visible : en pause / bloqué, la barre de progression se fige mais ne
+  // donne pas la fausse impression que la musique tourne.
+  const status = document.getElementById("waiting-music-status");
+  if (status) {
+    status.classList.toggle("waiting-music-blocked", !!this.waitingMusicBlocked);
+    if (!hasTracks) {
+      status.textContent = "";
+    } else if (this.waitingMusicBlocked) {
+      status.textContent = "Lecture bloquée par le navigateur — appuyez sur « Activer la musique »";
+    } else if (this.waitingMusicLocallyPaused) {
+      status.textContent = "Musique en pause chez vous";
+    } else {
+      status.textContent = "Musique en cours (chez vous et chez les participants en attente)";
+    }
+  }
+  this.renderWaitingMusicPlaylist();
 };
 
-Meetings.prototype.toggleWaitingMusicLocally = function() {
-  if (this.waitingMusicLocallyEnabled) this.stopWaitingMusicLocally();
-  else this.playWaitingMusicLocally();
-};
-
-Meetings.prototype.selectWaitingMusic = async function(fileList) {
-  const files = Array.from(fileList || []);
-  if (!files.length || files.some((file) => !/^audio\//i.test(file.type))) {
-    this.showCallToast("Choisis un ou plusieurs fichiers audio");
+// Rend la playlist dans le(s) conteneur(s) présents à l'écran (hôte uniquement
+// en édition, participants en lecture seule).
+Meetings.prototype.renderWaitingMusicPlaylist = function() {
+  const list = document.getElementById("waiting-music-playlist");
+  if (!list) return;
+  const tracks = this.waitingMusicTracks || [];
+  if (!tracks.length) {
+    list.innerHTML = "";
     return;
   }
-  const tracks = await Promise.all(files.map((file) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({ dataUrl: reader.result, name: file.name });
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  })));
-  this.waitingMusicTracks = tracks;
-  this.waitingMusicTrackIndex = 0;
-  this.waitingMusicDataUrl = tracks[0].dataUrl;
-  this.waitingMusicTitle = tracks.map((track) => track.name).join(" • ");
-  this.waitingMusicStoppedForMeeting = false;
-  this.updateWaitingMusicControls();
-  this.playWaitingMusicLocally();
-  this.sendSignal({ type: "meeting-waiting-music-set", meetingId: this.meetingPendingMeetingId, tracks });
+  const isEditableHost = !!document.getElementById("waiting-music-file");
+  list.innerHTML = tracks.map((track, index) => `
+    <li class="waiting-music-track${index === (this.waitingMusicTrackIndex || 0) ? " now-playing" : ""}"
+        data-music-index="${index}">
+      ${index === (this.waitingMusicTrackIndex || 0) && this.waitingMusicLocallyEnabled && !this.waitingMusicLocallyPaused
+        ? '<i class="fa-solid fa-music fa-beat" style="color:#00a884"></i> '
+        : `<span class="waiting-music-index">${index + 1}</span> `}
+      <span class="waiting-music-track-name" title="${window.escapeHtml(track.name || "")}">${window.escapeHtml(track.name || "Morceau")}</span>
+      ${isEditableHost ? `
+        <button type="button" class="waiting-music-track-btn" data-music-action="up" aria-label="Monter" ${index === 0 ? "disabled" : ""}><i class="fa-solid fa-arrow-up"></i></button>
+        <button type="button" class="waiting-music-track-btn" data-music-action="down" aria-label="Descendre" ${index === tracks.length - 1 ? "disabled" : ""}><i class="fa-solid fa-arrow-down"></i></button>
+        <button type="button" class="waiting-music-track-btn" data-music-action="remove" aria-label="Retirer"><i class="fa-solid fa-trash-can"></i></button>
+      ` : ""}
+    </li>`).join("");
 };
 
+Meetings.prototype._bindWaitingMusicPlaylist = function(list) {
+  if (!list || list.dataset.bound) return;
+  list.dataset.bound = "1";
+  list.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-music-index]");
+    if (!item) return;
+    const index = Number(item.dataset.musicIndex);
+    const action = event.target.closest("[data-music-action]")?.dataset.musicAction;
+    if (action) {
+      if (action === "up") this.moveWaitingTrack(index, -1);
+      if (action === "down") this.moveWaitingTrack(index, 1);
+      if (action === "remove") this.removeWaitingTrack(index);
+      event.stopPropagation();
+      return;
+    }
+    // Tap sur un morceau : le lire immédiatement
+    if (index !== this.waitingMusicTrackIndex) {
+      this.waitingMusicTrackIndex = index;
+      this.playWaitingMusicLocally(0);
+    }
+  });
+};
+
+// Réordonner (hôte) : déplacer le morceau et diffuser la nouvelle playlist
+Meetings.prototype.moveWaitingTrack = function(index, direction) {
+  const tracks = this.waitingMusicTracks;
+  if (!Array.isArray(tracks) || !tracks.length) return;
+  const target = index + direction;
+  if (target < 0 || target >= tracks.length) return;
+  [tracks[index], tracks[target]] = [tracks[target], tracks[index]];
+  this.waitingMusicTrackIndex = tracks.indexOf(
+    tracks.find((t) => t.dataUrl === (this.waitingMusicAudio?.src || tracks[0].dataUrl)),
+  );
+  if (this.waitingMusicTrackIndex < 0) this.waitingMusicTrackIndex = 0;
+  this._broadcastWaitingMusicPlaylist();
+  this.updateWaitingMusicControls();
+};
+
+Meetings.prototype.removeWaitingTrack = function(index) {
+  const tracks = this.waitingMusicTracks;
+  if (!Array.isArray(tracks) || !tracks.length) return;
+  const removedDataUrl = tracks[index]?.dataUrl;
+  tracks.splice(index, 1);
+  if (!tracks.length) {
+    this._destroyWaitingMusicNode();
+    this.waitingMusicTracks = [];
+    this.waitingMusicTrackIndex = 0;
+    this.waitingMusicDataUrl = null;
+    this.waitingMusicTitle = "Aucune musique sélectionnée";
+    this._broadcastWaitingMusicStop();
+    this.updateWaitingMusicControls();
+    return;
+  }
+  const currentNode = this.waitingMusicAudio;
+  if (currentNode && removedDataUrl && currentNode.src === removedDataUrl) {
+    this.waitingMusicTrackIndex = Math.min(index, tracks.length - 1);
+    this._destroyWaitingMusicNode();
+    if (this.waitingMusicLocallyEnabled && !this.waitingMusicLocallyPaused) {
+      this.playWaitingMusicLocally(0);
+    }
+  }
+  this._broadcastWaitingMusicPlaylist();
+  this.updateWaitingMusicControls();
+};
+
+// Diffuse la playlist à jour aux participants (hôte)
+Meetings.prototype._broadcastWaitingMusicPlaylist = function() {
+  if (!this.waitingMusicTracks?.length) return;
+  this.sendSignal({
+    type: "meeting-waiting-music-set",
+    meetingId: this.meetingPendingMeetingId,
+    syncAt: Date.now() + (this.clockOffset || 0),
+    tracks: this.waitingMusicTracks.map((t) => ({ dataUrl: t.dataUrl, name: t.name })),
+  });
+};
+
+// Arrête la musique chez tout le monde (hôte) — y compris chez l'hôte lui-même.
 Meetings.prototype.stopWaitingMusicForEveryone = function() {
   this.sendSignal({ type: "meeting-waiting-music-stop", meetingId: this.meetingPendingMeetingId });
+  // Effet immédiat local (le serveur renvoie aussi le message, mais soyons
+  // certains que l'hôte s'arrête même si le réseau fait défaut) :
+  this._broadcastWaitingMusicStop();
 };
 
-Meetings.prototype.handleWaitingMusicMessage = function(data) {
-  if (data.meetingId && this.meetingPendingMeetingId && data.meetingId !== this.meetingPendingMeetingId) return;
-  if (data.type === "meeting-waiting-music-set") {
-    this.waitingMusicStoppedForMeeting = false;
-    this.receiveWaitingMusic(data);
-  }
-  if (data.type === "meeting-waiting-music-stop") {
-    this.waitingMusicStoppedForMeeting = true;
-    this.waitingMusicDataUrl = null;
-    this.waitingMusicTracks = [];
-    this.stopWaitingMusicLocally();
-    this.waitingMusicTitle = "La musique a été arrêtée par l’hôte";
-    this.updateWaitingMusicControls();
-  }
+// Purge locale finale : playlist effacée + ressources libérées.
+Meetings.prototype._broadcastWaitingMusicStop = function() {
+  this.waitingMusicStoppedForMeeting = true;
+  this.waitingMusicDataUrl = null;
+  this.waitingMusicTracks = [];
+  this.waitingMusicTrackIndex = 0;
+  this.waitingMusicTitle = "La musique a été arrêtée par l’hôte";
+  this._destroyWaitingMusicNode();
+  this.waitingMusicLocallyEnabled = false;
+  this.waitingMusicLocallyPaused = false;
+  this.updateWaitingMusicControls();
 };
 
 Meetings.prototype.handleMeetingHostStarted = function(data) {
   console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
   this.showCallToast("L'hôte a démarré la réunion");
 
-  // Si on est DÉJÀ dans la salle live, ne rien faire (évite de revenir en attente)
-  if (this.groupRoomId && data.roomId && this.groupRoomId === data.roomId) {
-    this.closeMeetingWaitingView();
-    return;
-  }
-  if (this.groupIsMeeting && this.groupRoomId) {
+  // Déjà dans la salle LIVE de la réunion (et pas en salle d'attente) : on ne
+  // bouge pas — évite de repartir en attente ou de double-rejoindre.
+  const alreadyInLiveRoom = !this.meetingWaitingRoomId && this.groupRoomId
+    && (!data.roomId || this.groupRoomId === data.roomId);
+  if (alreadyInLiveRoom) {
     this.closeMeetingWaitingView();
     return;
   }
 
+  // On était en salle d'attente : quitter PROPREMENT la salle d'attente PUIS
+  // rejoindre la salle live. (Corrige le bug historique : les participants en
+  // attente quittaient la salle puis restaient sur l'écran d'accueil sans
+  // jamais rejoindre la réunion.)
   this.closeMeetingWaitingView();
 
-  // Si meeting-joined arrive en parallèle, ne pas double-join
-  if (data.roomId && !this.groupRoomId) {
-    // Prefer direct join via room if provided
+  if (data.roomId) {
     this.handleMeetingJoined({
       meetingId: data.meetingId,
       roomId: data.roomId,
       isVideo: data.isVideo,
       title: data.title,
+      code: data.code || this.meetingPendingCode,
       createdBy: data.hostId,
     });
     return;
@@ -403,6 +817,7 @@ Meetings.prototype.handleMeetingError = function(data) {
 
 Meetings.prototype.handleMeetingApprovalGranted = async function(data) {
   console.log("📅 [MEETING] Accès accordé:", data);
+  this.meetingApprovalPending = false;
   this.showCallToast("Accès accepté — connexion…");
   this.closeMeetingWaitingView();
   if (typeof this.closeMeetingPreviewView === "function") {
@@ -421,6 +836,7 @@ Meetings.prototype.handleMeetingApprovalGranted = async function(data) {
 
 Meetings.prototype.handleMeetingApprovalDenied = function(data) {
   console.log("📅 [MEETING] Accès refusé:", data);
+  this.meetingApprovalPending = false;
   this.showCallToast(data.reason || "Accès refusé par l'hôte");
   this.pendingMeetingMediaPreferences = null;
   this.closeMeetingWaitingView();
@@ -428,6 +844,7 @@ Meetings.prototype.handleMeetingApprovalDenied = function(data) {
 
 Meetings.prototype.handleMeetingPendingApproval = function(data) {
   console.log("📅 [MEETING] En attente d'approbation:", data);
+  this.meetingApprovalPending = true; // bloque l'auto-join du compte à rebours
   this.showCallToast("Demande d'accès envoyée à l'hôte");
   // Fermer prévisualisation / attente classique
   if (typeof this.closeMeetingPreviewView === "function") {
@@ -448,7 +865,7 @@ Meetings.prototype.showMeetingApprovalWaitingView = function(data) {
 
   const title = data.title || "la réunion";
   const html = `
-    <div class="view-container meeting-waiting-view active" id="meeting-waiting-view">
+    <div class="view-container meeting-waiting-view active" id="meeting-approval-view">
       <div class="app-container" style="background:#202124;">
         <div class="header" style="background:transparent;">
           <button class="icon-btn-top" onclick="window.closeMeetingWaitingView()">
@@ -481,7 +898,7 @@ Meetings.prototype.showMeetingApprovalWaitingView = function(data) {
     <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
   `;
   document.body.insertAdjacentHTML("beforeend", html);
-  this.meetingWaitingView = document.getElementById("meeting-waiting-view");
+  this.meetingApprovalView = document.getElementById("meeting-approval-view");
 };
 
 Meetings.prototype.handleMeetingPendingRequest = function(data) {
@@ -494,20 +911,59 @@ Meetings.prototype.handleMeetingPendingRequest = function(data) {
 Meetings.prototype.handleMeetingKicked = function(data) {
   console.log("📅 [MEETING] Expulsé de la réunion:", data);
   this.showCallToast(data.reason || "Vous avez été retiré de la réunion");
-  if (typeof this.leaveMeeting === "function") {
-    // leave without confirm
-    if (this.groupRoomId) {
-      try {
-        if (typeof this.leaveGroupCall === "function") {
-          this.leaveGroupCall(data.reason || "Expulsé");
-        }
-      } catch (e) {}
-    }
-    this.closeMeetingScreen();
-    this.groupIsMeeting = false;
-    this.currentMeetingId = null;
-      this.currentMeetingCode = "";
+  // Nettoyage complet : apreinte hôte effacée, panneaux fermés, médias libérés
+  this.stopWaitingMusicLocally();
+  this._destroyWaitingMusicNode();
+  this.meetingChat?.reset?.();
+  this.meetingParticipants?.reset?.();
+  if (this.groupRoomId || this.groupIsMeeting) {
+    try {
+      this.endGroupCall(undefined);
+    } catch (e) { console.warn("kicked cleanup:", e); }
   }
+  this.closeMeetingScreen();
+  this.groupIsMeeting = false;
+  this.groupRoomId = null;
+  this.isMeetingHost = false;
+  this.meetingCreatedBy = null;
+  this.meetingWaitingRoomId = null;
+  this.currentMeetingId = null;
+  this.currentMeetingCode = "";
+  this.currentMeetingTitle = null;
+};
+
+/**
+ * Fin d'appel de groupe avec nettoyage complet (corrige l'ancien appel à une
+ * méthode inexistante : endGroupCall n'existait pas dans CallManager).
+ * Utilisée par handleMeetingEnded, handleMeetingKicked et l'adaptateur média.
+ */
+Meetings.prototype.endGroupCall = function(message) {
+  if (this.groupRoomId) {
+    this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
+  }
+  this.groupIsMeeting = false;
+  this.groupIsLeaving = true;
+  this.stopMeetingTimer?.();
+  this.closeMeetingScreen();
+  // Fermer les panneaux chat/participants et éviter les résidus d'état
+  this.meetingChat?.reset?.();
+  this.meetingParticipants?.reset?.();
+  try {
+    if (typeof this.leaveGroupCall === "function") {
+      // libère peers WebRTC, tuiles, médias, timers et interfaces d'appel
+      this.leaveGroupCall(typeof message === "string" ? message : undefined);
+    } else {
+      if (typeof this.closeAllGroupPeers === "function") this.closeAllGroupPeers();
+      if (this.groupLocalStream) {
+        this.groupLocalStream.getTracks().forEach((track) => track.stop());
+        this.groupLocalStream = null;
+      }
+      if (this.groupRoomId) this.groupRoomId = null;
+    }
+  } catch (e) {
+    console.warn("endGroupCall cleanup:", e);
+  }
+  this.pendingMeetingMediaPreferences = null;
 };
 
 Meetings.prototype.showPendingRequestDialog = function(data) {
@@ -604,7 +1060,15 @@ Meetings.prototype.handleMeetingParticipantLeft = function(data) {
 
 Meetings.prototype.handleMeetingParticipantState = function(data) {
   console.log("📅 [MEETING] État participant:", data);
-  if (window.meetingParticipants) {
+  if (!data || !data.userId) return;
+  if (!window.meetingParticipants) return;
+  // Nouveau format borné (serveur) : objet { micEnabled, camEnabled, screenSharing }
+  if (data.state && typeof data.state === "object") {
+    meetingParticipants.updateParticipantMedia(data.userId, data.state);
+    return;
+  }
+  // Ancien format (chaîne d'état brut) — conservé pour compatibilité
+  if (typeof data.state === "string") {
     meetingParticipants.updateParticipant(data.userId, data.state);
   }
 };
@@ -668,8 +1132,11 @@ Meetings.prototype.toggleMeetingCam = async function() {
 };
 
 Meetings.prototype.leaveMeeting = function() {
+  // Purge musique d'attente (aucun son ne doit continuer en arrière-plan)
+  this.stopWaitingMusicLocally();
+  this._destroyWaitingMusicNode();
   // Quitter proprement la salle de groupe (peers WebRTC + médias + signal)
-  if (this.groupRoomId) {
+  if (this.groupRoomId || this.groupIsMeeting) {
     try {
       if (typeof this.leaveGroupCall === "function") {
         this.leaveGroupCall("Vous avez quitté la réunion");
@@ -683,8 +1150,15 @@ Meetings.prototype.leaveMeeting = function() {
       console.warn("leaveMeeting cleanup:", e);
     }
   }
+  this.stopMeetingTimer?.();
   this.closeMeetingScreen();
+  // Fermer les panneaux chat/participants (sinon résidus pour la prochaine réunion)
+  this.meetingChat?.reset?.();
+  this.meetingParticipants?.reset?.();
   this.groupIsMeeting = false;
+  this.groupRoomId = null;
+  this.meetingWaitingRoomId = null;
+  this.meetingApprovalPending = false;
   this.isMeetingHost = false;
   this.meetingCreatedBy = null;
   this.currentMeetingId = null;
@@ -1149,13 +1623,16 @@ Meetings.prototype.handleMeetingList = function(data) {
 Meetings.prototype.handleMeetingEnded = function(data) {
   console.log("📅 [MEETING] Réunion terminée:", data.meetingId, "raison:", data.reason);
   this.showCallToast(data.reason || "La réunion est terminée");
+  // Purge musique d'attente + compte à rebours + salle d'attente
+  this._broadcastWaitingMusicStop();
   this.closeMeetingWaitingView();
   this.closeMeetingCreatedView();
-  this.closeMeetingScreen();
-  // Fermer l'écran d'appel de groupe si actif
-  if (this.groupRoomId) {
-    this.endGroupCall();
-  }
+  // endGroupCall : leave signal + peers + médias + écran + panneaux
+  this.endGroupCall(undefined);
+  this.isMeetingHost = false;
+  this.meetingCreatedBy = null;
+  this.meetingWaitingRoomId = null;
+  this.meetingApprovalPending = false;
 };
 
 // ===== UI LISTE DES RÉUNIONS =====
@@ -1391,7 +1868,11 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
   this.meetingCreateTimeout = setTimeout(() => {
     this.meetingCreateTimeout = null;
     this.meetingCreateSubmitting = false;
-    this.showCallToast("Le serveur n'a pas confirmé la création de la réunion.");
+    this.instantMeetingPending = false;
+    const connected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+    this.showCallToast(connected
+      ? "Aucune réponse du serveur. Vérifie ta connexion puis réessaie."
+      : "Connexion au serveur interrompue. Vérifie ta connexion puis réessaie.");
   }, 20000);
 
   console.log("📅 [MEETING] Demande de création de réunion envoyée avec politique:", accessPolicy);
@@ -1601,10 +2082,14 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   this.meetingCreateView = document.getElementById("meeting-create-view");
   this.meetingCreateView.classList.add("active");
   const musicInput = document.getElementById("meeting-scheduled-music-files");
+  this.scheduledMusicFiles = [];
   if (musicInput) musicInput.addEventListener("change", () => {
-    const files = Array.from(musicInput.files || []);
+    const selectedFiles = Array.from(musicInput.files || []);
+    const existingFiles = this.scheduledMusicFiles || [];
+    this.scheduledMusicFiles = [...existingFiles, ...selectedFiles.filter((file) => !existingFiles.some((existing) => existing.name === file.name && existing.size === file.size && existing.lastModified === file.lastModified))];
     const names = document.getElementById("meeting-scheduled-music-names");
-    if (names) names.textContent = files.length ? files.map((file) => file.name).join(" • ") : "Aucun morceau sélectionné";
+    if (names) names.textContent = this.scheduledMusicFiles.length ? this.scheduledMusicFiles.map((file) => file.name).join(" • ") : "Aucun morceau sélectionné";
+    musicInput.value = "";
   });
 
   // Date par défaut (demain à 9h)
@@ -1705,7 +2190,7 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   const duration = document.getElementById("meeting-duration").value;
   const isVideo = document.getElementById("meeting-type-video").classList.contains("active");
   const isInstant = document.getElementById("meeting-mode-instant").classList.contains("active");
-  const musicFiles = Array.from(document.getElementById("meeting-scheduled-music-files")?.files || []);
+  const musicFiles = this.scheduledMusicFiles || [];
 
   if (!title) {
     this.showCallToast("Veuillez entrer un titre");
@@ -1791,14 +2276,6 @@ Meetings.prototype.confirmCreateMeeting = async function() {
 
   // Mode création
   this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy, waitingMusicTracks);
-  this.closeMeetingCreateView();
-
-  // Si réunion immédiate, attendre un peu puis rejoindre automatiquement
-  if (isInstant) {
-    setTimeout(() => {
-      this.showCallToast("Réunion créée, jonction automatique...");
-    }, 1000);
-  }
 };
 
 Meetings.prototype.cancelMeeting = async function() {
@@ -2411,11 +2888,18 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingMeetingId = data.meetingId;
   this.waitingMusicStoppedForMeeting = false;
   const isCreator = data.createdBy === this.myId;
+  const escape = window.escapeHtml;
+  const meetingTitle = data.title || "Réunion";
+  const meetingCode = data.code ? this.normalizeMeetingCode(data.code) : "";
+  const scheduledAt = data.startsAt || data.opensAt || data.scheduledAt;
+  const scheduledStr = scheduledAt
+    ? new Date(scheduledAt).toLocaleString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })
+    : "Heure de démarrage prévue";
 
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.add("active");
     this._updateMeetingCountdown(data);
-    if (isCreator && this.waitingMusicTracks?.length) this.playWaitingMusicLocally();
+    this._updateWaitingRoomStatus();
     return;
   }
 
@@ -2427,29 +2911,84 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
             <i class="fa-solid fa-arrow-left"></i>
           </button>
           <div class="contact-info">
-            <div class="contact-name">${isCreator ? 'Vous &ecirc;tes l&rsquo;h&ocirc;te' : 'Salle d&rsquo;attente'}</div>
+            <div class="contact-name">${isCreator ? "Vous &ecirc;tes l&rsquo;h&ocirc;te" : "Salle d'attente"}</div>
           </div>
-          <div class="waiting-room-secure"><i class="fa-solid fa-shield-halved"></i></div>
+          <span class="waiting-room-conn" id="waiting-room-conn" title="État de la connexion au serveur">
+            <span class="conn-dot"></span>
+            <span id="waiting-room-conn-text">Connexion…</span>
+          </span>
         </div>
 
-        <main class="waiting-room-content${isCreator ? ' is-host' : ''}">
+        <main class="waiting-room-content${isCreator ? " is-host" : ""}">
           <section class="waiting-room-stage" aria-live="polite">
-            <div class="waiting-room-stage-label"><span class="waiting-room-stage-icon"><i class="fa-regular fa-clock"></i></span> ${isCreator ? 'R&Eacute;UNION PROGRAMM&Eacute;E' : '&Eacute;CRAN DE L&rsquo;H&Ocirc;TE'}</div>
-            <p class="waiting-room-stage-title">${isCreator ? 'Votre r&eacute;union commence dans' : 'La r&eacute;union commence dans'}</p>
+            <div class="waiting-room-stage-label"><span class="waiting-room-stage-icon"><i class="fa-regular fa-clock"></i></span> ${isCreator ? "R&Eacute;UNION PROGRAMM&Eacute;E" : "&Eacute;CRAN DE L&rsquo;H&Ocirc;TE"}</div>
+            <div class="waiting-room-meeting-name" id="waiting-room-meeting-name">${escape(meetingTitle)}</div>
+            <div class="waiting-room-code-chip">
+              <i class="fa-solid fa-hashtag"></i>
+              <span id="waiting-room-code">${escape(meetingCode)}</span>
+              <button type="button" class="waiting-room-code-copy" id="waiting-room-code-copy" aria-label="Copier le code de la réunion">
+                <i class="fa-regular fa-copy"></i>
+              </button>
+            </div>
+            <p class="waiting-room-stage-title">${isCreator ? "Votre r&eacute;union commence dans" : "La r&eacute;union commence dans"}</p>
             <div class="waiting-room-countdown" id="meeting-countdown">--:--:--</div>
-            <p class="waiting-room-stage-note">${data.scheduledAt ? new Date(data.scheduledAt).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }) : 'Heure de d&eacute;marrage pr&eacute;vue'}</p>
+            <p class="waiting-room-stage-note">${escape(scheduledStr)}</p>
+            <div class="waiting-room-media-note" id="waiting-room-media-note"></div>
           </section>
 
-          ${!isCreator && data.waitingRoomId ? `<section class="waiting-room-participants"><div class="waiting-room-participants-heading"><div><h2>Les participants</h2><p>Vous pouvez d&eacute;j&agrave; vous voir en attendant l'h&ocirc;te.</p></div><span class="waiting-room-live"><i class="fa-solid fa-circle"></i> EN ATTENTE</span></div><div id="meeting-video-grid" class="video-grid waiting-room-grid"></div></section>` : ''}
+          ${!isCreator && data.waitingRoomId ? `<section class="waiting-room-participants">
+            <div class="waiting-room-participants-heading">
+              <div>
+                <h2>Les participants</h2>
+                <p>Vous pouvez d&eacute;j&agrave; vous voir en attendant l'h&ocirc;te.</p>
+              </div>
+              <span class="waiting-room-live"><i class="fa-solid fa-circle"></i> EN ATTENTE · <span id="waiting-participant-count">1</span></span>
+            </div>
+            <div id="meeting-waiting-grid" class="video-grid waiting-room-grid"></div>
+            <div class="waiting-room-self-controls">
+              <button class="waiting-room-self-btn active" id="waiting-mic-btn" type="button" aria-label="Activer ou couper mon micro">
+                <i class="fa-solid fa-microphone"></i><span>Micro</span>
+              </button>
+              <button class="waiting-room-self-btn active" id="waiting-cam-btn" type="button" aria-label="Activer ou couper ma caméra">
+                <i class="fa-solid fa-video"></i><span>Caméra</span>
+              </button>
+            </div>
+          </section>` : ""}
 
           <div class="waiting-room-actions">
-            ${isCreator ? `<button class="waiting-room-start" data-meeting-code="${window.escapeHtml(data.code)}"><i class="fa-solid fa-play"></i> D&eacute;marrer la r&eacute;union</button>` : ''}
-            <section class="waiting-music-controls" aria-label="Musique d’attente">
-              <strong>Musique d’attente</strong>
-              <span id="meeting-waiting-music-title">Aucune musique sélectionnée</span>
-              ${isCreator ? `<label class="waiting-music-choose">Choisir une liste audio<input id="meeting-waiting-music-file" type="file" accept="audio/*" multiple hidden></label><button id="meeting-waiting-music-stop-all" type="button" disabled>Arrêter chez tout le monde</button>` : ''}
-              <button id="meeting-waiting-music-toggle" type="button" disabled>Écouter la musique</button>
+            ${isCreator ? `<button class="waiting-room-start" data-meeting-code="${escape(data.code)}"><i class="fa-solid fa-play"></i> D&eacute;marrer la r&eacute;union maintenant</button>` : ""}
+
+            <section class="waiting-music-controls" aria-label="Musique d'attente">
+              <div class="waiting-music-head">
+                <strong>Musique d'attente</strong>
+                <span class="waiting-music-track-pos" id="waiting-music-track-pos"></span>
+              </div>
+              <span class="waiting-music-title" id="meeting-waiting-music-title">Aucune musique sélectionnée</span>
+              <span class="waiting-music-status" id="waiting-music-status"></span>
+              <div class="waiting-music-progress">
+                <span class="waiting-music-time" id="waiting-music-current-time">0:00</span>
+                <div class="waiting-music-progress-track"><div class="waiting-music-progress-fill" id="waiting-music-progress-fill"></div></div>
+                <span class="waiting-music-time" id="waiting-music-total-time">--:--</span>
+              </div>
+              <div class="waiting-music-buttons">
+                <button id="waiting-music-unlock" type="button" class="waiting-music-unlock" style="display:none">
+                  <i class="fa-solid fa-play"></i> Activer la musique
+                </button>
+                <button id="meeting-waiting-music-toggle" type="button" class="waiting-music-toggle" disabled>Écouter la musique</button>
+                ${isCreator ? `<button id="meeting-waiting-music-stop-all" type="button" class="waiting-music-stop-all" disabled><i class="fa-solid fa-stop"></i> Arrêter chez tout le monde</button>` : ""}
+              </div>
+              <div class="waiting-music-volume-row" id="waiting-music-volume-row" style="display:none">
+                <i class="fa-solid fa-volume-low"></i>
+                <input type="range" id="waiting-music-volume" min="0" max="1" step="0.05" value="1" aria-label="Volume de la musique">
+                <i class="fa-solid fa-volume-high"></i>
+              </div>
+              ${isCreator ? `
+                <ul id="waiting-music-playlist" class="waiting-music-playlist"></ul>
+                <label class="waiting-music-choose" for="waiting-music-file"><i class="fa-solid fa-music"></i> Ajouter des morceaux
+                  <input id="waiting-music-file" type="file" accept="audio/*" multiple hidden>
+                </label>` : ""}
             </section>
+
             <button class="waiting-room-leave" onclick="window.closeMeetingWaitingView()">Quitter la salle d'attente</button>
           </div>
         </main>
@@ -2457,22 +2996,100 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
     </div>
   `;
 
-
   document.body.insertAdjacentHTML("beforeend", html);
   this.meetingWaitingView = document.getElementById("meeting-waiting-view");
   this.meetingWaitingView.classList.add("active");
+
+  // --- Actions ---
   const startButton = this.meetingWaitingView.querySelector("[data-meeting-code]");
   if (startButton) startButton.addEventListener("click", () => this.startMeeting(startButton.dataset.meetingCode));
-  const musicFile = this.meetingWaitingView.querySelector("#meeting-waiting-music-file");
+  const copyButton = this.meetingWaitingView.querySelector("#waiting-room-code-copy");
+  if (copyButton) copyButton.addEventListener("click", () => this.copyMeetingText(meetingCode, "Code"));
+
+  // --- Lecteur musique d'attente ---
+  const musicFile = this.meetingWaitingView.querySelector("#waiting-music-file");
   if (musicFile) musicFile.addEventListener("change", () => this.selectWaitingMusic(musicFile.files));
   const musicToggle = this.meetingWaitingView.querySelector("#meeting-waiting-music-toggle");
   if (musicToggle) musicToggle.addEventListener("click", () => this.toggleWaitingMusicLocally());
+  const musicUnlock = this.meetingWaitingView.querySelector("#waiting-music-unlock");
+  if (musicUnlock) musicUnlock.addEventListener("click", () => this.unlockWaitingMusic());
   const stopAll = this.meetingWaitingView.querySelector("#meeting-waiting-music-stop-all");
   if (stopAll) stopAll.addEventListener("click", () => this.stopWaitingMusicForEveryone());
-  this.updateWaitingMusicControls();
-  if (isCreator && this.waitingMusicTracks?.length) this.playWaitingMusicLocally();
+  const volume = this.meetingWaitingView.querySelector("#waiting-music-volume");
+  if (volume) {
+    volume.addEventListener("input", () => this.setWaitingMusicVolume(volume.value));
+    const volumeRow = this.meetingWaitingView.querySelector("#waiting-music-volume-row");
+    if (volumeRow) volumeRow.style.display = "flex";
+  }
+  const playlist = this.meetingWaitingView.querySelector("#waiting-music-playlist");
+  if (playlist) this._bindWaitingMusicPlaylist(playlist);
+
+  // --- Contrôles micro/caméra de la salle d'attente (participants attendus) ---
+  const micBtn = this.meetingWaitingView.querySelector("#waiting-mic-btn");
+  if (micBtn) {
+    micBtn.classList.toggle("active", !this.groupIsMuted);
+    micBtn.addEventListener("click", () => {
+      if (!this.groupLocalStream) return;
+      if (typeof this.toggleGroupMic === "function") this.toggleGroupMic();
+      const muted = !!this.groupIsMuted;
+      micBtn.classList.toggle("active", !muted);
+      micBtn.innerHTML = muted
+        ? '<i class="fa-solid fa-microphone-slash"></i><span>Micro coupé</span>'
+        : '<i class="fa-solid fa-microphone"></i><span>Micro</span>';
+    });
+  }
+  const camBtn = this.meetingWaitingView.querySelector("#waiting-cam-btn");
+  if (camBtn) {
+    camBtn.classList.toggle("active", !this.groupIsCamOff);
+    camBtn.addEventListener("click", async () => {
+      if (!this.groupLocalStream) return;
+      if (typeof this.toggleGroupCamera === "function") await this.toggleGroupCamera();
+      const camOff = !!this.groupIsCamOff;
+      camBtn.classList.toggle("active", !camOff);
+      camBtn.innerHTML = camOff
+        ? '<i class="fa-solid fa-video-slash"></i><span>Caméra coupée</span>'
+        : '<i class="fa-solid fa-video"></i><span>Caméra</span>';
+      this.renderGroupGrid();
+    });
+  }
+
+  // Reconduire les préférences choisies dans la prévisualisation (attendre sans
+  // violer les autorisations : micro/caméra restent dans l'état choisi).
+  this._applyPendingMeetingMediaPreferences();
+  if (!this.groupLocalStream && !isCreator) {
+    const note = this.meetingWaitingView.querySelector("#waiting-room-media-note");
+    if (note) {
+      note.textContent = "Caméra/micro indisponibles — vous pouvez attendre ici sans vos périphériques.";
+      note.classList.add("visible");
+    }
+  }
+
+  this._updateWaitingRoomStatus();
+  this.updateMeetingParticipantCount();
+  this.renderWaitingMusicPlaylist();
+  if (isCreator && this.waitingMusicTracks?.length) {
+    this.playWaitingMusicLocally(0);
+  }
 
   this._updateMeetingCountdown(data);
+};
+
+// Indicateur de connexion dans la salle d'attente
+Meetings.prototype._updateWaitingRoomStatus = function() {
+  const dot = document.querySelector("#waiting-room-conn");
+  const text = document.getElementById("waiting-room-conn-text");
+  if (!text) return;
+  const connected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  if (dot) dot.classList.toggle("connected", connected);
+  text.textContent = connected ? "Connecté" : "Reconnexion…";
+};
+
+// Compteur de participants de la salle d'attente (lorsque la liste est visible)
+Meetings.prototype._updateWaitingRoomParticipantCount = function() {
+  const el = document.getElementById("waiting-participant-count");
+  if (!el) return;
+  const waitingCount = (this.groupRoster || []).filter((r) => r && r.state === "JOINED").length;
+  el.textContent = String(waitingCount || 1);
 };
 
 Meetings.prototype._updateMeetingCountdown = function(data) {
@@ -2483,6 +3100,10 @@ Meetings.prototype._updateMeetingCountdown = function(data) {
   const startsAt = data.startsAt || data.opensAt || data.scheduledAt;
 
   const update = () => {
+    // Indicateurs temps réel de la salle d'attente
+    this._updateWaitingRoomStatus();
+    this._updateWaitingRoomParticipantCount();
+
     const now = this.clockOffset ? Date.now() + this.clockOffset : Date.now();
     const remaining = Math.max(0, startsAt - now);
 
@@ -2492,10 +3113,17 @@ Meetings.prototype._updateMeetingCountdown = function(data) {
         this.meetingTimer = null;
       }
 
+      // Pas d'auto-join pendant qu'une demande d'approbation est en cours
+      if (this.meetingApprovalPending) {
+        console.log("📅 [MEETING] Heure atteinte mais approbation en attente — pas d'auto-join");
+        return;
+      }
+
       if (this.meetingPendingCode) {
         console.log("📅 [MEETING] Heure de démarrage atteinte, auto-join...");
-        this.joinMeeting(this.meetingPendingCode);
+        const autoCode = this.meetingPendingCode;
         this.meetingPendingCode = null;
+        this.joinMeeting(autoCode);
       }
       return;
     }
@@ -2517,6 +3145,25 @@ Meetings.prototype._updateMeetingCountdown = function(data) {
 
 Meetings.prototype.closeMeetingWaitingView = function() {
   this.stopWaitingMusicLocally();
+  // Libérer complètement les ressources audio : aucun son ne doit persister
+  // en arrière-plan ou se relancer lors d'une prochaine réunion.
+  this._destroyWaitingMusicNode();
+  if (!this.isMeetingHost) {
+    // Les invités repartent de zéro : la prochaine playlist viendra du serveur
+    this.waitingMusicTracks = [];
+    this.waitingMusicTrackIndex = 0;
+    this.waitingMusicLastSyncAt = null;
+  }
+  this.waitingMusicLocallyEnabled = false;
+  this.waitingMusicLocallyPaused = false;
+  this.waitingMusicBlocked = false;
+
+  if (this.meetingApprovalView) {
+    // Écran "En attente d'approbation" également présent
+    this.meetingApprovalView.remove();
+    this.meetingApprovalView = null;
+  }
+
   if (this.meetingTimer) {
     clearInterval(this.meetingTimer);
     this.meetingTimer = null;
@@ -2524,11 +3171,12 @@ Meetings.prototype.closeMeetingWaitingView = function() {
 
   if (this.meetingWaitingView) {
     this.meetingWaitingView.classList.remove("active");
+    const viewRef = this.meetingWaitingView;
+    this.meetingWaitingView = null;
     setTimeout(() => {
-      if (this.meetingWaitingView) {
-        this.meetingWaitingView.remove();
-        this.meetingWaitingView = null;
-      }
+      // Nettoyage de l'élément précis capturé (pas de la propriété actuelle) :
+      // évite qu'un timer de 300 ms supprime une vue recréée entre-temps.
+      if (viewRef && viewRef.isConnected) viewRef.remove();
     }, 300);
   }
   if (this.meetingWaitingRoomId) {
@@ -2627,6 +3275,17 @@ if (window.callManager) {
   window.callManager.previewCamEnabled = true;
   window.callManager.previewStream = null;
   window.callManager.pendingRequestDialog = null;
+  window.callManager.waitingMusicTracks = [];
+  window.callManager.waitingMusicTrackIndex = 0;
+  window.callManager.waitingMusicVolume = 1;
+  window.callManager.waitingMusicLocallyEnabled = false;
+  window.callManager.waitingMusicLocallyPaused = false;
+  window.callManager.waitingMusicBlocked = false;
+  window.callManager.waitingMusicStoppedForMeeting = false;
+  window.callManager.waitingMusicLastSyncAt = null;
+  window.callManager.waitingMusicPendingSeekSec = 0;
+  window.callManager.waitingMusicAudio = null;
+  window.callManager.meetingApprovalPending = false;
 }
 
 // ===== EXPORTS GLOBAUX =====
@@ -2646,7 +3305,9 @@ window.copyMeetingCode = function(code) { window.callManager.copyMeetingCode(cod
 window.closePendingRequestDialog = function() { window.callManager.closePendingRequestDialog(); };
 window.approveMeetingRequest = function(meetingId, userId) { window.callManager.approveMeetingRequest(meetingId, userId); };
 window.rejectMeetingRequest = function(meetingId, userId) { window.callManager.rejectMeetingRequest(meetingId, userId); };
-window.leaveMeeting = function() { window.callManager.leaveMeetingWithConfirm ? window.callManager.leaveMeetingWithConfirm() : window.callManager.leaveMeeting(); };
+// Bouton "quitter" : quitte directement (style WhatsApp). La confirmation
+// détaillée reste disponible via leaveMeetingWithConfirm pour le Web.
+window.leaveMeeting = function() { window.callManager.leaveMeeting ? window.callManager.leaveMeeting() : window.callManager.leaveMeetingWithConfirm(); };
 window.endMeetingForEveryone = function() { window.callManager.endMeetingForEveryone(); };
 window.toggleMeetingMic = function() { window.callManager.toggleMeetingMic(); };
 window.toggleMeetingCam = function() { window.callManager.toggleMeetingCam(); };
@@ -3376,8 +4037,11 @@ Meetings.MeetingParticipants = class MeetingParticipants {
       const state = p.state || "JOINED";
       const isOrganizer = hostId && userId === hostId;
       const isSelf = userId === myId;
-      const micEnabled = p.micEnabled !== false;
-      const camEnabled = p.camEnabled !== false;
+      // Les états média sont soit portés par l'événement, soit relus depuis
+      // l'état WebRTC live — sinon on n'invente pas de valeur par défaut.
+      const liveState = window.callManager?.groupPeerStates?.get(userId) || {};
+      const micEnabled = typeof p.micEnabled === "boolean" ? p.micEnabled : !liveState.micMuted;
+      const camEnabled = typeof p.camEnabled === "boolean" ? p.camEnabled : !liveState.camOff;
 
       html += `
         <div class="participant-item" data-user-id="${window.escapeHtml(userId)}">
@@ -3430,7 +4094,8 @@ Meetings.MeetingParticipants = class MeetingParticipants {
    * Retirer un participant
    */
   async removeParticipant(userId) {
-    const displayName = this.participants?.[userId]?.displayName || userId;
+    // this.participants est une Map : `?.[userId]` ne marchait jamais
+    const displayName = this.participants.get(userId)?.displayName || userId;
     if (!await window.callManager.confirmMeetingAction("Retirer un participant", `Retirer ${displayName} de la r\u00e9union ?`)) return;
 
     const toast = (msg) => {

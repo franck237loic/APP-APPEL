@@ -7052,20 +7052,29 @@ showLocalStorageOnScreen = () => {
 
   // Ouvre le micro (et la caméra si appel vidéo). Résolution volontairement
   // modeste (640x480, 24 fps) : en maillage, chaque flux est envoyé N-1 fois.
-  acquireGroupMedia = async (video) => {
+  // `options` (optionnel, module Meeting) : { cameraDeviceId, microphoneDeviceId }
+  // permet d'ouvrir les périphériques choisis dans l'écran de prévisualisation.
+  // Sans options, le comportement historique (facingMode "user") est conservé.
+  acquireGroupMedia = async (video, options = {}) => {
     if (this.isIOS()) {
       await this.ensureMediaAuthorizedIOS();
     }
+
+    const cameraDeviceId = options.cameraDeviceId || null;
+    const microphoneDeviceId = options.microphoneDeviceId || null;
 
     this.groupLocalStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
+        ...(microphoneDeviceId ? { deviceId: { exact: microphoneDeviceId } } : {}),
       },
       video: video
         ? {
-            facingMode: "user",
+            ...(cameraDeviceId
+              ? { deviceId: { exact: cameraDeviceId } }
+              : { facingMode: "user" }),
             width: { ideal: 640 },
             height: { ideal: 480 },
             frameRate: { ideal: 24 },
@@ -8526,9 +8535,12 @@ showLocalStorageOnScreen = () => {
   // garde les <video> existantes pour ne pas couper un flux qui joue.
   renderGroupGrid = () => {
     // En réunion planifiée, la grille visible est #meeting-video-grid (UI Google Meet).
+    // En salle d'attente de réunion, la grille dédiée est #meeting-waiting-grid
+    // (ID unique : évite la collision historique avec #meeting-video-grid).
     // Sinon on utilise la grille d'appel de groupe classique.
     const gridId = this.groupIsMeeting ? "meeting-video-grid" : "group-grid";
-    const grid = document.getElementById(gridId);
+    const grid = document.getElementById(gridId)
+      || (this.groupIsMeeting ? document.getElementById("meeting-waiting-grid") : null);
     if (!grid) return;
     if (this.groupIsMeeting) {
       for (let n = 1; n <= 6; n++) grid.classList.remove(`count-${n}`);
@@ -9021,6 +9033,8 @@ showLocalStorageOnScreen = () => {
     if (grid) grid.innerHTML = "";
     const meetingGrid = document.getElementById("meeting-video-grid");
     if (meetingGrid) meetingGrid.innerHTML = "";
+    const waitingGrid = document.getElementById("meeting-waiting-grid");
+    if (waitingGrid) waitingGrid.innerHTML = "";
     const audioBox = document.getElementById("group-audio-container");
     if (audioBox) audioBox.innerHTML = "";
     this.closeGroupAddSheet();

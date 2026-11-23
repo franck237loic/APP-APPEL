@@ -613,17 +613,19 @@ body.meeting-ui-active .meeting-participants-panel {
 }
 
 /* ===== RESPONSIVE ===== */
-.view-container[class*="meeting-"] @media (max-width: 768px) {
-  .preview-video {
+/* NB : le sélecteur de conteneur a été déplacé à l'intérieur de la media
+   query — un @media précédé d'un sélecteur est ignoré par le parseur CSS. */
+@media (max-width: 768px) {
+  .view-container[class*="meeting-"] .preview-video {
     max-width: 100%;
   }
 
-  .meeting-chat-panel,
-  .meeting-participants-panel {
+  .view-container[class*="meeting-"] .meeting-chat-panel,
+  .view-container[class*="meeting-"] .meeting-participants-panel {
     max-width: 100%;
   }
 
-  .preview-controls {
+  .view-container[class*="meeting-"] .preview-controls {
     flex-wrap: wrap;
     justify-content: center;
   }
@@ -1035,23 +1037,23 @@ body.meeting-ui-active .meeting-participants-panel {
 }
 
 /* Mobile compact */
-.view-container[class*="meeting-"] @media (max-width: 480px) {
-  .meeting-control-btn {
+@media (max-width: 480px) {
+  .view-container[class*="meeting-"] .meeting-control-btn {
     width: 44px;
     height: 44px;
     min-width: 44px;
     font-size: 16px;
   }
-  .meeting-control-buttons,
-  .meeting-controls.meeting-controls-raised .meeting-control-buttons {
+  .view-container[class*="meeting-"] .meeting-control-buttons,
+  .view-container[class*="meeting-"] .meeting-controls.meeting-controls-raised .meeting-control-buttons {
     gap: 6px;
     padding: 8px 10px;
   }
-  .meeting-video-area {
+  .view-container[class*="meeting-"] .meeting-video-area {
     padding-left: 8px;
     padding-right: 8px;
   }
-  .video-tile,
+  .view-container[class*="meeting-"] .video-tile,
   #meeting-video-grid .group-tile,
   #meeting-video-grid .video-tile {
     border-radius: 12px;
@@ -1374,32 +1376,32 @@ body.meeting-ui-active #log-toggle-btn {
 }
 
 /* ===== RESPONSIVE MOBILE ===== */
-.view-container[class*="meeting-"] @media (max-width: 768px) {
-  .app-container {
+@media (max-width: 768px) {
+  .view-container[class*="meeting-"] .app-container {
     max-width: 100%;
   }
 
-  .header {
+  .view-container[class*="meeting-"] .header {
     padding: 12px;
   }
 
-  .contact-name {
+  .view-container[class*="meeting-"] .contact-name {
     font-size: 16px;
   }
 
-  .icon-btn-top {
+  .view-container[class*="meeting-"] .icon-btn-top {
     width: 36px;
     height: 36px;
     font-size: 14px;
   }
 
   /* Boutons plus petits sur mobile */
-  .meeting-type-btn {
+  .view-container[class*="meeting-"] .meeting-type-btn {
     padding: 10px 16px;
     font-size: 13px;
   }
 
-  /* Ecran de crÃ©ation/join */
+  /* Ecran de création/join */
   .view-container input,
   .view-container textarea,
   .view-container select {
@@ -1407,64 +1409,64 @@ body.meeting-ui-active #log-toggle-btn {
     padding: 10px;
   }
 
-  /* Ecran de rÃ©union */
-  .meeting-header {
+  /* Ecran de réunion */
+  .view-container[class*="meeting-"] .meeting-header {
     padding: 12px;
   }
 
-  .meeting-title {
+  .view-container[class*="meeting-"] .meeting-title {
     font-size: 16px;
   }
 
-  .meeting-time {
+  .view-container[class*="meeting-"] .meeting-time {
     font-size: 12px;
   }
 
-  .meeting-action-btn {
+  .view-container[class*="meeting-"] .meeting-action-btn {
     width: 36px;
     height: 36px;
     font-size: 14px;
   }
 
-  .meeting-control-btn {
+  .view-container[class*="meeting-"] .meeting-control-btn {
     width: 44px;
     height: 44px;
     font-size: 16px;
   }
 
-  .meeting-time-display {
+  .view-container[class*="meeting-"] .meeting-time-display {
     font-size: 12px;
   }
 
-  /* Grille vidÃ©o responsive */
-  .video-grid {
+  /* Grille vidéo responsive */
+  .view-container[class*="meeting-"] .video-grid {
     grid-template-columns: 1fr;
   }
 
-  .video-tile {
+  .view-container[class*="meeting-"] .video-tile {
     min-height: 200px;
   }
 
-  /* Panels latÃ©raux en plein Ã©cran sur mobile */
-  .meeting-participants-panel,
-  .meeting-chat-panel {
+  /* Panels latéraux en plein écran sur mobile */
+  .view-container[class*="meeting-"] .meeting-participants-panel,
+  .view-container[class*="meeting-"] .meeting-chat-panel {
     max-width: 100%;
     width: 100%;
   }
 
   /* Dialog responsive */
-  .dialog-content {
+  .view-container[class*="meeting-"] .dialog-content {
     min-width: auto;
     width: 90%;
     padding: 16px;
   }
 
-  .dialog-header h3 {
+  .view-container[class*="meeting-"] .dialog-header h3 {
     font-size: 16px;
   }
 
-  .btn-primary,
-  .btn-secondary {
+  .view-container[class*="meeting-"] .btn-primary,
+  .view-container[class*="meeting-"] .btn-secondary {
     padding: 12px 16px;
     font-size: 13px;
   }
@@ -1840,16 +1842,16 @@ body.meeting-ui-active #log-toggle-btn {
   background: #000;
 }
 
-/* ---------- Petits Ã©crans : la barre de boutons ne dÃ©borde plus ---------- */
-.view-container[class*="meeting-"] @media (max-width: 400px) {
-  .meeting-control-btn {
+/* ---------- Petits écrans : la barre de boutons ne déborde plus ---------- */
+@media (max-width: 400px) {
+  .view-container[class*="meeting-"] .meeting-control-btn {
     width: 40px;
     height: 40px;
     min-width: 40px;
     font-size: 15px;
   }
-  .meeting-control-buttons,
-  .meeting-controls.meeting-controls-raised .meeting-control-buttons {
+  .view-container[class*="meeting-"] .meeting-control-buttons,
+  .view-container[class*="meeting-"] .meeting-controls.meeting-controls-raised .meeting-control-buttons {
     gap: 4px;
     padding: 8px 8px;
   }
@@ -2067,7 +2069,8 @@ body.meeting-ui-active #log-toggle-btn {
   letter-spacing: .08em;
 }
 .view-container[class*="meeting-"] .waiting-room-live i { font-size: 7px; }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid {
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
   position: relative;
   inset: auto;
   flex: 1 1 auto;
@@ -2087,7 +2090,9 @@ body.meeting-ui-active #log-toggle-btn {
   overscroll-behavior: contain;
 }
 .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .video-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile {
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile,
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile,
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile {
   position: relative;
   inset: auto;
   width: 100%;
@@ -2100,7 +2105,8 @@ body.meeting-ui-active #log-toggle-btn {
   border-radius: 14px;
   box-shadow: 0 6px 18px rgba(0,0,0,.22);
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid:empty::before {
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid:empty::before,
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid:empty::before {
   content: "Connexion des participants...";
   position: relative;
   inset: auto;
@@ -2174,19 +2180,24 @@ body.meeting-ui-active #log-toggle-btn {
   .view-container[class*="meeting-"] .waiting-room-countdown { font-size: clamp(38px, 12vw, 52px); }
   .view-container[class*="meeting-"] .waiting-room-participants { padding: 11px; border-radius: 16px; }
   .view-container[class*="meeting-"] .waiting-room-participants-heading p { max-width: 230px; line-height: 1.35; }
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid {
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-auto-rows: minmax(94px, 1fr);
     gap: 7px;
   }
   .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .video-tile,
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile {
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile,
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile,
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile {
     max-height: 170px;
     aspect-ratio: 4 / 3;
     border-radius: 11px;
   }
   .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .video-tile:only-child,
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile:only-child {
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile:only-child,
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile:only-child,
+  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile:only-child {
     width: min(100%, 260px);
     justify-self: center;
   }
@@ -2296,7 +2307,7 @@ body.meeting-ui-active #log-toggle-btn {
 }
 
 /* The selected speaker/host stays large above the invitee thumbnails. */
-.view-container[class*="meeting-"] @media (max-width: 600px) {
+@media (max-width: 600px) {
   .meeting-screen .meeting-video-area #meeting-video-grid > .meeting-featured-tile {
     align-self: start;
     min-height: 210px;
@@ -2809,7 +2820,8 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
   align-content: space-between;
 }
 
-#meeting-waiting-view #meeting-video-grid {
+#meeting-waiting-view #meeting-video-grid,
+#meeting-waiting-view #meeting-waiting-grid {
   position: relative;
   inset: auto;
   flex: 1 1 auto;
@@ -2828,7 +2840,9 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 }
 
 #meeting-waiting-view #meeting-video-grid > .video-tile,
-#meeting-waiting-view #meeting-video-grid > .group-tile {
+#meeting-waiting-view #meeting-waiting-grid > .video-tile,
+#meeting-waiting-view #meeting-video-grid > .group-tile,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile {
   position: relative;
   inset: auto;
   width: 100%;
@@ -2847,11 +2861,15 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
   .meeting-waiting-view .waiting-room-countdown { font-size: clamp(38px, 12vw, 52px); }
   .meeting-waiting-view .waiting-room-participants { padding: 11px; border-radius: 16px; }
   .meeting-waiting-view .waiting-room-participants-heading p { max-width: 230px; line-height: 1.35; }
-  #meeting-waiting-view #meeting-video-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(94px, 1fr); gap: 7px; }
+  #meeting-waiting-view #meeting-video-grid, #meeting-waiting-view #meeting-waiting-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: minmax(94px, 1fr); gap: 7px; }
   #meeting-waiting-view #meeting-video-grid > .video-tile,
-  #meeting-waiting-view #meeting-video-grid > .group-tile { max-height: 170px; aspect-ratio: 4 / 3; border-radius: 11px; }
+  #meeting-waiting-view #meeting-waiting-grid > .video-tile,
+  #meeting-waiting-view #meeting-video-grid > .group-tile,
+  #meeting-waiting-view #meeting-waiting-grid > .group-tile { max-height: 170px; aspect-ratio: 4 / 3; border-radius: 11px; }
   #meeting-waiting-view #meeting-video-grid > .video-tile:only-child,
-  #meeting-waiting-view #meeting-video-grid > .group-tile:only-child { width: min(100%, 260px); justify-self: center; }
+  #meeting-waiting-view #meeting-waiting-grid > .video-tile:only-child,
+  #meeting-waiting-view #meeting-video-grid > .group-tile:only-child,
+  #meeting-waiting-view #meeting-waiting-grid > .group-tile:only-child { width: min(100%, 260px); justify-self: center; }
   .meeting-waiting-view .waiting-room-actions { flex-direction: row; }
   .meeting-waiting-view .waiting-room-actions button { flex: 1 1 0; padding-inline: 10px; font-size: 12px; }
 }
@@ -2859,4 +2877,446 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 @media (prefers-reduced-motion: reduce) {
   body.meeting-ui-active .meeting-chat-panel,
   body.meeting-ui-active .meeting-participants-panel { transition: none; }
+}
+
+/* ============================================================
+   SALLE D'ATTENTE — AMÉLIORATIONS (identité visuelle app)
+   Palette : fond #0b141a, accent #00a884, urgence #ea0038
+   ============================================================ */
+
+/* --- Indicateur de connexion (en-tête) --- */
+.waiting-room-header .waiting-room-conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: #8696a0;
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .05);
+  white-space: nowrap;
+}
+
+.waiting-room-header .waiting-room-conn .conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ea0038;
+  box-shadow: 0 0 0 0 rgba(234, 0, 56, .5);
+  animation: waiting-conn-pulse 1.6s ease-out infinite;
+}
+
+.waiting-room-header .waiting-room-conn.connected .conn-dot {
+  background: #00a884;
+  animation: none;
+  box-shadow: 0 0 6px rgba(0, 168, 132, .6);
+}
+
+@keyframes waiting-conn-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(234, 0, 56, .45); }
+  70%  { box-shadow: 0 0 0 7px rgba(234, 0, 56, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(234, 0, 56, 0); }
+}
+
+/* --- Titre de la réunion + chip de code --- */
+.waiting-room-meeting-name {
+  font-size: clamp(20px, 5vw, 28px);
+  font-weight: 700;
+  color: #e9edef;
+  text-align: center;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  margin-bottom: 10px;
+}
+
+.waiting-room-code-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 5px 8px 5px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .06);
+  border: 1px solid rgba(255, 255, 255, .12);
+  font-size: 13px;
+  color: rgba(233, 237, 239, .82);
+  margin-bottom: 18px;
+}
+
+.waiting-room-code-chip .code-label { font-weight: 600; color: #8696a0; }
+
+.waiting-room-code-chip #waiting-room-code {
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: #00a884;
+}
+
+.waiting-room-code-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .08);
+  color: #e9edef;
+  cursor: pointer;
+  transition: background .15s ease, transform .1s ease;
+}
+
+.waiting-room-code-copy:hover { background: rgba(0, 168, 132, .35); }
+.waiting-room-code-copy:active { transform: scale(.92); }
+
+/* --- Note média (flux non prêt / besoin de permissions) --- */
+.waiting-room-media-note {
+  display: none;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(234, 0, 56, .12);
+  border: 1px solid rgba(234, 0, 56, .3);
+  color: #ffbdc4;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.waiting-room-media-note.visible { display: block; }
+
+/* --- Contrôles micro / caméra de prévisualisation --- */
+.waiting-room-self-controls {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.waiting-room-self-btn {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .2);
+  background: rgba(255, 255, 255, .07);
+  color: #e9edef;
+  font-size: 19px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s ease, transform .1s ease, border-color .15s ease;
+}
+
+.waiting-room-self-btn:hover { background: rgba(255, 255, 255, .14); }
+.waiting-room-self-btn:active { transform: scale(.94); }
+
+.waiting-room-self-btn.active {
+  background: rgba(0, 168, 132, .82);
+  border-color: rgba(0, 168, 132, .9);
+}
+
+/* ============================================================
+   LECTEUR MUSIQUE D'ATTENTE
+   ============================================================ */
+
+.waiting-music-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-weight: 700;
+  color: #e9edef;
+}
+
+.waiting-music-track-pos {
+  font-size: 12px;
+  font-weight: 700;
+  color: #00a884;
+  white-space: nowrap;
+}
+
+.waiting-music-track-pos:empty { display: none; }
+
+.waiting-music-head #meeting-waiting-music-title,
+.waiting-music-head .waiting-music-title {
+  overflow-wrap: anywhere;
+}
+
+.waiting-music-status {
+  font-size: 12px;
+  color: #8696a0;
+  min-height: 15px;
+}
+
+.waiting-music-status.waiting-music-blocked { color: #ffbdc4; }
+
+.waiting-music-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.waiting-music-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #8696a0;
+  min-width: 34px;
+}
+
+.waiting-music-time:last-child { text-align: right; }
+
+.waiting-music-progress-track {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .12);
+  overflow: hidden;
+}
+
+.waiting-music-progress-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  background: #00a884;
+  transition: width .25s linear;
+}
+
+.waiting-music-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.waiting-music-toggle,
+.waiting-music-stop-all {
+  flex: 1 1 auto;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.waiting-music-toggle { min-width: 132px; }
+.waiting-music-stop-all { color: #ff8a93; }
+
+.waiting-music-unlock {
+  flex: 1 1 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 12px;
+  background: #ea0038;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  animation: waiting-unlock-nudge 2.2s ease-in-out infinite;
+}
+
+@keyframes waiting-unlock-nudge {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+}
+
+.waiting-music-volume-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  color: #8696a0;
+  font-size: 13px;
+}
+
+.waiting-music-volume-row input[type="range"] {
+  flex: 1 1 auto;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .2);
+  outline: none;
+  cursor: pointer;
+}
+
+.waiting-music-volume-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #00a884;
+  border: 2px solid #0b141a;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .4);
+}
+
+.waiting-music-volume-row input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #00a884;
+  border: 2px solid #0b141a;
+}
+
+/* --- Playlist (hôte) --- */
+.waiting-music-playlist {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.waiting-music-track {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .05);
+  border: 1px solid transparent;
+  color: #e9edef;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+
+.waiting-music-track:hover { background: rgba(255, 255, 255, .09); }
+
+.waiting-music-track.now-playing {
+  border-color: rgba(0, 168, 132, .55);
+  background: rgba(0, 168, 132, .12);
+}
+
+.waiting-music-index {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, .1);
+  color: #8696a0;
+}
+
+.waiting-music-track.now-playing .waiting-music-index {
+  background: #00a884;
+  color: #0b141a;
+}
+
+.waiting-music-track-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waiting-music-track.now-playing .waiting-music-track-name { color: #00d29b; }
+
+.waiting-music-track-btn {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .07);
+  color: #8696a0;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .15s ease, color .15s ease;
+}
+
+.waiting-music-track-btn:hover { background: rgba(255, 255, 255, .16); color: #e9edef; }
+
+.waiting-music-track-btn[data-music-action="remove"]:hover {
+  background: rgba(234, 0, 56, .35);
+  color: #fff;
+}
+
+.waiting-music-track-btn:disabled {
+  opacity: .35;
+  cursor: default;
+}
+
+.waiting-music-track-btn:disabled:hover { background: rgba(255, 255, 255, .07); color: #8696a0; }
+
+.waiting-music-choose {
+  margin-top: 10px;
+  width: 100%;
+}
+
+/* --- Responsive salle d'attente --- */
+@media (max-width: 600px) {
+  .waiting-room-header .waiting-room-conn { font-size: 10px; padding: 3px 8px; }
+  .waiting-room-self-btn { width: 46px; height: 46px; font-size: 17px; }
+  .waiting-music-toggle { min-width: 0; flex: 1 1 100%; }
+  .waiting-music-buttons button { font-size: 13px; }
+}
+
+/* Ré-affirmations avec spécificité suffisante face aux règles
+   `.view-container[class*="meeting-"] .waiting-music-controls button`
+   définies plus haut (grid) — ici les boutons contiennent une icône
+   ET un texte, il faut une disposition en ligne. */
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-toggle,
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-stop-all,
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-unlock {
+  display: inline-flex;
+  place-items: center;
+  flex-direction: row;
+  place-content: start center;
+  align-items: center;
+  gap: 7px;
+}
+
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-stop-all { color: #ff8a93; }
+
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-toggle:disabled {
+  opacity: .48;
+  cursor: default;
+}
+
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-toggle:not(:disabled) {
+  background: rgba(0, 168, 132, .82);
+  border-color: rgba(0, 168, 132, .9);
+  color: #0b141a;
+}
+
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-toggle.playing {
+  background: rgba(255, 255, 255, .07);
+  border-color: rgba(255, 255, 255, .15);
+  color: #edf2f4;
+}
+
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-unlock {
+  background: #ea0038;
+  border-color: transparent;
+  color: #fff;
+}
+
+.view-container[class*="meeting-"] .waiting-music-controls .waiting-music-volume-row input[type="range"] {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: rgba(255, 255, 255, .2);
+  font: inherit;
+  cursor: pointer;
 }
