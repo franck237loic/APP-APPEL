@@ -2995,6 +2995,9 @@ button, [role="button"] { cursor: pointer; }
       localStorage.setItem("app_auth_token", data.authToken);
       console.log("🔐 Token d'authentification stocké");
     }
+
+    // Inscription réussie : réarmer la retentative automatique anti-boucle
+    this._registerRetryDone = false;
     
     this.wsReadyState = WebSocket.OPEN;
     this.updateStatus("En ligne");
@@ -3038,6 +3041,23 @@ button, [role="button"] { cursor: pointer; }
       case "registration-error":
         console.error("❌ Erreur d'inscription :", data.reason);
         this.showCallToast("Erreur d'inscription: " + data.reason);
+        // Auto-réparation : si le serveur refuse à cause du token (périmé,
+        // inconnu, après redéploiement du serveur...), on efface le token
+        // local et on retente UNE seule inscription. Le serveur, de son
+        // côté, ré-émet un token neuf si aucune session vivante n'existe
+        // pour ce compte. Garde anti-boucle : une seule retentative par
+        // inscription réussie.
+        if (!this._registerRetryDone && /token/i.test(data.reason || "")) {
+          this._registerRetryDone = true;
+          this.authToken = null;
+          try {
+            localStorage.removeItem("app_auth_token");
+          } catch (e) { /* stockage indisponible : ignorer */ }
+          console.warn("🔁 Token local effacé, nouvelle tentative d'inscription dans 1,5 s...");
+          setTimeout(() => {
+            this.sendRegistration();
+          }, 1500);
+        }
         break;
 
       case "ice-servers":

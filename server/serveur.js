@@ -3083,14 +3083,35 @@ wss.on("connection", (ws) => {
 
           // Vérifier le token d'authentification avec expiration
           if (storedTokenData && !validateAuthToken(userId, authToken)) {
-            console.warn(`⚠️ Token invalide ou expiré pour ${userId}, rejet de l'enregistrement`);
-            ws.send(
-              JSON.stringify({
-                type: "registration-error",
-                reason: "Token d'authentification invalide ou expiré",
-              }),
-            );
-            return;
+            // Auto-réparation : si aucune session VIVANTE n'existe pour ce
+            // compte (socket null, fermé, ou CE socket-ci), ré-émettre un
+            // token neuf au lieu d'enfermer le client dans un rejet infini.
+            // Un appareil au token périmé (vieille appli, stockage vidé,
+            // redéploiement Render) peut ainsi se réinscrire tout seul.
+            // La protection anti-usurpation est conservée : si une AUTRE
+            // socket vivante utilise déjà ce compte, le rejet reste ferme.
+            const liveSocket =
+              existingUser.ws && existingUser.ws.readyState === WebSocket.OPEN
+                ? existingUser.ws
+                : null;
+            const isHijackAttempt = !!(liveSocket && liveSocket !== ws);
+
+            if (!isHijackAttempt) {
+              const reissued = generateAuthToken(userId);
+              userAuthTokens.set(userId, { token: reissued, createdAt: Date.now() });
+              console.warn(
+                `🔁 Token inconnu/expiré pour ${userId} mais session inactive : ré-émission d'un token neuf`,
+              );
+            } else {
+              console.warn(`⚠️ Token invalide ou expiré pour ${userId}, rejet de l'enregistrement (session active ailleurs)`);
+              ws.send(
+                JSON.stringify({
+                  type: "registration-error",
+                  reason: "Token d'authentification invalide ou expiré",
+                }),
+              );
+              return;
+            }
           }
 
           console.log(
