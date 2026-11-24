@@ -156,6 +156,54 @@ const testMeetingFlow = () => {
     failed++;
   }
   
+  // Test 7: Salle d'attente - le son des participants en attente doit fonctionner
+  // attachGroupAudio doit créer #group-audio-container s'il est absent
+  // (l'écran d'appel de groupe le possède, la salle d'attente ne l'a pas).
+  console.log("Test 7: attachGroupAudio crée le conteneur audio (salle d'attente)");
+  try {
+    const fs = require('fs');
+    const callManagerContent = fs.readFileSync('www/js/CallManager.js', 'utf8');
+
+    const createsContainer = callManagerContent.includes('let container = document.getElementById("group-audio-container")')
+      && callManagerContent.includes('container = document.createElement("div")');
+    const audioOnTrack = callManagerContent.includes('this.attachGroupAudio(peerId, peer)');
+
+    if (createsContainer && audioOnTrack) {
+      console.log("✅ Test 7 passé: conteneur audio créé à la volée + branchement sur track audio\n");
+      passed++;
+    } else {
+      console.error("❌ Test 7 échoué: attachGroupAudio incomplet\n");
+      failed++;
+    }
+  } catch (error) {
+    console.error(`❌ Test 7 échoué: ${error.message}\n`);
+    failed++;
+  }
+
+  // Test 8: Salle d'attente - la classe waiting-room-grid ne doit pas être
+  // écrasée par renderGroupGrid et les styles de la grille d'attente existent.
+  console.log("Test 8: styles et classes de la grille de la salle d'attente");
+  try {
+    const fs = require('fs');
+    const callManagerContent = fs.readFileSync('www/js/CallManager.js', 'utf8');
+    const meetingCss = fs.readFileSync('www/css/meeting.css', 'utf8');
+
+    const preservesClass = callManagerContent.includes('"video-grid waiting-room-grid"');
+    const hasGridStyles = meetingCss.includes('#meeting-waiting-grid');
+    const hasPillButtons = meetingCss.includes('.waiting-room-self-btn') && meetingCss.includes('border-radius: 24px');
+
+    if (preservesClass && hasGridStyles && hasPillButtons) {
+      console.log("✅ Test 8 passé: classe préservée + styles grille + boutons pilule\n");
+      passed++;
+    } else {
+      console.error("❌ Test 8 échoué: classe/admin CSS salle d'attente incomplets\n");
+      failed++;
+    }
+  } catch (error) {
+    console.error(`❌ Test 8 échoué: ${error.message}\n`);
+    failed++;
+  }
+
   // Résumé
   console.log("=== Résumé ===");
   console.log(`✅ Passés: ${passed}`);

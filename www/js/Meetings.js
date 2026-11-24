@@ -2943,7 +2943,7 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
             <div class="waiting-room-participants-heading">
               <div>
                 <h2>Les participants</h2>
-                <p>Vous pouvez d&eacute;j&agrave; vous voir en attendant l'h&ocirc;te.</p>
+                <p>Vid&eacute;o et audio actifs entre vous en attendant l&rsquo;h&ocirc;te.</p>
               </div>
               <span class="waiting-room-live"><i class="fa-solid fa-circle"></i> EN ATTENTE · <span id="waiting-participant-count">1</span></span>
             </div>

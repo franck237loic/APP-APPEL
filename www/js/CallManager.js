@@ -8443,8 +8443,17 @@ showLocalStorageOnScreen = () => {
 
   // Branche le son d'un participant sur un élément <audio> caché.
   attachGroupAudio = (peerId, peer) => {
-    const container = document.getElementById("group-audio-container");
-    if (!container || !peer.stream) return;
+    // Le conteneur existe dans l'écran d'appel de groupe, mais PAS dans la
+    // salle d'attente des réunions : le créer à la volée pour que les
+    // participants en attente s'entendent aussi (et pas seulement se voient).
+    let container = document.getElementById("group-audio-container");
+    if (!container) {
+      container = document.createElement("div");
+      container.id = "group-audio-container";
+      container.style.display = "none";
+      document.body.appendChild(container);
+    }
+    if (!peer.stream) return;
 
     if (!peer.audioEl) {
       peer.audioEl = document.createElement("audio");
@@ -8683,7 +8692,11 @@ showLocalStorageOnScreen = () => {
     // Appliquer la classe de layout selon le partage d'écran / nombre de participants
     const count = Math.max(1, Math.min(ids.length, 6));
     if (this.groupIsMeeting) {
-      grid.className = `video-grid count-${count}` + (screenSharerId && ids.length > 1 ? " screen-share-mode" : "");
+      // Ne pas écraser la classe dédiée de la grille d'attente (styles salle d'attente).
+      const baseClass = grid.id === "meeting-waiting-grid"
+        ? "video-grid waiting-room-grid"
+        : "video-grid";
+      grid.className = `${baseClass} count-${count}` + (screenSharerId && ids.length > 1 ? " screen-share-mode" : "");
     } else if (screenSharerId && ids.length > 1) {
       grid.className = `group-grid count-${count} screen-share-mode`;
     } else {

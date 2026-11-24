@@ -2079,15 +2079,24 @@ body.meeting-ui-active #log-toggle-btn {
   max-width: none;
   max-height: 100%;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
-  grid-auto-rows: minmax(110px, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  grid-auto-rows: minmax(150px, 1fr);
   align-content: start;
   justify-content: center;
-  gap: 10px;
+  gap: 12px;
   margin: 0;
   padding: 2px 2px 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Barres de défilement invisibles (le défilement reste possible) */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid::-webkit-scrollbar,
+.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .video-tile,
 .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile,
@@ -2988,34 +2997,50 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 .waiting-room-media-note.visible { display: block; }
 
 /* --- Contrôles micro / caméra de prévisualisation --- */
+/* Pilules icône + libellé (style professionnelle) : les libellés ne
+   débordent plus des boutons ronds historiques. */
 .waiting-room-self-controls {
   display: flex;
   justify-content: center;
-  gap: 14px;
-  margin-top: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .waiting-room-self-btn {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, .2);
-  background: rgba(255, 255, 255, .07);
-  color: #e9edef;
-  font-size: 19px;
-  cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
+  height: 46px;
+  padding: 0 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  background: rgba(255, 255, 255, .07);
+  color: #e9edef;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
   transition: background .15s ease, transform .1s ease, border-color .15s ease;
 }
 
+.waiting-room-self-btn i { font-size: 15px; }
+.waiting-room-self-btn span { line-height: 1; }
+
 .waiting-room-self-btn:hover { background: rgba(255, 255, 255, .14); }
-.waiting-room-self-btn:active { transform: scale(.94); }
+.waiting-room-self-btn:active { transform: scale(.96); }
 
 .waiting-room-self-btn.active {
   background: rgba(0, 168, 132, .82);
   border-color: rgba(0, 168, 132, .9);
+}
+
+.waiting-room-self-btn:not(.active) {
+  background: rgba(242, 139, 130, .16);
+  border-color: rgba(242, 139, 130, .55);
+  color: #f6b5ae;
 }
 
 /* ============================================================
@@ -3266,7 +3291,7 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 /* --- Responsive salle d'attente --- */
 @media (max-width: 600px) {
   .waiting-room-header .waiting-room-conn { font-size: 10px; padding: 3px 8px; }
-  .waiting-room-self-btn { width: 46px; height: 46px; font-size: 17px; }
+  .waiting-room-self-btn { height: 42px; padding: 0 14px; font-size: 12.5px; gap: 6px; }
   .waiting-music-toggle { min-width: 0; flex: 1 1 100%; }
   .waiting-music-buttons button { font-size: 13px; }
 }
