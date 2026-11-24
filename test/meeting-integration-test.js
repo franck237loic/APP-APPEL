@@ -204,6 +204,36 @@ const testMeetingFlow = () => {
     failed++;
   }
 
+  // Test 9: Création de réunion résistante aux coupures WebSocket
+  // (demande mémorisée + rejeu après reconnexion + déduplication serveur)
+  console.log("Test 9: création de réunion résistante aux coupures WebSocket");
+  try {
+    const fs = require('fs');
+    const meetingsContent = fs.readFileSync('www/js/Meetings.js', 'utf8');
+    const callManagerContent = fs.readFileSync('www/js/CallManager.js', 'utf8');
+    const serveurContent2 = fs.readFileSync('server/serveur.js', 'utf8');
+
+    const storesPending = meetingsContent.includes('this._pendingMeetingCreate = {')
+      && meetingsContent.includes('requestId: createRequestId');
+    const retries = meetingsContent.includes('_retryPendingMeetingCreate')
+      && meetingsContent.includes('requestId: pending.requestId');
+    const hooked = callManagerContent.includes('this._retryPendingMeetingCreate()');
+    const clearedOnSuccess = meetingsContent.includes('this._pendingMeetingCreate = null;');
+    const serverDedup = serveurContent2.includes('recentMeetingCreates');
+
+    if (storesPending && retries && hooked && clearedOnSuccess && serverDedup) {
+      console.log("✅ Test 9 passé: demande mémorisée + rejeu + hook reconnexion + dédup serveur\n");
+      passed++;
+    } else {
+      console.error("❌ Test 9 échoué: mécanisme anti-perte incomplet "
+        + JSON.stringify({ storesPending, retries, hooked, clearedOnSuccess, serverDedup }) + "\n");
+      failed++;
+    }
+  } catch (error) {
+    console.error(`❌ Test 9 échoué: ${error.message}\n`);
+    failed++;
+  }
+
   // Résumé
   console.log("=== Résumé ===");
   console.log(`✅ Passés: ${passed}`);

@@ -2407,6 +2407,18 @@ const meetingManager = new MeetingManager();
 const meetingWaitingMusic = new Map();
 const MAX_WAITING_MUSIC_TRANSFER_BYTES = 90 * 1024 * 1024;
 
+// Idempotence de meeting-create : si le client rejoue une demande (reconnexion
+// WebSocket survenue juste après l'envoi), on RÉENVOIE LA MÊME réponse au
+// lieu de créer une seconde réunion. Clé = userId:requestId, TTL 60 s.
+const recentMeetingCreates = new Map();
+const MEETING_CREATE_DEDUP_TTL_MS = 60000;
+function pruneRecentMeetingCreates() {
+  const now = Date.now();
+  for (const [key, entry] of recentMeetingCreates) {
+    if (now - entry.at > MEETING_CREATE_DEDUP_TTL_MS) recentMeetingCreates.delete(key);
+  }
+}
+
 function notifyWaitingMusicStopped(meetingId, waitingUsers = [], hostId = null) {
   meetingWaitingMusic.delete(meetingId);
   const targets = new Set([...(Array.isArray(waitingUsers) ? waitingUsers : []), hostId].filter(Boolean));
@@ -3973,6 +3985,21 @@ wss.on("connection", (ws) => {
           }
 
           const { title, description, scheduledAt, durationMin, isVideo, participants, accessPolicy } = data;
+
+          // Idempotence : rejeu d'une demande déjà servie (reconnexion client)
+          // -> réenvoyer la MÊME réponse au lieu de créer une 2e réunion.
+          const createRequestId = typeof data.requestId === "string" ? data.requestId.slice(0, 64) : null;
+          if (createRequestId) {
+            pruneRecentMeetingCreates();
+            const dedupKey = `${ws.userId}:${createRequestId}`;
+            const previous = recentMeetingCreates.get(dedupKey);
+            if (previous && previous.response) {
+              console.log(`[MEETING] meeting-create rejoué par ${ws.userId} (requestId connu) : réenvoi de la réponse d'origine`);
+              ws.send(JSON.stringify(previous.response));
+              return;
+            }
+          }
+
           const waitingMusicTracks = Array.isArray(data.waitingMusicTracks) ? data.waitingMusicTracks : [];
           const validWaitingMusic = waitingMusicTracks.every((track) =>
             track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
@@ -4035,20 +4062,28 @@ wss.on("connection", (ws) => {
           }
 
 
-          ws.send(
-            JSON.stringify({
-              type: "meeting-created",
-              meetingId: meeting.meetingId,
-              code: meeting.code,
-              link: meeting.link,
-              title: meeting.title,
-              description: meeting.description,
-              scheduledAt: meeting.scheduledAt,
-              endsAt: meeting.endsAt,
-              durationMin: meeting.durationMin,
-              isVideo: meeting.isVideo,
-            }),
-          );
+          const createdResponse = {
+            type: "meeting-created",
+            meetingId: meeting.meetingId,
+            code: meeting.code,
+            link: meeting.link,
+            title: meeting.title,
+            description: meeting.description,
+            scheduledAt: meeting.scheduledAt,
+            endsAt: meeting.endsAt,
+            durationMin: meeting.durationMin,
+            isVideo: meeting.isVideo,
+          };
+          ws.send(JSON.stringify(createdResponse));
+          // Mémoriser pour la déduplication d'un éventuel rejeu client.
+          if (createRequestId) {
+            recentMeetingCreates.set(`${ws.userId}:${createRequestId}`, {
+              at: Date.now(),
+              response: createdResponse,
+            });
+            // Taille bornée : on purge si la map grossit trop.
+            if (recentMeetingCreates.size > 1000) pruneRecentMeetingCreates();
+          }
           console.log(`[MEETING] meeting-created envoyé à ${ws.userId}`);
         } catch (error) {
           console.error(`[MEETING] Erreur dans meeting-create :`, error);

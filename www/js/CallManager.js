@@ -3036,6 +3036,11 @@ button, [role="button"] { cursor: pointer; }
       case "registered":
         this.handleRegistered(data);
         this.onGroupSocketRegistered(); // GROUPE : re-jonction éventuelle de la salle
+        // RÉUNION : rejouer une demande de création perdue par une coupure
+        // WebSocket juste après l'envoi (no-op si rien en attente).
+        if (typeof this._retryPendingMeetingCreate === "function") {
+          this._retryPendingMeetingCreate();
+        }
         break;
 
       case "registration-error":

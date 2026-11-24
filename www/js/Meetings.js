@@ -57,6 +57,7 @@ Meetings.prototype.normalizeMeetingCode = function(code) {
 Meetings.prototype.handleMeetingCreated = function(data) {
   console.log("📅 [MEETING] Réunion créée:", data);
   this.meetingCreateSubmitting = false;
+  this._pendingMeetingCreate = null; // demande servie : pas de rejeu
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
   this.closeMeetingCreateView();
@@ -69,6 +70,46 @@ Meetings.prototype.handleMeetingCreated = function(data) {
   }
 
   this.showMeetingCreatedView(data);
+};
+
+// Rejoue la demande de création perdue à cause d'une coupure WebSocket survenue
+// juste après l'envoi (appelé automatiquement après la réinscription au serveur).
+Meetings.prototype._retryPendingMeetingCreate = function() {
+  const pending = this._pendingMeetingCreate;
+  if (!pending) return;
+
+  // Volontairement retiré de la file AVANT le rejeu : si le serveur répond
+  // (created OU error), on ne doit plus le rejouer à l'infini.
+  this._pendingMeetingCreate = null;
+
+  // Trop vieux (la reconnexion a pris plus de 30 s) : abandon propre.
+  if (Date.now() - pending.sentAt > 30000) {
+    console.log("📅 [MEETING] Demande de création trop ancienne après reconnexion, abandon du rejeu");
+    return;
+  }
+
+  const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+  if (!isConnected) {
+    // Toujours déconnecté : on remet la demande en file, le prochain
+    // handleRegistered la rejouera.
+    this._pendingMeetingCreate = pending;
+    return;
+  }
+
+  console.log("🔁 [MEETING] Reconnexion détectée — rejoue la demande de création de réunion");
+  this.sendSignal({
+    type: "meeting-create",
+    title: pending.title,
+    description: pending.description,
+    scheduledAt: pending.scheduledAt,
+    durationMin: pending.durationMin,
+    isVideo: pending.isVideo,
+    participants: pending.participants,
+    accessPolicy: pending.accessPolicy,
+    waitingMusicTracks: pending.waitingMusicTracks,
+    requestId: pending.requestId, // même ID : le serveur déduplique (pas de 2e réunion)
+  });
+  // Le timeout de 20 s déjà armé par createMeeting() reste valable.
 };
 
 Meetings.prototype.handleMeetingLiveReady = function(data) {
@@ -810,6 +851,8 @@ Meetings.prototype.handleMeetingError = function(data) {
   console.error("📅 [MEETING] Erreur:", data.reason);
   this.meetingCreateSubmitting = false;
   this.instantMeetingPending = false;
+  // Le serveur a répondu explicitement : la demande n'est plus à rejouer.
+  this._pendingMeetingCreate = null;
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
   this.pendingMeetingMediaPreferences = null;
@@ -1855,6 +1898,27 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     return;
   }
 
+  // Mémoriser la demande pour pouvoir la REJOUER si la connexion WebSocket
+  // tombe juste après l'envoi (le socket natif peut se fermer pendant que
+  // wsReadyState vaut encore OPEN — log observable « Erreur WebSocket :
+  // closed » juste après l'envoi). La demande est rejouée automatiquement
+  // après la reconnexion (voir _retryPendingMeetingCreate), tant qu'elle a
+  // moins de 30 s ; sinon elle est abandonnée proprement.
+  this._createRequestIdSeq = (this._createRequestIdSeq || 0) + 1;
+  const createRequestId = `mc_${Date.now()}_${this._createRequestIdSeq}_${Math.random().toString(36).slice(2, 8)}`;
+  this._pendingMeetingCreate = {
+    title,
+    description,
+    scheduledAt: scheduledAtTimestamp,
+    durationMin: parseInt(durationMin),
+    isVideo: !!isVideo,
+    participants: participants || [],
+    accessPolicy: accessPolicy || "direct",
+    waitingMusicTracks,
+    requestId: createRequestId,
+    sentAt: Date.now(),
+  };
+
   this.sendSignal({
     type: "meeting-create",
     title,
@@ -1865,6 +1929,7 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     participants: participants || [],
     accessPolicy: accessPolicy || "direct",
     waitingMusicTracks,
+    requestId: createRequestId,
   });
 
   clearTimeout(this.meetingCreateTimeout);
