@@ -7877,22 +7877,22 @@ showLocalStorageOnScreen = () => {
         this._groupPeerWatchdogs.set(id, timer);
       });
 
-      // 4) IMPORTANT : Si on est participant existant et un nouveau arrive,
-      //    on doit renégocier pour lui envoyer nos pistes vidéo actuelles
-      //    (pour qu'il puisse voir les caméras déjà actives ET le partage d'écran)
+      // 4) NOTE IMPORTANTE : PAS de renégociation pour les nouveaux
+      //    participants. L'ancien code relançait renegotiateWithPeer()
+      //    ~100 ms après la création d'un pair TOUT NEUF : à 100 ms l'offre
+      //    initiale n'avait pas encore reçue de réponse (have-local-offer),
+      //    la 2e offre écrasait la 1re et la réponse arrivant pour l'offre 1
+      //    était rejetée (SDP incohérent) -> paire WebRTC morte. Symptôme
+      //    historique : un nouvel arrivant (ou un invité revenu) connecté
+      //    uniquement avec certains participants (ex. l'hôte) et pas les
+      //    autres. L'offre initiale contient d'ores et déjà TOUTES les pistes
+      //    actives (createGroupPeer ajoute screen/cam/mic avant l'offre), et
+      //    l'activation ultérieure de caméra/partage passe par la
+      //    renégociation dédiée du toggle correspondant. Seuls les pairs déjà
+      //    CONNECTÉS à qui une piste a été ajoutée entre-temps doivent être
+      //    renégociés (géré par toggleGroupCamera/partage d'écran).
       if (newParticipants.length > 0 && existingPeersBefore.length > 0) {
-        console.log(`📹 [GROUPE] Nouveaux participants: ${newParticipants.join(", ")} - envoi des pistes vidéo actuelles`);
-        // Pour chaque nouveau participant, renégocier pour envoyer nos pistes (asynchrone)
-        newParticipants.forEach((newId) => {
-          // Attendre un peu que la connexion soit créée avant de renégocier
-          setTimeout(() => {
-            if (this.groupPeers.has(newId)) {
-              this.renegotiateWithPeer(newId).catch(err => {
-                console.warn(`⚠️ [GROUPE] Erreur renégociation avec ${newId}:`, err);
-              });
-            }
-          }, 100);
-        });
+        console.log(`📹 [GROUPE] Nouveaux participants: ${newParticipants.join(", ")} - envoi de l'état actuel (pas de renégociation, l'offre initiale porte déjà les pistes)`);
 
         // 5) Envoi de l'état actuel (micro, caméra, partage d'écran) aux nouveaux participants
         //    pour qu'ils soient synchronisés immédiatement
@@ -8103,6 +8103,26 @@ showLocalStorageOnScreen = () => {
     try {
       console.log(`🔄 [GROUPE] Début renégociation avec ${peerId}...`);
       console.log(`🔄 [GROUPE] État signaling avant: ${peer.pc.signalingState}`);
+
+      // GARDE ANTI-ÉCRASEMENT : si une offre est déjà en attente de réponse
+      // (offre initiale ou renégociation précédente), attendre qu'elle se
+      // termine avant d'en créer une nouvelle — sinon la 2e offre écrase la
+      // 1re dans setLocalDescription et la réponse (pour l'offre 1) est
+      // rejetée, laissant une paire morte (symptôme : connecté seulement à
+      // certains participants).
+      let waited = 0;
+      while (peer.pc.signalingState === "have-local-offer" && waited < 5000) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        waited += 200;
+        if (this.groupPeers.get(peerId) !== peer) {
+          console.warn(`⚠️ [GROUPE] renegotiateWithPeer - pair ${peerId} remplacé pendant l'attente, abandon`);
+          return;
+        }
+      }
+      if (peer.pc.signalingState === "have-local-offer") {
+        console.warn(`⚠️ [GROUPE] renegotiateWithPeer - offre déjà en attente pour ${peerId} après 5s, renégociation abandonnée`);
+        return;
+      }
 
       // Créer une nouvelle offre avec la nouvelle piste vidéo
       const offer = await peer.pc.createOffer({
