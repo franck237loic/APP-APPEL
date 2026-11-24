@@ -116,6 +116,9 @@ Meetings.prototype._applyPendingMeetingMediaPreferences = function() {
 Meetings.prototype.handleMeetingJoined = async function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
   this.stopWaitingMusicLocally();
+  // Libérer aussi le nœud audio <Audio> (sinon jusqu'à ~30 Mo retenus en RAM
+  // pendant toute la réunion).
+  this._destroyWaitingMusicNode();
   const previousWaitingRoom = this.meetingWaitingRoomId;
   if (previousWaitingRoom && previousWaitingRoom !== data.roomId) {
     this.sendSignal({ type: "group-leave", roomId: previousWaitingRoom });

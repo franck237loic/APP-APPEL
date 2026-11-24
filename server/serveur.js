@@ -1684,29 +1684,18 @@ class MeetingManager {
     });
 
     await this._removeWaitingUser(meeting.id, userId);
-    notifyWaitingMusicStopped(meeting.id, waitingUsers, userId);
-    await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
-
-    // Mode DIRECT uniquement : notifier "hôte a démarré" pour auto-join
-    // Mode APPROVAL : déjà géré via pending_approval dans _notifyWaitingUsersStarted
-    if (currentMeeting.accessPolicy !== "approval") {
-      for (const waitingUserId of waitingUsers) {
-        const user = users.get(waitingUserId);
-        if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
-          user.ws.send(JSON.stringify({
-            type: "meeting-host-started",
-            meetingId: meeting.id,
-            roomId: room.roomId,
-            hostId: userId,
-            title: meeting.title,
-            isVideo: meeting.isVideo,
-          }));
-        }
-      }
-    }
+    // NOTE : notifyWaitingMusicStopped + _notifyWaitingUsersStarted +
+    // meeting-host-started sont exécutés APRÈS l'envoi de la réponse
+    // meeting-joined à l'hôte (postJoin ci-dessous) — sinon les invités
+    // basculent dans la salle live pendant que le client de l'hôte n'a pas
+    // encore de groupRoomId : ses signaux WebRTC sont jetés et il reste
+    // hors connexion (les invités, eux, se connectent entre eux).
 
     console.log(`📅 Réunion ${meeting.id} démarrée manuellement (salle ${room.roomId}), fin à ${new Date(newEndsAt).toISOString()}`);
 
+    // Le transfert des utilisateurs en attente vers la salle live n'est PAS
+    // exécuté ici : la réponse meeting-joined doit d'abord atteindre l'hôte
+    // (voir handoffWaitingUsers et le handler meeting-force-start).
     return {
       success: true,
       meetingId: meeting.id,
@@ -1715,7 +1704,61 @@ class MeetingManager {
       title: meeting.title,
       code: meeting.code,
       createdBy: meeting.createdBy,
+      // Exécuté par le handler UNIQUEMENT APRÈS l'envoi de la réponse à l'hôte
+      postJoin: {
+        meetingId: meeting.id,
+        roomId: room.roomId,
+        isVideo: meeting.isVideo,
+        title: meeting.title,
+        accessPolicy: currentMeeting.accessPolicy || meeting.accessPolicy,
+        waitingUsers,
+      },
     };
+  }
+
+  /**
+   * =========================================================
+   *   TRANSFERT DE LA SALLE D'ATTENTE VERS LA SALLE LIVE
+   * =========================================================
+   *
+   * À appeler UNIQUEMENT APRÈS que la réponse meeting-joined a été envoyée
+   * à l'hôte (ordre critique) : sinon les invités basculent dans la salle
+   * live et démarrent leur maillage WebRTC pendant que le client de l'hôte
+   * n'a pas encore de groupRoomId — ses signaux sont jetés et il reste
+   * hors connexion (les invités, eux, se connectent entre eux).
+   *
+   * @param {object} postJoin - { meetingId, roomId, isVideo, title, accessPolicy, waitingUsers }
+   * @param {string} hostUserId - ID de l'hôte
+   */
+  async handoffWaitingUsers(postJoin, hostUserId) {
+    const { meetingId, roomId, isVideo, title, accessPolicy, waitingUsers } = postJoin;
+    try {
+      // 1) Arrêter la musique d'attente chez tout le monde
+      notifyWaitingMusicStopped(meetingId, waitingUsers, hostUserId);
+
+      // 2) Notifier et/ou intégrer les utilisateurs en attente
+      //    (mode direct: les rejoint ; mode approval: demandes en attente)
+      await this._notifyWaitingUsersStarted(meetingId, roomId, title, isVideo, hostUserId, waitingUsers);
+
+      // 3) Filet de sécurité pour anciens clients : "l'hôte a démarré"
+      if (accessPolicy !== "approval") {
+        for (const waitingUserId of waitingUsers) {
+          const user = users.get(waitingUserId);
+          if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+            user.ws.send(JSON.stringify({
+              type: "meeting-host-started",
+              meetingId,
+              roomId,
+              hostId: hostUserId,
+              title,
+              isVideo,
+            }));
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Erreur transfert salle d'attente -> live (${meetingId}) :`, error);
+    }
   }
 
   /**
@@ -1786,6 +1829,39 @@ class MeetingManager {
         reason: "En attente d'approbation de l'hôte",
         meetingId: meeting.id,
         title: meeting.title,
+      };
+    }
+
+    // RÉUNION DÉJÀ LIVE : rejoindre DIRECTEMENT la salle en cours, JAMAIS la
+    // salle d'attente. Cas principal : l'hôte a démarré en avance, et un
+    // participant arrive alors que l'heure programmée n'est pas encore
+    // atteinte — l'ancien code le renvoyait en salle d'attente jusqu'à
+    // scheduledAt alors que la réunion tournait déjà.
+    if (meeting.status === "live" && meeting.roomId && now <= meeting.endsAt) {
+      let room = roomManager.rooms.get(meeting.roomId);
+      if (!room) {
+        console.log(`📅 Salle ${meeting.roomId} introuvable en RAM, recréation...`);
+        room = roomManager.createMeetingRoom(meeting.id, meeting.isVideo, meeting.endsAt);
+      }
+      // Quitter la salle d'attente éventuelle (arrivé avant l'hôte)
+      roomManager.leaveUserFromOtherRooms(userId, meeting.roomId);
+      const joinedNow = roomManager.join(meeting.roomId, userId);
+      if (!joinedNow) {
+        return { success: false, reason: "Salle pleine ou utilisateur occupé" };
+      }
+      // Nettoyer la liste d'attente Firestore (non bloquant)
+      db.collection("meetings").doc(meeting.id).update({
+        waitingUsers: FieldValue.arrayRemove(userId),
+      }).catch((error) => console.warn("⚠️ Purge waitingUsers:", error.message));
+      console.log(`📅 Réunion ${meeting.id} déjà live : ${userId} rejoint directement la salle`);
+      return {
+        success: true,
+        meetingId: meeting.id,
+        roomId: room.roomId,
+        isVideo: meeting.isVideo,
+        title: meeting.title,
+        code: meeting.code,
+        createdBy: meeting.createdBy,
       };
     }
 
@@ -1878,8 +1954,9 @@ class MeetingManager {
         throw error;
       });
 
-      notifyWaitingMusicStopped(meeting.id, waitingUsers, userId);
-      await this._notifyWaitingUsersStarted(meeting.id, room.roomId, meeting.title, meeting.isVideo, userId, waitingUsers);
+      // NOTE : le transfert des utilisateurs en attente (musique stop,
+      // _notifyWaitingUsersStarted) est différé au handler via postJoin :
+      // la réponse meeting-joined doit d'abord atteindre le demandeur.
       await this._removeWaitingUser(meeting.id, userId);
       console.log(`📅 Réunion ${meeting.id} passée à live (salle ${room.roomId})`);
 
@@ -1891,6 +1968,15 @@ class MeetingManager {
         title: meeting.title,
         code: meeting.code,
         createdBy: meeting.createdBy,
+        // Exécuté par le handler UNIQUEMENT APRÈS l'envoi de la réponse
+        postJoin: {
+          meetingId: meeting.id,
+          roomId: room.roomId,
+          isVideo: meeting.isVideo,
+          title: meeting.title,
+          accessPolicy: meeting.accessPolicy || "direct",
+          waitingUsers,
+        },
       };
     }
 
@@ -4037,6 +4123,15 @@ wss.on("connection", (ws) => {
               }),
             );
             console.log(`[MEETING] meeting-joined envoyé à ${ws.userId} (salle ${result.roomId})`);
+
+            // ORDRE CRITIQUE : le client du demandeur est maintenant informé de
+            // la salle live. On transfère seulement maintenant les utilisateurs
+            // en attente vers la salle live (voir handoffWaitingUsers).
+            if (result.postJoin) {
+              meetingManager.handoffWaitingUsers(result.postJoin, ws.userId).catch((error) => {
+                console.error("❌ Erreur postJoin meeting-join :", error);
+              });
+            }
           } else if (result.status === "waiting") {
             // Trop tôt : afficher compte à rebours
             ws.send(
@@ -4181,6 +4276,17 @@ wss.on("connection", (ws) => {
               createdBy: result.createdBy || ws.userId,
             }));
             console.log(`[MEETING] meeting-force-start OK: ${result.roomId} pour ${ws.userId}`);
+
+            // ORDRE CRITIQUE : le client de l'hôte est maintenant informé de la
+            // salle live. On transfère THEN seulement les utilisateurs en
+            // attente (sinon leurs signaux WebRTC arrivent avant que l'hôte
+            // n'ait groupRoomId et sont jetés : les invités se connectent
+            // entre eux, l'hôte reste isolé).
+            if (result.postJoin) {
+              meetingManager.handoffWaitingUsers(result.postJoin, ws.userId).catch((error) => {
+                console.error("❌ Erreur postJoin force-start :", error);
+              });
+            }
           } else {
             ws.send(JSON.stringify({
               type: "meeting-error",

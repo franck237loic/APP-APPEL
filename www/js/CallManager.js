@@ -6971,6 +6971,7 @@ showLocalStorageOnScreen = () => {
   groupPeers = new Map(); // Connexions WebRTC : userId -> { pc, stream, pendingCandidates, remoteSet, connState, audioEl, isInitiator }
   groupPeerStates = new Map(); // États annoncés par les autres participants : userId -> { micMuted, camOff }
   groupRetryCount = new Map(); // Compteur de tentatives de reconnexion : userId -> nombre de relances
+  _groupPeerWatchdogs = new Map(); // Filet de sécurité : userId -> timer (offre de secours si pair toujours pas connecté)
   groupTiles = new Map(); // Éléments DOM de l'interface : userId -> élément <div> de la tuile
   groupLocalStream = null; // MON flux média (micro + caméra) partagé avec tous les pairs
   groupPendingInvite = null; // Invitation reçue en attente de réponse : { roomId, from, isVideo, roster }
@@ -7845,6 +7846,37 @@ showLocalStorageOnScreen = () => {
         }
       });
 
+      // 3bis) Filet de sécurité : si un participant JOINED du roster n'a
+      //    toujours aucune connexion avec nous après un délai, créer l'offre
+      //    quand même (délai désynchronisé pour éviter le conflit d'offres
+      //    simultanées). Couvre le cas des offres initiales perdues : ex. le
+      //    serveur a fait basculer les invités en salle live avant que le
+      //    client de l'hôte n'ait reçu son meeting-joined (groupRoomId pas
+      //    encore fixé -> signaux jetés, hôte jamais connecté).
+      joinedOthers.forEach((id) => {
+        if (this.groupPeers.has(id)) return;
+        const previous = this._groupPeerWatchdogs.get(id);
+        if (previous) clearTimeout(previous);
+        const delayMs = 6000 + Math.floor(Math.random() * 5000); // 6-11 s
+        const timer = setTimeout(() => {
+          this._groupPeerWatchdogs.delete(id);
+          const rosterNow = (this.groupRoster || []).find((r) => r.userId === id);
+          if (!rosterNow || rosterNow.state !== "JOINED") return;
+          if (this.groupPeers.has(id)) return;
+          if (!this.groupLocalStream) return;
+          console.log(`🛡️ [GROUPE] Filet de sécurité : offre de secours vers ${id}`);
+          try {
+            this.createGroupPeer(id);
+            this.sendGroupOffer(id).catch((err) => {
+              console.warn(`⚠️ [GROUPE] Offre de secours échouée vers ${id}:`, err);
+            });
+          } catch (err) {
+            console.warn(`⚠️ [GROUPE] Filet de sécurité erreur ${id}:`, err);
+          }
+        }, delayMs);
+        this._groupPeerWatchdogs.set(id, timer);
+      });
+
       // 4) IMPORTANT : Si on est participant existant et un nouveau arrive,
       //    on doit renégocier pour lui envoyer nos pistes vidéo actuelles
       //    (pour qu'il puisse voir les caméras déjà actives ET le partage d'écran)
@@ -8166,7 +8198,18 @@ showLocalStorageOnScreen = () => {
   handleGroupOffer = async (from, sdp) => {
     if (!this.groupLocalStream) return; // pas encore prêt
 
-    const existingPeer = this.groupPeers.get(from);
+    let existingPeer = this.groupPeers.get(from);
+
+    // Conflit d'offres (glare) : nos deux clients ont créé une offre en même
+    // temps (ex. filet de sécurité + offre initiale retardée) et l'autre
+    // côté n'a jamais répondu. On repart d'une connexion neuve plutôt que de
+    // laisser setRemoteDescription échouer en "have-local-offer".
+    if (existingPeer && existingPeer.pc.signalingState === "have-local-offer" && !existingPeer.remoteSet) {
+      console.warn(`⚠️ [GROUPE] Offres simultanées avec ${from} — reprise sur connexion neuve`);
+      this.closeGroupPeer(from);
+      existingPeer = null;
+    }
+
 
     // Détecter si l'offre contient de la vidéo (m=video dans le SDP)
     const offerHasVideo = sdp.sdp && sdp.sdp.includes('m=video');
@@ -8390,6 +8433,12 @@ showLocalStorageOnScreen = () => {
 
     if (peer.connState === "connected") {
       this.groupRetryCount.set(peerId, 0);
+      // Offre de secours plus nécessaire : la connexion est établie.
+      const watchdogTimer = this._groupPeerWatchdogs.get(peerId);
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        this._groupPeerWatchdogs.delete(peerId);
+      }
       // On annonce notre état micro/caméra/partage au nouveau venu (sinon il affiche
       // notre écran partagé comme une simple tuile caméra, voire masquée si camOff).
       this.sendGroupSignal(peerId, {
@@ -8449,6 +8498,11 @@ showLocalStorageOnScreen = () => {
     const peer = this.groupPeers.get(peerId);
     if (!peer) return;
     this.groupPeers.delete(peerId);
+    const watchdogTimer = this._groupPeerWatchdogs?.get(peerId);
+    if (watchdogTimer) {
+      clearTimeout(watchdogTimer);
+      this._groupPeerWatchdogs.delete(peerId);
+    }
 
     peer.pc.onicecandidate = null;
     peer.pc.ontrack = null;
@@ -8473,6 +8527,11 @@ showLocalStorageOnScreen = () => {
   // Ferme toutes les connexions (fin d'appel ou reconnexion).
   closeAllGroupPeers = () => {
     Array.from(this.groupPeers.keys()).forEach((id) => this.closeGroupPeer(id));
+    // Annuler les filets de sécurité restants (pairs jamais créés)
+    this._groupPeerWatchdogs.forEach((timer) => {
+      try { clearTimeout(timer); } catch (e) {}
+    });
+    this._groupPeerWatchdogs.clear();
   };
 
   /* =========================================================
