@@ -386,6 +386,48 @@ const testMeetingFlow = () => {
     failed++;
   }
 
+  // Test 14: musique — upload HTTP hors WebSocket (anti-saturation, anti « Aucune réponse »)
+  try {
+    console.log("Test 14: musique via HTTP binaire — meeting-create léger, routes upload + finalisation");
+    const fs14 = require("fs");
+    const nodePath14 = require("path");
+    const root14 = nodePath14.join(__dirname, "..");
+
+    const server14 = fs14.readFileSync(nodePath14.join(root14, "server", "serveur.js"), "utf8");
+    if (!server14.includes("/api/meeting/:meetingId/waiting-music-upload")) {
+      throw new Error("route d'upload HTTP absente");
+    }
+    if (!server14.includes("/api/meeting/:meetingId/waiting-music-finalize")) {
+      throw new Error("route de finalisation absente");
+    }
+    if (!server14.includes("waitingMusicUploads")) {
+      throw new Error("staging upload absent");
+    }
+
+    const meet14 = fs14.readFileSync(nodePath14.join(root14, "www", "js", "Meetings.js"), "utf8");
+    if (!meet14.includes("waiting-music-upload") || !meet14.includes("waiting-music-finalize")) {
+      throw new Error("client doit téléverser via HTTP (upload + finalize)");
+    }
+    // Le flux de planification ne doit plus passer les dataUrls à createMeeting
+    // (le 8e argument doit être un tableau vide, la musique part en HTTP).
+    const planBlock14 = meet14.slice(meet14.indexOf("this._pendingWaitingMusicFiles = musicFiles"));
+    if (!/\] *\) ?;?\s*};/.test(planBlock14) || !planBlock14.includes("createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy, [])")) {
+      throw new Error("createMeeting doit être appelé avec waitingMusicTracks = []");
+    }
+    if (!meet14.includes("_uploadWaitingMusicFiles")) {
+      throw new Error("upload des fichiers après meeting-created absent");
+    }
+    if (!meet14.includes("AUCUNE réponse du serveur après 20 s.")) {
+      throw new Error("logs de diagnostic absents du timeout meeting-create");
+    }
+
+    passed++;
+    console.log("✅ Test 14 passé: musique par upload HTTP, WS léger, diagnostic timeout\n");
+  } catch (error) {
+    console.error(`❌ Test 14 échoué: ${error.message}\n`);
+    failed++;
+  }
+
   // Résumé
   console.log("=== Résumé ===");
   console.log(`✅ Passés: ${passed}`);

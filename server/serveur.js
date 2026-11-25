@@ -2482,6 +2482,7 @@ function pruneRecentMeetingCreates() {
 function notifyWaitingMusicStopped(meetingId, waitingUsers = [], hostId = null) {
   meetingWaitingMusic.delete(meetingId);
   waitingMusicTokenCache.delete(meetingId);
+  waitingMusicUploads.delete(meetingId); // uploads en cours : inutiles désormais
   const targets = new Set([...(Array.isArray(waitingUsers) ? waitingUsers : []), hostId].filter(Boolean));
   for (const userId of targets) {
     const user = users.get(userId);
@@ -2706,6 +2707,128 @@ app.get("/api/meeting/:meetingId/waiting-music/:idx", (req, res) => {
   res.setHeader("Content-Length", track.buf.length);
   res.setHeader("Cache-Control", "private, max-age=300");
   res.end(track.buf);
+});
+
+// ============================================================
+// UPLOAD MUSIQUE D'ATTENTE VIA HTTP (binaire brut, HORS WebSocket)
+// Pourquoi : les dataUrls de dizaines de Mo en WebSocket saturaient
+// le socket (création impossible, socket coupé, « Aucune réponse du
+// serveur » répétée). L'hôte téléverse chaque morceau en binaire
+// brut, puis finalise : le serveur diffuse ensuite le payload léger
+// (URLs) aux visiteurs en salle d'attente.
+// ============================================================
+// Staging : meetingId -> { tracks: [{name, mime, buf}], updatedAt }
+const waitingMusicUploads = new Map();
+const WAITING_MUSIC_UPLOAD_TTL_MS = 30 * 60 * 1000; // abandon si non finalisé
+const WAITING_MUSIC_MAX_TRACK_BYTES = 15 * 1024 * 1024; // cohérent avec le client (10 Mo conseillé)
+function pruneWaitingMusicUploads() {
+  const now = Date.now();
+  for (const [key, entry] of waitingMusicUploads) {
+    if (now - entry.updatedAt > WAITING_MUSIC_UPLOAD_TTL_MS) waitingMusicUploads.delete(key);
+  }
+}
+
+// Auth partagée des deux routes : utilisateur enregistré + token valide + hôte.
+async function authorizeWaitingMusicUpload(req, res, meetingId) {
+  const userId = String(req.query.userId || "");
+  const token = String(req.query.token || "");
+  if (!userId || !validateAuthToken(userId, token)) {
+    res.status(403).json({ error: "Authentification invalide ou expirée" });
+    return null;
+  }
+  const doc = await db.collection("meetings").doc(meetingId).get();
+  if (!doc.exists) {
+    res.status(404).json({ error: "Réunion introuvable" });
+    return null;
+  }
+  const meeting = doc.data();
+  if (meeting.createdBy !== userId) {
+    res.status(403).json({ error: "Seul l'hôte peut déposer la musique d'attente" });
+    return null;
+  }
+  if (meeting.status === "ended" || meeting.status === "cancelled") {
+    res.status(409).json({ error: "Réunion terminée ou annulée" });
+    return null;
+  }
+  return meeting;
+}
+
+// 1) Dépôt d'un morceau (corps = octets audio bruts)
+app.post(
+  "/api/meeting/:meetingId/waiting-music-upload",
+  express.raw({ type: () => true, limit: `${WAITING_MUSIC_MAX_TRACK_BYTES}b` }),
+  async (req, res) => {
+    try {
+      const { meetingId } = req.params;
+      const meeting = await authorizeWaitingMusicUpload(req, res, meetingId);
+      if (!meeting) return;
+      pruneWaitingMusicUploads();
+      const name = String(req.query.name || "Musique d'attente").slice(0, 120);
+      const mime = String(req.query.mime || "audio/mpeg").slice(0, 60);
+      if (!/^audio\/[a-zA-Z0-9.+-]+$/.test(mime)) {
+        return res.status(400).json({ error: "Type MIME audio invalide" });
+      }
+      const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+      if (!buf.length) return res.status(400).json({ error: "Corps audio vide" });
+      if (buf.length > WAITING_MUSIC_MAX_TRACK_BYTES) {
+        return res.status(413).json({ error: "Morceau trop volumineux (max 15 Mo)" });
+      }
+      const entry = waitingMusicUploads.get(meetingId) || { tracks: [], updatedAt: Date.now() };
+      const replaceIdx = parseInt(req.query.replaceIdx, 10);
+      const trackMeta = { name, mime, buf };
+      if (Number.isInteger(replaceIdx) && replaceIdx >= 0 && replaceIdx < entry.tracks.length) {
+        // Reprise : remplace le morceau partiellement envoyé
+        entry.tracks[replaceIdx] = trackMeta;
+      } else {
+        entry.tracks.push(trackMeta);
+      }
+      entry.updatedAt = Date.now();
+      const total = entry.tracks.reduce((sum, t) => sum + t.buf.length, 0);
+      if (total > MAX_WAITING_MUSIC_TRANSFER_BYTES) {
+        waitingMusicUploads.delete(meetingId);
+        return res.status(413).json({ error: "Playlist trop volumineuse (max 90 Mo au total)" });
+      }
+      waitingMusicUploads.set(meetingId, entry);
+      console.log(`[MEETING] Musique d'attente : morceau téléversé (${name}, ${buf.length} o, total ${Math.round(total / 1024)} Kio)`);
+      res.json({ ok: true, idx: entry.tracks.indexOf(trackMeta), size: buf.length });
+    } catch (error) {
+      console.error("❌ Erreur upload musique d'attente :", error);
+      res.status(500).json({ error: "Erreur serveur" });
+    }
+  },
+);
+
+// 2) Finalisation : vidéo de la playlist mémorisée + diffusion légère aux visiteurs
+app.post("/api/meeting/:meetingId/waiting-music-finalize", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const meeting = await authorizeWaitingMusicUpload(req, res, meetingId);
+    if (!meeting) return;
+    pruneWaitingMusicUploads();
+    const staged = waitingMusicUploads.get(meetingId);
+    if (!staged || !staged.tracks.length) {
+      return res.status(404).json({ error: "Aucun morceau téléversé pour cette réunion" });
+    }
+    const decoded = staged.tracks.map((t) => ({ buf: t.buf, mime: t.mime, name: t.name }));
+    waitingMusicUploads.delete(meetingId);
+    // syncAt : horodatage serveur pour la synchronisation de lecture.
+    meetingWaitingMusic.set(meetingId, { syncAt: Date.now(), tracks: decoded });
+    getWaitingMusicToken(meetingId);
+    const lightPayload = buildWaitingMusicPayload(meetingId);
+    const waitingUsers = Array.isArray(meeting.waitingUsers) ? meeting.waitingUsers.filter(Boolean) : [];
+    const recipients = new Set(waitingUsers);
+    for (const recipientId of recipients) {
+      const user = users.get(recipientId);
+      if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+        user.ws.send(JSON.stringify({ type: "meeting-waiting-music-set", meetingId, ...lightPayload }));
+      }
+    }
+    console.log(`[MEETING] Musique d'attente finalisée : ${decoded.length} morceau(x) diffusé(s) à ${recipients.size} visiteur(s)`);
+    res.json({ ok: true, count: decoded.length });
+  } catch (error) {
+    console.error("❌ Erreur finalisation musique d'attente :", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 });
 
 // Obtenir une réunion par ID

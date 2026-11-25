@@ -133,15 +133,25 @@ Meetings.prototype.normalizeMeetingCode = function(code) {
 };
 
 Meetings.prototype.handleMeetingCreated = function(data) {
-  console.log("📅 [MEETING] Réunion créée:", data);
+  console.log("📅 [MEETING] meeting-created reçu (meetingId:", data.meetingId, ", code:", data.code, ", requestId:", data.requestId || "-", ")");
   this.meetingCreateSubmitting = false;
   this._pendingMeetingCreate = null; // demande servie : pas de rejeu
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
   this.closeMeetingCreateView();
 
-  // Musique trop volumineuse/invalide : la réunion est créée quand même,
-  // on informe simplement l'hôte (création JAMAIS bloquée par la musique).
+  // Upload HTTP de la musique planifiée (fichiers mis de côté à l'écran de
+  // création) : hors WebSocket, ne peut plus bloquer quoi que ce soit.
+  const pendingFiles = this._pendingWaitingMusicFiles;
+  this._pendingWaitingMusicFiles = null;
+  if (data.meetingId && pendingFiles?.length) {
+    setTimeout(() => {
+      console.log(`⬆️ [MEETING] Téléversement HTTP de ${pendingFiles.length} morceau(x) de musique d'attente…`);
+      this._uploadWaitingMusicFiles(data.meetingId, pendingFiles);
+    }, 400);
+  }
+
+  // Ancien canal (serveur pas encore à jour) : musique ignorée par le serveur.
   if (data.musicSkipped && data.musicSkippedReason) {
     console.warn("📅 [MEETING]", data.musicSkippedReason);
     if (typeof this.showCallToast === "function") this.showCallToast(data.musicSkippedReason);
@@ -155,6 +165,54 @@ Meetings.prototype.handleMeetingCreated = function(data) {
   }
 
   this.showMeetingCreatedView(data);
+};
+
+// Téléverse des FICHIERS bruts (File objects) après la création d'une réunion.
+// Détaché de _uploadWaitingMusicPlaylist car ici on n'a que des File, pas de
+// dataUrls. Échec non bloquant : la réunion existe déjà.
+Meetings.prototype._uploadWaitingMusicFiles = async function(meetingId, files) {
+  const base = (CallManager.HTTP_SERVER_URL || "").replace(/\/$/, "");
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    try {
+      const bytes = await file.arrayBuffer();
+      const query = new URLSearchParams({
+        userId: this.myId || "",
+        token: this.authToken || "",
+        name: file.name || "Musique d'attente",
+        mime: file.type || "audio/mpeg",
+      });
+      const response = await fetch(
+        `${base}/api/meeting/${encodeURIComponent(meetingId)}/waiting-music-upload?${query.toString()}`,
+        { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: bytes },
+      );
+      if (!response.ok) {
+        const errText = await response.json().catch(() => ({}));
+        // Le serveur renvoie 403/404 si l'auth expire : on ne réessaie pas en boucle.
+        throw new Error(errText.error || `HTTP ${response.status}`);
+      }
+      console.log(`✅ [MEETING] Musique ${i + 1}/${files.length} « ${file.name} » téléversée`);
+    } catch (error) {
+      console.warn(`[MEETING] Téléversement « ${file.name} » impossible — musique non partagée :`, error);
+      this.showCallToast("Musique d'attente non partagée (échec envoi)");
+      return;
+    }
+  }
+  try {
+    const query = new URLSearchParams({ userId: this.myId || "", token: this.authToken || "" });
+    const response = await fetch(
+      `${base}/api/meeting/${encodeURIComponent(meetingId)}/waiting-music-finalize?${query.toString()}`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      const errText = await response.json().catch(() => ({}));
+      throw new Error(errText.error || `HTTP ${response.status}`);
+    }
+    console.log(`🎧 [MEETING] Musique d'attente active pour ${files.length} morceau(x)`);
+  } catch (error) {
+    console.warn("[MEETING] Finalisation musique impossible :", error);
+    this.showCallToast("Musique d'attente non diffusée (finalisation échouée)");
+  }
 };
 
 // Rejoue la demande de création perdue à cause d'une coupure WebSocket survenue
@@ -880,15 +938,92 @@ Meetings.prototype.removeWaitingTrack = function(index) {
   this.updateWaitingMusicControls();
 };
 
-// Diffuse la playlist à jour aux participants (hôte)
+// Diffuse la playlist à jour aux participants (hôte).
+// NOUVEAU : passe par HTTP (binaire brut) au lieu de messages WS géants qui
+// saturaient le socket. Repli legacy : si le serveur ne connaît pas encore les
+// routes d'upload (ancien déploiement), on renvoie l'ancien message WS.
 Meetings.prototype._broadcastWaitingMusicPlaylist = function() {
   if (!this.waitingMusicTracks?.length) return;
+  if (this.meetingPendingMeetingId) {
+    this._uploadWaitingMusicPlaylist(this.meetingPendingMeetingId);
+    return;
+  }
+  // Sans meetingId (réunion pas encore créée), l'ancien canal WS est le seul.
+  this._broadcastWaitingMusicPlaylistLegacy();
+};
+
+// Canal historique (dataUrls en WS) — uniquement en repli.
+Meetings.prototype._broadcastWaitingMusicPlaylistLegacy = function() {
+  if (!this.waitingMusicTracks?.length) return;
+  const approxBytes = this.waitingMusicTracks.reduce((s, t) => s + (t.dataUrl || "").length, 0);
+  if (approxBytes > 4 * 1024 * 1024) {
+    console.warn("[MEETING] Playlist musique trop lourde pour la WebSocket ("
+      + Math.round(approxBytes / 1048576) + " Mo) — diffusion annulée (utilise la montée HTTP)");
+    this.showCallToast("Musique trop lourde pour le canal de repli");
+    return;
+  }
   this.sendSignal({
     type: "meeting-waiting-music-set",
     meetingId: this.meetingPendingMeetingId,
     syncAt: Date.now() + (this.clockOffset || 0),
     tracks: this.waitingMusicTracks.map((t) => ({ dataUrl: t.dataUrl, name: t.name })),
   });
+};
+
+// dataURL -> ArrayBuffer (pour l'upload binaire HTTP).
+Meetings.prototype._dataUrlToBytes = async function(dataUrl) {
+  const response = await fetch(dataUrl);
+  return response.arrayBuffer();
+};
+
+// Téléverse la playlist courante (dataUrls locaux) vers le serveur en HTTP,
+// puis la finalise : le serveur la diffuse en payload léger aux visiteurs.
+// Ne JAMAIS jeter d'erreur bloquante : la musique est un confort, pas vital.
+Meetings.prototype._uploadWaitingMusicPlaylist = async function(meetingId) {
+  const tracks = (this.waitingMusicTracks || []).filter((t) => t && t.dataUrl);
+  if (!meetingId || !tracks.length) return;
+  const base = (CallManager.HTTP_SERVER_URL || "").replace(/\/$/, "");
+  for (let i = 0; i < tracks.length; i++) {
+    const track = tracks[i];
+    try {
+      console.log(`⬆️ [MEETING] Musique ${i + 1}/${tracks.length} — téléversement de « ${track.name} »…`);
+      const bytes = await this._dataUrlToBytes(track.dataUrl);
+      const query = new URLSearchParams({
+        userId: this.myId || "",
+        token: this.authToken || "",
+        name: track.name || "Musique d'attente",
+        mime: /^data:(audio\/[a-zA-Z0-9.+-]+);/.exec(track.dataUrl)?.[1] || "audio/mpeg",
+      });
+      const url = `${base}/api/meeting/${encodeURIComponent(meetingId)}/waiting-music-upload?${query.toString()}`;
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: bytes,
+      });
+      if (!response.ok) {
+        const errText = await response.json().catch(() => ({}));
+        throw new Error(errText.error || `HTTP ${response.status}`);
+      }
+      console.log(`✅ [MEETING] Musique ${i + 1}/${tracks.length} téléversée (${bytes.byteLength} octets)`);
+    } catch (error) {
+      console.warn(`[MEETING] Échec téléversement « ${track.name} », repli WS legacy :`, error);
+      // Repli : ancien canal si le déploiement serveur n'a pas les routes.
+      this._broadcastWaitingMusicPlaylistLegacy();
+      return;
+    }
+  }
+  try {
+    const query = new URLSearchParams({ userId: this.myId || "", token: this.authToken || "" });
+    const response = await fetch(`${base}/api/meeting/${encodeURIComponent(meetingId)}/waiting-music-finalize?${query.toString()}`, { method: "POST" });
+    if (!response.ok) {
+      const errText = await response.json().catch(() => ({}));
+      throw new Error(errText.error || `HTTP ${response.status}`);
+    }
+    console.log(`🎧 [MEETING] Musique d'attente finalisée (${tracks.length} morceau(x)) — diffusion aux visiteurs`);
+  } catch (error) {
+    console.warn("[MEETING] Échec finalisation musique, repli WS legacy :", error);
+    this._broadcastWaitingMusicPlaylistLegacy();
+  }
 };
 
 // Arrête la musique chez tout le monde (hôte) — y compris chez l'hôte lui-même.
@@ -2007,6 +2142,13 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     sentAt: Date.now(),
   };
 
+  // DIAGNOSTIC : une musique embarquée en dataUrl fait des dizaines de Mo et
+  // tue le WebSocket. Elle ne doit plus passer par ce message (upload HTTP).
+  const musicBytes = (waitingMusicTracks || []).reduce((s, t) => s + ((t && t.dataUrl) ? t.dataUrl.length : 0), 0);
+  if (musicBytes > 0) {
+    console.warn(`📅 [MEETING] meeting-create contient ${(musicBytes / 1048576).toFixed(1)} Mo de musique en WebSocket — à ne plus faire (utiliser l'upload HTTP)`);
+  }
+
   this.sendSignal({
     type: "meeting-create",
     title,
@@ -2021,7 +2163,7 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
   });
 
   clearTimeout(this.meetingCreateTimeout);
-  this.meetingCreateTimeout = setTimeout(() => {
+  const showCreateTimeoutToast = () => {
     this.meetingCreateTimeout = null;
     this.meetingCreateSubmitting = false;
     this.instantMeetingPending = false;
@@ -2029,6 +2171,43 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
     this.showCallToast(connected
       ? "Aucune réponse du serveur. Vérifie ta connexion puis réessaie."
       : "Connexion au serveur interrompue. Vérifie ta connexion puis réessaie.");
+  };
+  this.meetingCreateTimeout = setTimeout(() => {
+    // DIAGNOSTIC COMPLET : expliquer POURQUOI aucune réponse n'est arrivée
+    // (socket ouvert ? demande encore en file ? réponse perdue en route ?).
+    const connectedNow = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
+    const pending = this._pendingMeetingCreate;
+    console.error("⏰ [MEETING] meeting-create : AUCUNE réponse du serveur après 20 s.", JSON.stringify({
+      wsReadyState: this.wsReadyState,
+      nativeReadyState: this.ws ? this.ws.readyState : null,
+      connected: connectedNow,
+      requestId: pending ? pending.requestId : null,
+      ageSec: pending ? Math.round((Date.now() - pending.sentAt) / 1000) : null,
+      myId: this.myId || null,
+      musicInWSMb: +(musicBytes / 1048576).toFixed(1),
+    }));
+    // Auto-récupération UNE FOIS : si toujours connecté et demande < 30 s,
+    // on rejoue (le serveur déduplique par requestId — pas de 2e réunion).
+    // Évite les faux « Aucune réponse » quand le message s'est perdu en route.
+    if (pending && connectedNow && !pending._replayed && Date.now() - pending.sentAt < 30000) {
+      pending._replayed = true;
+      console.log("🔁 [MEETING] meeting-create : réponse toujours attendue — rejoue UNE fois la demande");
+      this.sendSignal({
+        type: "meeting-create",
+        title: pending.title,
+        description: pending.description,
+        scheduledAt: pending.scheduledAt,
+        durationMin: pending.durationMin,
+        isVideo: pending.isVideo,
+        participants: pending.participants,
+        accessPolicy: pending.accessPolicy,
+        waitingMusicTracks: pending.waitingMusicTracks,
+        requestId: pending.requestId,
+      });
+      this.meetingCreateTimeout = setTimeout(showCreateTimeoutToast, 20000);
+      return;
+    }
+    showCreateTimeoutToast();
   }, 20000);
 
   console.log("📅 [MEETING] Demande de création de réunion envoyée avec politique:", accessPolicy);
@@ -2430,8 +2609,13 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   this.waitingMusicDataUrl = waitingMusicTracks[0]?.dataUrl || null;
   this.waitingMusicTitle = waitingMusicTracks.map((track) => track.name).join(" • ");
 
-  // Mode création
-  this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy, waitingMusicTracks);
+  // ANTI-SATURATION WS : les dataUrls de la musique ne passent PLUS dans le
+  // message meeting-create (un message de dizaines de Mo faisait mourir le
+  // socket => « Aucune réponse du serveur » répétée + création impossible).
+  // Les fichiers sont téléversés en HTTP après la création (voir
+  // handleMeetingCreated) ; on garde ici un aperçu LOCAL pour l'hôte.
+  this._pendingWaitingMusicFiles = musicFiles.filter(Boolean);
+  this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy, []);
 };
 
 Meetings.prototype.cancelMeeting = async function() {
