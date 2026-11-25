@@ -7767,6 +7767,19 @@ showLocalStorageOnScreen = () => {
         } else if (data.roomId === this.groupRoomId && (this.groupJoinPending || this.groupCreating)) {
           // Sur réception group-error pendant groupCreating : finishGroupCall immédiatement
           this.finishGroupCall(data.reason || "Impossible de rejoindre l'appel");
+        } else if (
+          // AUTO-RÉPARATION salle d'attente : salle introuvable après un
+          // redémarrage serveur, présence obsolète, coupure pendant le join…
+          // On rejoue meeting-join : le serveur renvoie meeting-waiting, qui
+          // relance proprement le group-join (et l'échange WebRTC).
+          data.roomId && data.roomId === this.meetingWaitingRoomId
+          && this.meetingPendingCode
+          && typeof this.handleMeetingWaiting === "function"
+          && Date.now() - (this._waitingRejoinLastAttempt || 0) > 15000
+        ) {
+          this._waitingRejoinLastAttempt = Date.now();
+          console.log("📅 [MEETING] Salle d'attente perdue — rejoue meeting-join :", this.meetingPendingCode);
+          this.sendSignal({ type: "meeting-join", code: this.meetingPendingCode });
         } else {
           this.showCallToast(data.reason || "Erreur d'appel de groupe");
         }

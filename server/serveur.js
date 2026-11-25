@@ -3793,6 +3793,29 @@ wss.on("connection", (ws) => {
             console.error(`[MEETING] Échec restauration salle ${roomId}:`, error);
           }
         }
+        // Restaurer une salle d'ATTENTE après redémarrage : seule la salle
+        // live était restaurée, la room_waiting_* devenait introuvable =>
+        // les visiteurs reconnectés ne rejoignaient plus la salle et ne
+        // se voyaient plus entre eux (aucun roster => aucune offre WebRTC).
+        if (!room && typeof roomId === "string" && roomId.startsWith("room_waiting_")) {
+          const meetingId = roomId.slice("room_waiting_".length);
+          try {
+            const meetingDoc = await db.collection("meetings").doc(meetingId).get();
+            if (meetingDoc.exists) {
+              const meeting = meetingDoc.data();
+              if (meeting.status === "scheduled" && (!meeting.endsAt || meeting.endsAt > Date.now())) {
+                room = roomManager.rooms.get(roomId);
+                if (!room) {
+                  roomManager.rooms.set(roomId, { roomId, creatorId: null, isVideo: !!meeting.isVideo, isMeeting: true, isWaitingRoom: true, createdAt: Date.now(), endsAt: meeting.endsAt || (Date.now() + 24 * 3600 * 1000), participants: new Map() });
+                  room = roomManager.rooms.get(roomId);
+                  console.log(`[MEETING] Salle d'attente restaurée à la demande: ${roomId}`);
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`[MEETING] Échec restauration salle d'attente ${roomId}:`, error);
+          }
+        }
         if (!room) {
           ws.send(JSON.stringify({
             type: "group-error",
@@ -3826,14 +3849,23 @@ wss.on("connection", (ws) => {
           }
         }
         if (roomManager.isUserInAnyRoom(ws.userId) && !room.participants.has(ws.userId)) {
-          ws.send(
-            JSON.stringify({
-              type: "group-error",
-              roomId,
-              reason: "Occupé",
-            }),
-          );
-          return;
+          if (!room.isWaitingRoom) {
+            // Salle de groupe / réunion live : conflit réel, on refuse.
+            ws.send(
+              JSON.stringify({
+                type: "group-error",
+                roomId,
+                reason: "Occupé",
+              }),
+            );
+            return;
+          }
+          // Salle d'ATTENTE : une appartenance résiduelle (reconnexion WebSocket,
+          // crash, room RAM non nettoyée) ne doit PAS empêcher le join, sinon
+          // les visiteurs n'obtiennent jamais de roster et ne se voient pas
+          // (aucune offre WebRTC échangée). On purge les autres salles.
+          console.log(`[GROUP] ${ws.userId} nettoyage présence obsolète avant join salle d'attente ${roomId}`);
+          roomManager.leaveUserFromOtherRooms(ws.userId, roomId);
         }
 
         // Rejoindre la salle
@@ -4084,6 +4116,7 @@ wss.on("connection", (ws) => {
 
           const waitingMusicTracks = Array.isArray(data.waitingMusicTracks) ? data.waitingMusicTracks : [];
           let decodedWaitingMusic = null;
+          let waitingMusicSkipped = null;
           if (waitingMusicTracks.length) {
             const validWaitingMusic = waitingMusicTracks.every((track) =>
               track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
@@ -4097,11 +4130,14 @@ wss.on("connection", (ws) => {
               // plus jamais les dataUrls (le binaire ne circule plus en WS).
               decodedWaitingMusic = decodeWaitingMusicTracks(waitingMusicTracks);
             } catch (e) {
-              const reason = e.message === "too-large"
-                ? "La liste audio est trop volumineuse pour être transmise"
-                : "Un des morceaux audio est invalide";
-              ws.send(JSON.stringify({ type: "meeting-error", reason }));
-              return;
+              // ANTI-BLOCAGE : la musique ne doit JAMAIS empêcher la création
+              // de la réunion (régression signalée : 3 morceaux => meeting-create
+              // rejeté). On ignore la playlist et on prévient l'hôte.
+              decodedWaitingMusic = null;
+              waitingMusicSkipped = e.message === "too-large"
+                ? "Musique d'attente ignorée : liste trop volumineuse (max 90 Mo au total)"
+                : "Musique d'attente ignorée : un des morceaux est invalide";
+              console.warn(`[MEETING] ${waitingMusicSkipped}`);
             }
           }
 
@@ -4166,6 +4202,9 @@ wss.on("connection", (ws) => {
             endsAt: meeting.endsAt,
             durationMin: meeting.durationMin,
             isVideo: meeting.isVideo,
+            // Musique ignorée (trop volumineuse/invalide) : la réunion existe
+            // quand même, l'hôte est simplement informé.
+            ...(waitingMusicSkipped ? { musicSkipped: true, musicSkippedReason: waitingMusicSkipped } : {}),
           };
           ws.send(JSON.stringify(createdResponse));
           // Mémoriser pour la déduplication d'un éventuel rejeu client.

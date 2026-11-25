@@ -63,7 +63,9 @@ Meetings.MEETING_PHASES = {
  * @returns {string} La phase appliquée
  */
 Meetings.prototype._setMeetingPhase = function(phase) {
-  if (!Meetings.MEETING_PHASES.hasOwnProperty(phase)) {
+  // Les phases sont les VALEURS de MEETING_PHASES (minuscules), pas les clés.
+  const known = Object.values(Meetings.MEETING_PHASES || {});
+  if (!known.includes(phase)) {
     console.warn("📅 [MEETING] Phase inconnue ignorée:", phase);
     return this.meetingState || Meetings.MEETING_PHASES.IDLE;
   }
@@ -137,6 +139,13 @@ Meetings.prototype.handleMeetingCreated = function(data) {
   clearTimeout(this.meetingCreateTimeout);
   this.meetingCreateTimeout = null;
   this.closeMeetingCreateView();
+
+  // Musique trop volumineuse/invalide : la réunion est créée quand même,
+  // on informe simplement l'hôte (création JAMAIS bloquée par la musique).
+  if (data.musicSkipped && data.musicSkippedReason) {
+    console.warn("📅 [MEETING]", data.musicSkippedReason);
+    if (typeof this.showCallToast === "function") this.showCallToast(data.musicSkippedReason);
+  }
 
   // Réunion instantanée : on va directement à l'aperçu caméra, sans écran intermédiaire
   if (this.instantMeetingPending) {
@@ -367,7 +376,7 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
 
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
-  if (data.waitingRoomId && !this.meetingWaitingRoomId) {
+  if (data.waitingRoomId && data.waitingRoomId !== this.meetingWaitingRoomId) {
     this.groupIsMeeting = true;
     this.groupIsVideo = !!data.isVideo;
     this.groupRoomId = data.waitingRoomId;

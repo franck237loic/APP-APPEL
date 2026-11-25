@@ -336,6 +336,56 @@ const testMeetingFlow = () => {
     failed++;
   }
 
+  // Test 13: salle d'attente fiable (visibilité entre participants)
+  //  a) "Occupé" ne bloque plus le join d'une salle d'attente (présence obsolète purgée)
+  //  b) room_waiting_* restaurée après redémarrage serveur
+  //  c) musique trop volumineuse n'empêche plus la création (degrade, pas de return)
+  //  d) _setMeetingPhase compare aux VALEURS (les phases sont des chaînes minuscules)
+  //  e) auto-réparation client : replay meeting-join sur group-error de la salle d'attente
+  try {
+    console.log("Test 13: salle d'attente fiable — join nettoyé, room restaurée, musique non bloquante, phases");
+    const fs13 = require("fs");
+    const nodePath13 = require("path");
+    const root13 = nodePath13.join(__dirname, "..");
+
+    const server13 = fs13.readFileSync(nodePath13.join(root13, "server", "serveur.js"), "utf8");
+    if (!/isWaitingRoom.*\n[\s\S]{0,400}leaveUserFromOtherRooms\(ws\.userId, roomId\)/.test(server13)) {
+      throw new Error("salle d'attente : join doit purger la présence obsolète au lieu de refuser 'Occupé'");
+    }
+    if (!server13.includes("Salle d'attente restaurée à la demande")) {
+      throw new Error("restauration de room_waiting_* après redémarrage absente");
+    }
+    const createBlock13 = server13.slice(server13.indexOf("decodedWaitingMusic = decodeWaitingMusicTracks"), server13.indexOf("meeting-created envoyé"));
+    if (/La liste audio est trop volumineuse[\s\S]{0,200}return;/.test(createBlock13)) {
+      throw new Error("meeting-create rejette encore la réunion si la musique est trop volumineuse");
+    }
+    if (!createBlock13.includes("musicSkipped")) {
+      throw new Error("response meeting-created doit signaler musicSkipped");
+    }
+
+    const meet13 = fs13.readFileSync(nodePath13.join(root13, "www", "js", "Meetings.js"), "utf8");
+    if (!meet13.includes("Object.values(Meetings.MEETING_PHASES || {})")) {
+      throw new Error("_setMeetingPhase doit comparer aux VALEURS (phases minuscules)");
+    }
+    if (!meet13.includes("data.waitingRoomId !== this.meetingWaitingRoomId")) {
+      throw new Error("handleMeetingWaiting doit se ré-armer si la waitingRoomId change (auto-réparation)");
+    }
+    if (!meet13.includes("data.musicSkippedReason")) {
+      throw new Error("l'hôte doit être informé quand la musique est ignorée");
+    }
+
+    const cm13 = fs13.readFileSync(nodePath13.join(root13, "www", "js", "CallManager.js"), "utf8");
+    if (!cm13.includes("rejoue meeting-join") || !cm13.includes("_waitingRejoinLastAttempt")) {
+      throw new Error("auto-réparation replay meeting-join absente côté client");
+    }
+
+    passed++;
+    console.log("✅ Test 13 passé: salle d'attente fiable (join, restaurations, musique, phases)\n");
+  } catch (error) {
+    console.error(`❌ Test 13 échoué: ${error.message}\n`);
+    failed++;
+  }
+
   // Résumé
   console.log("=== Résumé ===");
   console.log(`✅ Passés: ${passed}`);

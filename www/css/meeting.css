@@ -1938,8 +1938,8 @@ body.meeting-ui-active #log-toggle-btn {
 /* SALLE D'ATTENTE : les règles de base historiques de cette zone ont été
    retirées et fusionnées dans la section unique
    « SALLE D'ATTENTE — LAYOUT RESPONSIVE v2 » en fin de fichier. */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+#meeting-waiting-view #meeting-video-grid,
+#meeting-waiting-view #meeting-waiting-grid {
   position: relative;
   inset: auto;
   flex: 1 1 auto;
@@ -1963,31 +1963,31 @@ body.meeting-ui-active #log-toggle-btn {
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid::-webkit-scrollbar,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid::-webkit-scrollbar {
+#meeting-waiting-view #meeting-video-grid::-webkit-scrollbar,
+#meeting-waiting-view #meeting-waiting-grid::-webkit-scrollbar {
   display: none;
   width: 0;
   height: 0;
 }
 
 /* Un seul participant : une vignette carrée centrée, pas géante */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid.count-1 {
+#meeting-waiting-view #meeting-waiting-grid.count-1 {
   grid-template-columns: minmax(0, 1fr);
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid.count-1 > .video-tile {
+#meeting-waiting-view #meeting-waiting-grid.count-1 > .video-tile {
   max-width: 340px;
   justify-self: center;
   width: 100%;
 }
 
 /* 2 participants : deux vignettes côte à côte, centrées */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid.count-2 {
+#meeting-waiting-view #meeting-waiting-grid.count-2 {
   grid-template-columns: repeat(2, minmax(0, 300px));
   justify-content: center;
 }
 /* 3-4 participants : grille 2 colonnes (2x2), centrée */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid.count-3,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid.count-4 {
+#meeting-waiting-view #meeting-waiting-grid.count-3,
+#meeting-waiting-view #meeting-waiting-grid.count-4 {
   grid-template-columns: repeat(2, minmax(0, 300px));
   justify-content: center;
 }
@@ -1995,10 +1995,10 @@ body.meeting-ui-active #log-toggle-btn {
    disponibles, le défilement vertical prend le relais (scrollbars masquées). */
 
 /* ---- Tuile participant : CONTENEUR PROPRE, vidéos enfermées ---- */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .video-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile {
+#meeting-waiting-view #meeting-video-grid > .video-tile,
+#meeting-waiting-view #meeting-waiting-grid > .video-tile,
+#meeting-waiting-view #meeting-video-grid > .group-tile,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile {
   position: relative;
   inset: auto;
   width: 100%;
@@ -2017,9 +2017,9 @@ body.meeting-ui-active #log-toggle-btn {
    jamais d'index superlu. La grille place, les tuiles débordent de rien. */
 
 /* Vidéo entièrement contenue, cadrage propre */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile video,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile video,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile .group-video {
+#meeting-waiting-view #meeting-waiting-grid > .video-tile video,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile video,
+#meeting-waiting-view #meeting-waiting-grid > .video-tile .group-video {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -2029,13 +2029,13 @@ body.meeting-ui-active #log-toggle-btn {
   background: transparent;
 }
 /* selfies en miroir dans la salle d'attente aussi */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile.self video,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile.is-self video {
+#meeting-waiting-view #meeting-waiting-grid > .video-tile.self video,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile.is-self video {
   transform: scaleX(-1);
 }
 
 /* Avatar / initiale quand la caméra est désactivée (ou pas encore de flux) */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-avatar {
+#meeting-waiting-view #meeting-waiting-grid .group-avatar {
   position: absolute;
   inset: 0;
   display: flex;
@@ -2044,7 +2044,7 @@ body.meeting-ui-active #log-toggle-btn {
   background: linear-gradient(145deg, #3c4043, #2d2e30);
   z-index: 1;
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-avatar .group-initial {
+#meeting-waiting-view #meeting-waiting-grid .group-avatar .group-initial {
   width: 64px;
   height: 64px;
   border-radius: 50%;
@@ -2056,18 +2056,18 @@ body.meeting-ui-active #log-toggle-btn {
   font-size: 26px;
   font-weight: 700;
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .has-video .group-avatar {
+#meeting-waiting-view #meeting-waiting-grid .has-video .group-avatar {
   display: none;
 }
 /* Caméra coupée chez un participant à flux vidéo : montrer l'avatar, pas une image figée */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .video-tile.is-muted .group-avatar,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-tile.is-muted .group-avatar {
+#meeting-waiting-view #meeting-waiting-grid .video-tile.is-muted .group-avatar,
+#meeting-waiting-view #meeting-waiting-grid .group-tile.is-muted .group-avatar {
   /* le micro coupé ne masque pas la vidéo ; seul l'absence de flux cache la vidéo */
 }
 
 /* Étiquette nom + statut en bas de la vignette */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-tile-info,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .video-tile-info {
+#meeting-waiting-view #meeting-waiting-grid .group-tile-info,
+#meeting-waiting-view #meeting-waiting-grid .video-tile-info {
   position: absolute;
   left: 0;
   right: 0;
@@ -2081,7 +2081,7 @@ body.meeting-ui-active #log-toggle-btn {
   pointer-events: none;
   min-width: 0;
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-tile-name {
+#meeting-waiting-view #meeting-waiting-grid .group-tile-name {
   color: #fff;
   font-size: 12.5px;
   font-weight: 600;
@@ -2089,7 +2089,7 @@ body.meeting-ui-active #log-toggle-btn {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-tile-status {
+#meeting-waiting-view #meeting-waiting-grid .group-tile-status {
   color: rgba(255,255,255,.75);
   font-size: 10.5px;
   white-space: nowrap;
@@ -2097,14 +2097,14 @@ body.meeting-ui-active #log-toggle-btn {
   text-overflow: ellipsis;
 }
 /* Badge organisateur (étoile) aligné avec la grille réunion */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-tile[data-is-host="1"] .group-tile-name::after,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .video-tile[data-is-host="1"] .user-name::after {
+#meeting-waiting-view #meeting-waiting-grid .group-tile[data-is-host="1"] .group-tile-name::after,
+#meeting-waiting-view #meeting-waiting-grid .video-tile[data-is-host="1"] .user-name::after {
   content: " ★";
   color: #fdd663;
 }
 
 /* Indicateur micro coupé : pastille en haut à droite, masquée par défaut */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-badge-mute {
+#meeting-waiting-view #meeting-waiting-grid .group-badge-mute {
   position: absolute;
   top: 8px;
   right: 8px;
@@ -2120,28 +2120,28 @@ body.meeting-ui-active #log-toggle-btn {
   justify-content: center;
   backdrop-filter: blur(4px);
 }
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .is-muted .group-badge-mute,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid .group-tile.is-muted .group-badge-mute {
+#meeting-waiting-view #meeting-waiting-grid .is-muted .group-badge-mute,
+#meeting-waiting-view #meeting-waiting-grid .group-tile.is-muted .group-badge-mute {
   display: flex;
 }
 
 /* Tablette / ordinateur : colonnes plus larges, grille bien remplie */
 @media (min-width: 700px) {
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+  #meeting-waiting-view #meeting-video-grid,
+  #meeting-waiting-view #meeting-waiting-grid {
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
     gap: 14px;
   }
 }
 @media (min-width: 1024px) {
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+  #meeting-waiting-view #meeting-video-grid,
+  #meeting-waiting-view #meeting-waiting-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid:empty::before,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid:empty::before {
+#meeting-waiting-view #meeting-video-grid:empty::before,
+#meeting-waiting-view #meeting-waiting-grid:empty::before {
   content: "Connexion des participants...";
   position: relative;
   inset: auto;
@@ -3206,7 +3206,7 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
    ============================================================ */
 
 /* --- Racine : plein écran, jamais de scroll horizontal --- */
-.view-container[class*="meeting-"] .meeting-waiting-view {
+#meeting-waiting-view {
   z-index: 2100;
   overflow: hidden;
   color: #edf2f7;
@@ -3217,7 +3217,7 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 /* --- Shell : neutralise les comportements hérités de .app-container
    (justify-content: space-between, align-items: center) : tout est en
    flux normal, colonne, du haut vers le bas. --- */
-.view-container[class*="meeting-"] .meeting-waiting-view .waiting-room-shell {
+#meeting-waiting-view .waiting-room-shell {
   width: 100%;
   max-width: 1120px;
   height: 100dvh;
@@ -3235,7 +3235,7 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 }
 
 /* --- En-tête : fine barre statique dans le flux (jamais par-dessus) --- */
-.view-container[class*="meeting-"] .meeting-waiting-view .waiting-room-header {
+#meeting-waiting-view .waiting-room-header {
   flex: 0 0 auto;
   min-height: 44px;
   padding: 4px 0 6px;
@@ -3256,7 +3256,7 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 
 /* --- Content : colonne flex ; chaque carte a la hauteur de son contenu ;
    la section participants reçoit tout l'espace restant (flex 1). --- */
-.view-container[class*="meeting-"] .meeting-waiting-view .waiting-room-content {
+#meeting-waiting-view .waiting-room-content {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
@@ -3443,8 +3443,8 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 /* Grille : garde la hauteur naturelle (pas de hauteur fixe qui coupe les
    vignettes) ; c'est la section participants + le content qui gèrent
    l'espace et le scroll. */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+#meeting-waiting-view #meeting-video-grid,
+#meeting-waiting-view #meeting-waiting-grid {
   flex: 0 1 auto;
   min-height: 0;
   max-height: none;
@@ -3610,11 +3610,11 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 
 /* --- Telephone (portrait), <= 600px : une colonne, participants max --- */
 @media (max-width: 600px) {
-  .view-container[class*="meeting-"] .meeting-waiting-view .waiting-room-header {
+  #meeting-waiting-view .waiting-room-header {
     min-height: 40px;
     padding: 2px 0 4px;
   }
-  .view-container[class*="meeting-"] .meeting-waiting-view .waiting-room-content {
+  #meeting-waiting-view .waiting-room-content {
     gap: 8px;
     padding-top: 0;
   }
@@ -3690,7 +3690,7 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 }
 
 /* --- Barres de defilement discretes du content --- */
-.view-container[class*="meeting-"] .meeting-waiting-view .waiting-room-content::-webkit-scrollbar {
+#meeting-waiting-view .waiting-room-content::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -3705,8 +3705,8 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
    classes count-N et les colonnes auto-fill historiques.
    ============================================================ */
 
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+#meeting-waiting-view #meeting-video-grid,
+#meeting-waiting-view #meeting-waiting-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   grid-auto-rows: auto;
   justify-content: stretch;
@@ -3715,10 +3715,10 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 }
 
 /* Vignettes : carrées, identiques, compactes et sobres */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .video-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .video-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid > .group-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid > .group-tile {
+#meeting-waiting-view #meeting-video-grid > .video-tile,
+#meeting-waiting-view #meeting-waiting-grid > .video-tile,
+#meeting-waiting-view #meeting-video-grid > .group-tile,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile {
   width: 100%;
   aspect-ratio: 1 / 1;
   max-height: none;
@@ -3731,8 +3731,8 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 
 /* Aucune exception de largeur : même à 1 ou 2 participants, chaque
    vignette reste une demi-colonne (jamais une grande carte). */
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid.count-1 > .video-tile,
-.view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid.count-1 > .video-tile {
+#meeting-waiting-view #meeting-video-grid.count-1 > .video-tile,
+#meeting-waiting-view #meeting-waiting-grid.count-1 > .video-tile {
   max-width: none;
   justify-self: stretch;
 }
@@ -3740,15 +3740,208 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 /* Tablette / ordinateur : la zone de prévisualisation reste en 2 colonnes
    (demande explicite), colonnes de taille égale, défilement vertical. */
 @media (min-width: 700px) {
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+  #meeting-waiting-view #meeting-video-grid,
+  #meeting-waiting-view #meeting-waiting-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     gap: 10px;
   }
 }
 @media (min-width: 1024px) {
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-video-grid,
-  .view-container[class*="meeting-"] #meeting-waiting-view #meeting-waiting-grid {
+  #meeting-waiting-view #meeting-video-grid,
+  #meeting-waiting-view #meeting-waiting-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
+}
+
+/* ============================================================
+   SALLE D'ATTENTE v4 — PARTICIPANTS EN PETITES VIGNETTES + SCROLL
+   La section participants ne prend PLUS tout l'écran : hauteur
+   maîtrisée (max-height), grille 2 colonnes de petites vignettes
+   carrées, défilement vertical INTERNE au panneau quand la liste
+   grandit. La musique et le bouton Quitter restent visibles.
+   ============================================================ */
+
+/* Panneau participants : hauteur bornée, jamais la pleine page */
+.view-container[class*="meeting-"] .waiting-room-participants {
+  flex: 0 1 auto;
+  min-height: 170px;
+  max-height: 44vh;
+}
+
+/* Grille : défilement vertical interne, alignée en haut */
+#meeting-waiting-view #meeting-video-grid,
+#meeting-waiting-view #meeting-waiting-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-content: start;
+  scrollbar-width: thin;
+}
+
+/* Vignettes compactes : carrées, plus petites que v3 */
+#meeting-waiting-view #meeting-video-grid > .video-tile,
+#meeting-waiting-view #meeting-waiting-grid > .video-tile,
+#meeting-waiting-view #meeting-video-grid > .group-tile,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-height: 150px;
+  max-width: 150px;
+  justify-self: center;
+  border-radius: 12px;
+}
+
+/* Paysage / écrans peu hauts : panneau encore plus bas */
+@media (max-height: 520px) {
+  .view-container[class*="meeting-"] .waiting-room-participants {
+    max-height: 52vh;
+  }
+}
+/* Mobile portrait : panneau un peu plus haut mais toujours borné */
+@media (max-width: 600px) {
+  .view-container[class*="meeting-"] .waiting-room-participants {
+    max-height: 50vh;
+  }
+}
+/* Ordinateur : panneau borné et centré, plus large qu'un téléphone */
+@media (min-width: 1024px) {
+  #meeting-waiting-view #meeting-video-grid,
+  #meeting-waiting-view #meeting-waiting-grid {
+    max-width: 520px;
+    margin: 0 auto;
+    width: 100%;
+  }
+}
+
+/* ============================================================
+   SALLE D'ATTENTE v5 — BLOC TERMINAL DURCI
+   Grille TOUJOURS 2 vignettes par ligne (responsive), vignettes
+   carrées petites, scroll interne du panneau, musique et bouton
+   Quitter toujours visibles en dessous.
+   Ces règles utilisent !important et sont DERNIÈRES du fichier :
+   aucune règle historique ne peut plus les écraser.
+   ============================================================ */
+
+/* Panneau participants : hauteur bornée, jamais la pleine page */
+#meeting-waiting-view .waiting-room-participants {
+  flex: 0 0 auto !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  max-height: 46vh !important;
+  overflow: hidden !important;
+}
+
+/* Grille d'attente : GRID 2 colonnes, forcé */
+#meeting-waiting-view #meeting-waiting-grid,
+#meeting-waiting-view #meeting-video-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-auto-rows: auto !important;
+  align-content: start !important;
+  justify-content: stretch !important;
+  gap: 8px !important;
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 2px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+#meeting-waiting-view #meeting-waiting-grid::-webkit-scrollbar { width: 5px; }
+#meeting-waiting-view #meeting-waiting-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 3px; }
+
+/* Vignettes : carrées, petites (2 par ligne), identiques */
+#meeting-waiting-view #meeting-waiting-grid > .video-tile,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile,
+#meeting-waiting-view #meeting-video-grid > .video-tile,
+#meeting-waiting-view #meeting-video-grid > .group-tile {
+  position: relative !important;
+  top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+  width: 100% !important;
+  height: auto !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 170px !important;
+  max-height: 170px !important;
+  aspect-ratio: 1 / 1 !important;
+  justify-self: center !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255,255,255,.10) !important;
+}
+
+/* Vidéo : remplit sa vignette, cadrée, jamais débordante */
+#meeting-waiting-view #meeting-waiting-grid > .video-tile video,
+#meeting-waiting-view #meeting-waiting-grid > .video-tile .group-video,
+#meeting-waiting-view #meeting-video-grid > .video-tile video,
+#meeting-waiting-view #meeting-video-grid > .video-tile .group-video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: cover !important;
+  object-position: center !important;
+}
+
+/* Écran peu haut (paysage) : panneau réduit d'autant */
+@media (max-height: 560px) {
+  #meeting-waiting-view .waiting-room-participants { max-height: 52vh !important; }
+}
+/* Grandes largeurs : la grille reste lisible et centrée */
+@media (min-width: 900px) {
+  #meeting-waiting-view #meeting-waiting-grid,
+  #meeting-waiting-view #meeting-video-grid {
+    max-width: 560px !important;
+    margin: 0 auto !important;
+  }
+}
+
+/* ============================================================
+   SALLE D'ATTENTE v6 — CORRECTIF ANTI-SUPERPOSITION
+   Cause du bug : les règles v2→v5 utilisaient des sélecteurs du type
+   « .view-container[class*="meeting-"] #meeting-waiting-view » qui ne
+   pouvaient jamais correspondre (l'élément EST le .view-container),
+   donc la règle générique 1 colonne s'appliquait et les vignettes
+   débordaient du panneau sur le bloc musique.
+   Les sélecteurs ont été corrigés (#meeting-waiting-view …) et ce bloc
+   fixe le comportement final : le panneau contient la grille, la grille
+   défile à l'intérieur, les vignettes ne se chevauchent jamais.
+   ============================================================ */
+#meeting-waiting-view .waiting-room-participants {
+  flex: 0 0 auto !important;
+  max-height: min(52vh, 460px) !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+#meeting-waiting-view #meeting-waiting-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-auto-rows: max-content !important;
+  align-content: start !important;
+  align-items: start !important;
+  gap: 10px !important;
+  max-width: 420px !important;
+  margin: 0 auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+#meeting-waiting-view #meeting-waiting-grid > .video-tile,
+#meeting-waiting-view #meeting-waiting-grid > .group-tile {
+  width: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  height: auto !important;
+  aspect-ratio: 4 / 3 !important;
+  justify-self: stretch !important;
+}
+#meeting-waiting-view .waiting-room-actions {
+  flex-shrink: 0 !important;
 }
