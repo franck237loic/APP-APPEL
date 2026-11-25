@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const crypto = require("crypto");
 const { WebSocketServer, WebSocket } = require("ws");
 
 // Imports Firebase Admin v10+ / v11+
@@ -330,7 +331,9 @@ class RoomManager {
     this.rooms = new Map();
     
     // Maximum de participants par salle (JOINED + RINGING)
-    this.MAX_PARTICIPANTS = 15;
+    // Aligné sur le client (CallManager.GROUP_MAX_PARTICIPANTS = 6)
+    // Limite pratique du maillage WebRTC (mesh) pour garder de bonnes performances
+    this.MAX_PARTICIPANTS = 6;
     
     // Délai d'expiration d'une invitation (45 secondes comme WhatsApp)
     this.INVITE_TIMEOUT_MS = 45000;
@@ -1157,7 +1160,7 @@ class RoomManager {
  * - Fenêtre d'accès : 15 minutes avant scheduledAt jusqu'à endsAt
  * - Host = créateur (seul peut annuler)
  * - Code unique non devinable (9 caractères alphanumériques)
- * - MAX participants = 15 (comme les groupes actuels)
+ * - MAX participants = 6 (aligné sur CallManager.GROUP_MAX_PARTICIPANTS, mesh WebRTC)
  * - Transition scheduled→live automatique à l'heure ou premier join
  */
 class MeetingManager {
@@ -1191,7 +1194,7 @@ class MeetingManager {
    * =========================================================
    *
    * Génère un code court de 9 caractères (format: XXX-XXX-XXX)
-   * Utilise Math.random() pour simplifier (suffisant pour ce cas d'usage)
+   * Utilise crypto.randomBytes (cryptographiquement sécurisé)
    * Caractères sans ambiguïté : pas de 0/O/1/I
    *
    * @returns {string} Code unique (ex: "ABC-123-XYZ")
@@ -1203,11 +1206,14 @@ class MeetingManager {
     const maxAttempts = 100;
 
     do {
+      // 9 octets aléatoires cryptographiquement sûrs : 1 octet par caractère
+      const bytes = crypto.randomBytes(9);
       const parts = [];
       for (let i = 0; i < 3; i++) {
         let part = "";
         for (let j = 0; j < 3; j++) {
-          part += chars.charAt(Math.floor(Math.random() * chars.length));
+          // Modulo 32 : sans biais notable car 256 % 32 === 0
+          part += chars.charAt(bytes[i * 3 + j] % chars.length);
         }
         parts.push(part);
       }
@@ -2404,8 +2410,62 @@ const roomManager = new RoomManager();
 // Instance globale du MeetingManager
 const meetingManager = new MeetingManager();
 // Musique d'attente transmise en direct aux appareils (non persistée entre redémarrages).
+// ARCHITECTURE ANTI-BLOCAGE : le serveur décode les dataUrls en Buffer UNE SEULE
+// fois à la réception, puis ne transmetPLUS JAMAIS le binaire par WebSocket —
+// les clients reçoivent des URLs HTTP légères
+// (/api/meeting/:meetingId/waiting-music/:idx?token=...).
+// Avant : JSON.stringify de 30-90 Mo par destinataire gelait l'event loop,
+// _y compris pendant meeting-create d'un invité (symptôme "le serveur bloque
+// et la réunion ne se crée pas").
 const meetingWaitingMusic = new Map();
 const MAX_WAITING_MUSIC_TRANSFER_BYTES = 90 * 1024 * 1024;
+
+// Auth légère des flux audio : token éphémère, redistribué à chaque set/arrivée.
+const waitingMusicTokenCache = new Map(); // meetingId -> token
+
+function getWaitingMusicToken(meetingId) {
+  let token = waitingMusicTokenCache.get(meetingId);
+  if (!token) {
+    token = crypto.randomBytes(24).toString("hex");
+    waitingMusicTokenCache.set(meetingId, token);
+  }
+  return token;
+}
+
+// Décode [{dataUrl, name, ...}] en buffers + métadonnées (une fois par set).
+// Lève si une piste est invalide (dataUrl malformée) ou si le total dépasse la limite.
+function decodeWaitingMusicTracks(rawTracks) {
+  const totalLen = rawTracks.reduce((s, t) => s + (t?.dataUrl?.length || 0), 0);
+  if (totalLen > MAX_WAITING_MUSIC_TRANSFER_BYTES) throw new Error("too-large");
+  const dec = [];
+  let totalBytes = 0;
+  for (const t of rawTracks) {
+    const m = /^data:(audio\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(t.dataUrl || "");
+    if (!m) throw new Error("invalid-track");
+    const buf = Buffer.from(m[2], "base64");
+    totalBytes += buf.length;
+    if (totalBytes > MAX_WAITING_MUSIC_TRANSFER_BYTES) throw new Error("too-large");
+    dec.push({ buf, mime: m[1], name: String(t.name || "Musique d’attente").slice(0, 120) });
+  }
+  return dec;
+}
+
+// Message WS LÉGER envoyé aux clients : uniquement des URLs, aucun binaire.
+function buildWaitingMusicPayload(meetingId) {
+  const entry = meetingWaitingMusic.get(meetingId);
+  if (!entry) return null;
+  const token = getWaitingMusicToken(meetingId);
+  return {
+    syncAt: entry.syncAt,
+    tracks: entry.tracks.map((t, idx) => ({
+      idx,
+      name: t.name,
+      mime: t.mime,
+      size: t.buf.length,
+      url: `/api/meeting/${encodeURIComponent(meetingId)}/waiting-music/${idx}?token=${token}`,
+    })),
+  };
+}
 
 // Idempotence de meeting-create : si le client rejoue une demande (reconnexion
 // WebSocket survenue juste après l'envoi), on RÉENVOIE LA MÊME réponse au
@@ -2421,6 +2481,7 @@ function pruneRecentMeetingCreates() {
 
 function notifyWaitingMusicStopped(meetingId, waitingUsers = [], hostId = null) {
   meetingWaitingMusic.delete(meetingId);
+  waitingMusicTokenCache.delete(meetingId);
   const targets = new Set([...(Array.isArray(waitingUsers) ? waitingUsers : []), hostId].filter(Boolean));
   for (const userId of targets) {
     const user = users.get(userId);
@@ -2456,6 +2517,7 @@ async function loadMeetingsOnStartup() {
         await db.collection("meetings").doc(meeting.id).update({ status: "ended" });
         // Purger la musique d'attente éventuelle
         meetingWaitingMusic.delete(meeting.id);
+        waitingMusicTokenCache.delete(meeting.id);
         console.log(`📅 Réunion expirée nettoyée: ${meeting.id}`);
         continue;
       }
@@ -2624,6 +2686,26 @@ app.get("/api/meeting/by-code/:code", async (req, res) => {
     console.error("❌ Erreur API /api/meeting/by-code:", error);
     res.status(500).json({ error: "Erreur serveur" });
   }
+});
+
+// Flux audio de la musique d'attente (légère : service du Buffer décodé).
+// Auth légère : token éphémère redistribué avec chaque diffusion WS.
+app.get("/api/meeting/:meetingId/waiting-music/:idx", (req, res) => {
+  const { meetingId, idx } = req.params;
+  const token = String(req.query.token || "");
+  if (!token || token !== waitingMusicTokenCache.get(meetingId)) {
+    return res.status(403).json({ error: "Token de musique invalide ou expiré" });
+  }
+  const entry = meetingWaitingMusic.get(meetingId);
+  const i = parseInt(idx, 10);
+  if (!entry || !Number.isInteger(i) || i < 0 || i >= entry.tracks.length) {
+    return res.status(404).json({ error: "Morceau introuvable" });
+  }
+  const track = entry.tracks[i];
+  res.setHeader("Content-Type", track.mime);
+  res.setHeader("Content-Length", track.buf.length);
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.end(track.buf);
 });
 
 // Obtenir une réunion par ID
@@ -4001,12 +4083,26 @@ wss.on("connection", (ws) => {
           }
 
           const waitingMusicTracks = Array.isArray(data.waitingMusicTracks) ? data.waitingMusicTracks : [];
-          const validWaitingMusic = waitingMusicTracks.every((track) =>
-            track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
-          ) && waitingMusicTracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= MAX_WAITING_MUSIC_TRANSFER_BYTES;
-          if (!validWaitingMusic) {
-            ws.send(JSON.stringify({ type: "meeting-error", reason: "La liste audio est trop volumineuse pour être transmise" }));
-            return;
+          let decodedWaitingMusic = null;
+          if (waitingMusicTracks.length) {
+            const validWaitingMusic = waitingMusicTracks.every((track) =>
+              track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
+            );
+            if (!validWaitingMusic) {
+              ws.send(JSON.stringify({ type: "meeting-error", reason: "La liste audio est invalide ou trop volumineuse pour être transmise" }));
+              return;
+            }
+            try {
+              // Décodage UNE fois ici : après ce point le serveur ne manipule
+              // plus jamais les dataUrls (le binaire ne circule plus en WS).
+              decodedWaitingMusic = decodeWaitingMusicTracks(waitingMusicTracks);
+            } catch (e) {
+              const reason = e.message === "too-large"
+                ? "La liste audio est trop volumineuse pour être transmise"
+                : "Un des morceaux audio est invalide";
+              ws.send(JSON.stringify({ type: "meeting-error", reason }));
+              return;
+            }
           }
 
           console.log(`[MEETING] meeting-create reçu de ${ws.userId || "?"} accessPolicy=${accessPolicy || "direct"}`);
@@ -4051,13 +4147,10 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          if (waitingMusicTracks.length) {
+          if (decodedWaitingMusic) {
             meetingWaitingMusic.set(meeting.meetingId, {
               syncAt: Date.now(),
-              tracks: waitingMusicTracks.map((track) => ({
-                dataUrl: track.dataUrl,
-                name: String(track.name || "Musique d’attente").slice(0, 120),
-              })),
+              tracks: decodedWaitingMusic,
             });
           }
 
@@ -4204,7 +4297,8 @@ wss.on("connection", (ws) => {
                 isVideo: result.isVideo,
                 title: result.title,
                 createdBy: result.createdBy,
-                waitingMusic: meetingWaitingMusic.get(result.meetingId) || null,
+                // PAYLOAD LÉGER : URLs de flux, jamais le binaire (anti-blocage).
+                waitingMusic: buildWaitingMusicPayload(result.meetingId),
               }),
             );
             console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
@@ -4262,24 +4356,32 @@ wss.on("connection", (ws) => {
           const tracks = Array.isArray(data.tracks) ? data.tracks : [{ dataUrl: data.dataUrl, name: data.name }];
           const validTracks = tracks.length > 0 && tracks.every((track) =>
             track && typeof track.dataUrl === "string" && /^data:audio\/[a-zA-Z0-9.+-]+;base64,/.test(track.dataUrl)
-          ) && tracks.reduce((sum, track) => sum + track.dataUrl.length, 0) <= MAX_WAITING_MUSIC_TRANSFER_BYTES;
+          );
           if (!validTracks) {
             ws.send(JSON.stringify({ type: "meeting-error", reason: "Liste audio invalide ou trop volumineuse pour être transmise" }));
+            return;
+          }
+          // Décodage UNE fois : buffers en RAM, diffusion par URLs légères.
+          let decoded;
+          try {
+            decoded = decodeWaitingMusicTracks(tracks);
+          } catch (e) {
+            ws.send(JSON.stringify({ type: "meeting-error", reason: e.message === "too-large" ? "Liste audio trop volumineuse" : "Un des morceaux audio est invalide" }));
             return;
           }
           // syncAt : horodatage serveur => les clients calculent la position
           // de lecture (seek) via leur clockOffset pour écouter le même
           // morceau au même moment.
-          const music = { syncAt: Date.now(), tracks: tracks.map((track) => ({
-            dataUrl: track.dataUrl,
-            name: String(track.name || "Musique d’attente").slice(0, 120),
-          })) };
+          const music = { syncAt: Date.now(), tracks: decoded };
           meetingWaitingMusic.set(meetingId, music);
+          // Guardar el token para validar las peticiones HTTP posteriores
+          getWaitingMusicToken(meetingId);
+          const lightPayload = buildWaitingMusicPayload(meetingId);
           const recipients = new Set(waitingUsers);
           for (const recipientId of recipients) {
             const user = users.get(recipientId);
             if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
-              user.ws.send(JSON.stringify({ type: "meeting-waiting-music-set", meetingId, ...music }));
+              user.ws.send(JSON.stringify({ type: "meeting-waiting-music-set", meetingId, ...lightPayload }));
             }
           }
         } catch (error) {

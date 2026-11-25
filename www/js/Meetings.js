@@ -41,6 +41,82 @@ Object.setPrototypeOf(window.callManager, Meetings.prototype);
 // ===== HANDLERS DES MESSAGES SERVEUR (réunions) =====
 // Ces méthodes sont ajoutées à Meetings.prototype
 
+// ===== ÉTAT MEETING CENTRALISÉ =====
+// Machine à états : idle → create → preview → waiting → (approval) → live → ended
+// Source de vérité unique : this.meetingState. Les vues restent gérées par leurs
+// close*View existantes ; ici on centralise uniquement les DONNÉES et les TIMERS.
+
+Meetings.MEETING_PHASES = {
+  IDLE: "idle",           // aucune réunion en cours (état initial)
+  CREATE: "create",       // demande de création envoyée (meetingCreateSubmitting)
+  PREVIEW: "preview",     // aperçu caméra/micro avant de rejoindre
+  WAITING: "waiting",     // dans la salle d'attente
+  APPROVAL: "approval",   // en attente d'approbation de l'hôte
+  LIVE: "live",           // réunion active
+  ENDED: "ended",         // terminée / quittée (juste avant retour IDLE)
+};
+
+/**
+ * Change la phase de réunion en cours (source de vérité unique).
+ * IDempotent : reposer la même phase ne fait rien.
+ * @param {string} phase Une valeur de Meetings.MEETING_PHASES
+ * @returns {string} La phase appliquée
+ */
+Meetings.prototype._setMeetingPhase = function(phase) {
+  if (!Meetings.MEETING_PHASES.hasOwnProperty(phase)) {
+    console.warn("📅 [MEETING] Phase inconnue ignorée:", phase);
+    return this.meetingState || Meetings.MEETING_PHASES.IDLE;
+  }
+  const previous = this.meetingState || Meetings.MEETING_PHASES.IDLE;
+  if (previous === phase) return phase;
+  console.log(`📅 [MEETING] Phase: ${previous} → ${phase}`);
+  this.meetingState = phase;
+  return phase;
+};
+
+/**
+ * Réinitialise TOUT l'état métier meeting en un seul endroit.
+ * Utilisé par leaveMeeting / handleMeetingKicked / handleMeetingEnded
+ * (remplace les blocs de reset dispersés et désormais identiques).
+ * Ne touche NI aux vues DOM (close*View), NI aux streams WebRTC
+ * (endGroupCall/leaveGroupCall) : appelés séparément par les appelants.
+ * Préserve meetingPendingCode / meetingPendingMeetingId sauf si
+ * opts.clearPending = true (car un join peut être en cours).
+ */
+Meetings.prototype.resetMeetingState = function(opts) {
+  const clearPending = !!(opts && opts.clearPending);
+  // Timers de compte à rebours (salle d'attente)
+  if (this.meetingTimer) {
+    clearInterval(this.meetingTimer);
+    this.meetingTimer = null;
+  }
+  // Timers de création en attente (garde session 4)
+  this._pendingMeetingCreate = null;
+  clearTimeout(this.meetingCreateTimeout);
+  this.meetingCreateTimeout = null;
+  this.meetingCreateSubmitting = false;
+  // Retry de connexion (reconnexion auto)
+  this.meetingConnectionRetryPending = false;
+  // Identité / contrôles
+  this.groupIsMeeting = false;
+  this.groupRoomId = null;
+  this.meetingWaitingRoomId = null;
+  this.meetingApprovalPending = false;
+  this.isMeetingHost = false;
+  this.meetingCreatedBy = null;
+  this.currentMeetingId = null;
+  this.currentMeetingCode = "";
+  this.currentMeetingTitle = null;
+  if (clearPending) {
+    this.meetingPendingCode = null;
+    this.meetingPendingMeetingId = null;
+  }
+  // Musique d'attente : purge complète (aucun son résiduel)
+  this.stopWaitingMusicLocally();
+  this._destroyWaitingMusicNode();
+  this._setMeetingPhase(Meetings.MEETING_PHASES.IDLE);
+};
+
 Meetings.prototype.normalizeMeetingCode = function(code) {
   if (!code && code !== 0) return "";
   const cleaned = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -281,6 +357,7 @@ Meetings.prototype.handleMeetingReconnect = async function(data) {
 
 Meetings.prototype.handleMeetingWaiting = async function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
+  this._setMeetingPhase(Meetings.MEETING_PHASES.WAITING);
 
   // Ne PAS écraser l'écran live si on est déjà dans la réunion
   if (this.groupIsMeeting && this.groupRoomId) {
@@ -329,9 +406,22 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
 // - synchronisation approximative via syncAt (horodatage serveur) + clockOffset
 // - libération complète des ressources audio à l'arrêt
 Meetings.prototype.receiveWaitingMusic = function(music) {
-  const tracks = Array.isArray(music?.tracks) && music.tracks.length
+  // DEUX FORMATS ACCEPTÉS :
+  // - ancien : tracks[].dataUrl (data:audio/...;base64) — ne circule plus
+  //   depuis que le serveur diffuse des URLs légères (anti-blocage).
+  // - nouveau : tracks[].url (chemin relatif du flux HTTP) : on le résout
+  //   en URL absolue pour la lecture Audio.
+  const HTTP_BASE = (CallManager.HTTP_SERVER_URL || "").replace(/\/$/, "");
+  const rawTracks = Array.isArray(music?.tracks) && music.tracks.length
     ? music.tracks
     : (music?.dataUrl ? [{ dataUrl: music.dataUrl, name: music.name }] : []);
+  const tracks = rawTracks.map((t) => {
+    let src = t && (t.dataUrl || t.url || "");
+    if (src && !/^(data:|https?:)/.test(src)) {
+      src = `${HTTP_BASE}${src.startsWith("/") ? src : "/" + src}`;
+    }
+    return src ? { dataUrl: src, name: t.name, duration: t.duration || 0 } : null;
+  }).filter(Boolean);
   if (!tracks.length || this.waitingMusicStoppedForMeeting) return;
   // Nouvelle playlist (ou arrivée tardive) : repartir du début proprement
   this._destroyWaitingMusicNode();
@@ -600,12 +690,14 @@ Meetings.prototype.selectWaitingMusic = async function(fileList) {
 Meetings.prototype.handleWaitingMusicMessage = function(data) {
   if (data.meetingId && this.meetingPendingMeetingId && data.meetingId !== this.meetingPendingMeetingId) return;
   if (data.type === "meeting-waiting-music-set") {
-    // L'hôte reçoit son propre écho : pas d'écrasement brutal si identique
+    // L'hôte reçoit son propre écho : pas d'écrasement brutal si identique.
+    // NB : l'écho du serveur contient désormais des URLs HTTP (payload léger),
+    // pas les dataUrls locaux de l'hôte — on compare donc par NOM de morceau.
     const incoming = Array.isArray(data.tracks) ? data.tracks : [];
     const current = this.waitingMusicTracks || [];
     if (data.clientOnly) return;
     if (incoming.length && incoming.length === current.length &&
-        incoming.every((t, i) => t.dataUrl === current[i]?.dataUrl) &&
+        incoming.every((t, i) => (t.name || "") === (current[i]?.name || "")) &&
         data.syncAt && this.waitingMusicLastSyncAt === data.syncAt) {
       return;
     }
@@ -864,6 +956,7 @@ Meetings.prototype.handleMeetingError = function(data) {
 Meetings.prototype.handleMeetingApprovalGranted = async function(data) {
   console.log("📅 [MEETING] Accès accordé:", data);
   this.meetingApprovalPending = false;
+  // La phase passe à LIVE via showMeetingScreen/handleMeetingJoined (même flux)
   this.showCallToast("Accès accepté — connexion…");
   this.closeMeetingWaitingView();
   if (typeof this.closeMeetingPreviewView === "function") {
@@ -890,6 +983,7 @@ Meetings.prototype.handleMeetingApprovalDenied = function(data) {
 
 Meetings.prototype.handleMeetingPendingApproval = function(data) {
   console.log("📅 [MEETING] En attente d'approbation:", data);
+  this._setMeetingPhase(Meetings.MEETING_PHASES.APPROVAL);
   this.meetingApprovalPending = true; // bloque l'auto-join du compte à rebours
   this.showCallToast("Demande d'accès envoyée à l'hôte");
   // Fermer prévisualisation / attente classique
@@ -958,8 +1052,6 @@ Meetings.prototype.handleMeetingKicked = function(data) {
   console.log("📅 [MEETING] Expulsé de la réunion:", data);
   this.showCallToast(data.reason || "Vous avez été retiré de la réunion");
   // Nettoyage complet : apreinte hôte effacée, panneaux fermés, médias libérés
-  this.stopWaitingMusicLocally();
-  this._destroyWaitingMusicNode();
   this.meetingChat?.reset?.();
   this.meetingParticipants?.reset?.();
   if (this.groupRoomId || this.groupIsMeeting) {
@@ -968,14 +1060,8 @@ Meetings.prototype.handleMeetingKicked = function(data) {
     } catch (e) { console.warn("kicked cleanup:", e); }
   }
   this.closeMeetingScreen();
-  this.groupIsMeeting = false;
-  this.groupRoomId = null;
-  this.isMeetingHost = false;
-  this.meetingCreatedBy = null;
-  this.meetingWaitingRoomId = null;
-  this.currentMeetingId = null;
-  this.currentMeetingCode = "";
-  this.currentMeetingTitle = null;
+  // ÉTAT CENTRALISÉ : tous les champs + timers + musique en un seul appel
+  this.resetMeetingState();
 };
 
 /**
@@ -1201,15 +1287,8 @@ Meetings.prototype.leaveMeeting = function() {
   // Fermer les panneaux chat/participants (sinon résidus pour la prochaine réunion)
   this.meetingChat?.reset?.();
   this.meetingParticipants?.reset?.();
-  this.groupIsMeeting = false;
-  this.groupRoomId = null;
-  this.meetingWaitingRoomId = null;
-  this.meetingApprovalPending = false;
-  this.isMeetingHost = false;
-  this.meetingCreatedBy = null;
-  this.currentMeetingId = null;
-  this.currentMeetingCode = "";
-  this.currentMeetingTitle = null;
+  // ÉTAT CENTRALISÉ : tous les champs + timers + musique en un seul appel
+  this.resetMeetingState();
 };
 
 Meetings.prototype.endMeetingForEveryone = async function() {
@@ -1239,6 +1318,7 @@ Meetings.prototype.handleMeetingChatMessage = function(data) {
  */
 Meetings.prototype.showMeetingScreen = function(data) {
   console.log("📅 [MEETING] Affichage écran de réunion:", data);
+  this._setMeetingPhase(Meetings.MEETING_PHASES.LIVE);
 
   if (this.meetingScreen) {
     this.meetingScreen.classList.add("active");
@@ -1675,10 +1755,8 @@ Meetings.prototype.handleMeetingEnded = function(data) {
   this.closeMeetingCreatedView();
   // endGroupCall : leave signal + peers + médias + écran + panneaux
   this.endGroupCall(undefined);
-  this.isMeetingHost = false;
-  this.meetingCreatedBy = null;
-  this.meetingWaitingRoomId = null;
-  this.meetingApprovalPending = false;
+  // ÉTAT CENTRALISÉ : tous les champs + timers + musique en un seul appel
+  this.resetMeetingState();
 };
 
 // ===== UI LISTE DES RÉUNIONS =====
@@ -1906,6 +1984,7 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
   // moins de 30 s ; sinon elle est abandonnée proprement.
   this._createRequestIdSeq = (this._createRequestIdSeq || 0) + 1;
   const createRequestId = `mc_${Date.now()}_${this._createRequestIdSeq}_${Math.random().toString(36).slice(2, 8)}`;
+  this._setMeetingPhase(Meetings.MEETING_PHASES.CREATE);
   this._pendingMeetingCreate = {
     title,
     description,
@@ -2644,6 +2723,7 @@ Meetings.prototype.closeMeetingJoinView = function() {
 // ===== ÉCRAN DE PRÉVISUALISATION (NOUVEAU) =====
 
 Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo) {
+  this._setMeetingPhase(Meetings.MEETING_PHASES.PREVIEW);
   if (this.meetingPreviewView) {
     this.meetingPreviewView.classList.add("active");
     return;

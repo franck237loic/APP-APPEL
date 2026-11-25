@@ -191,12 +191,20 @@ const testMeetingFlow = () => {
     const preservesClass = callManagerContent.includes('"video-grid waiting-room-grid"');
     const hasGridStyles = meetingCss.includes('#meeting-waiting-grid');
     const hasPillButtons = meetingCss.includes('.waiting-room-self-btn') && meetingCss.includes('border-radius: 24px');
+    const squareTiles = meetingCss.includes('aspect-ratio: 1 / 1') && meetingCss.includes('VIGNETTE CARRÉE');
+    // Anciennes règles mobiles de la SALLE D'ATTENTE uniquement (celles de
+    // l'écran live sont légitimes et ne sont pas visées).
+    const noOldMobileClamp = !meetingCss.includes('minmax(94px, 1fr)')
+      && !meetingCss.includes('max-height: 170px; aspect-ratio: 4 / 3; border-radius: 11px');
+    const styledInternals = meetingCss.includes('#meeting-waiting-view #meeting-waiting-grid .group-avatar')
+      && meetingCss.includes('#meeting-waiting-view #meeting-waiting-grid .group-tile-name');
 
-    if (preservesClass && hasGridStyles && hasPillButtons) {
-      console.log("✅ Test 8 passé: classe préservée + styles grille + boutons pilule\n");
+    if (preservesClass && hasGridStyles && hasPillButtons && squareTiles && noOldMobileClamp && styledInternals) {
+      console.log("✅ Test 8 passé: classe préservée + styles grille carrée + boutons pilule\n");
       passed++;
     } else {
-      console.error("❌ Test 8 échoué: classe/admin CSS salle d'attente incomplets\n");
+      console.error("❌ Test 8 échoué: classe/admin CSS salle d'attente incomplets "
+        + JSON.stringify({ preservesClass, hasGridStyles, hasPillButtons, squareTiles, noOldMobileClamp, styledInternals }) + "\n");
       failed++;
     }
   } catch (error) {
@@ -231,6 +239,100 @@ const testMeetingFlow = () => {
     }
   } catch (error) {
     console.error(`❌ Test 9 échoué: ${error.message}\n`);
+    failed++;
+  }
+
+  // Test 10: grille salle d'attente = 2 colonnes strictes à tous les nombres
+  try {
+    console.log("Test 10: grille salle d'attente 2 colonnes strictes");
+    const fs = require("fs");
+    const nodePath = require("path");
+    const css = fs.readFileSync(nodePath.join(__dirname, "..", "www", "css", "meeting.css"), "utf8");
+    // La dernière section (v3) doit imposer repeat(2, minmax(0, 1fr)) avec !important
+    const v3 = css.slice(css.indexOf("GRILLE PARTICIPANTS : 2 COLONNES STRICTES"));
+    if (!v3.includes("grid-template-columns: repeat(2, minmax(0, 1fr)) !important")) {
+      throw new Error("règle 2 colonnes !important absente de la section v3");
+    }
+    // Le compteur de règles !important pour les 2 colonnes doit couvrir les 3 breakpoints
+    const nCols = (v3.match(/grid-template-columns: repeat\(2, minmax\(0, 1fr\)\) !important/g) || []).length;
+    if (nCols < 3) throw new Error(`2 colonnes non garanties sur toutes les largeurs (${nCols}/3)`);
+    // Plus de tuile géante count-1 (max-width 340px) dans le bloc v3/session 5 récent :
+    // la règle count-1 max-width doit être neutralisée (max-width: none l'emporte).
+    if (!v3.includes("max-width: none")) throw new Error("count-1 géant non neutralisé");
+    // Les tuiles restent carrées (session 5) : assert presence dans le fichier.
+    if (!css.includes("aspect-ratio: 1 / 1; /* VIGNETTE CARRÉE */")) {
+      throw new Error("tuiles carrées session 5 absentes");
+    }
+    passed++;
+    console.log("✅ Test 10 passé: 2 colonnes strictes à toutes les largeurs + count-1 neutralisé\n");
+  } catch (error) {
+    console.error(`❌ Test 10 échoué: ${error.message}\n`);
+    failed++;
+  }
+
+  // Test 11: état meeting centralisé (meetingState + resetMeetingState)
+  try {
+    console.log("Test 11: état meeting centralisé + reset");
+    const fs11 = require("fs");
+    const nodePath11 = require("path");
+    const js = fs11.readFileSync(nodePath11.join(__dirname, "..", "www", "js", "Meetings.js"), "utf8");
+    if (!js.includes("MEETING_PHASES")) throw new Error("machine à états MEETING_PHASES absente");
+    if (!js.includes("Meetings.prototype._setMeetingPhase")) throw new Error("_setMeetingPhase absente");
+    if (!js.includes("Meetings.prototype.resetMeetingState")) throw new Error("resetMeetingState absente");
+    // Les 3 consommateurs doivent déléguer au reset central (plus de blocs dispersés)
+    const missing = [];
+    for (const fn of ["leaveMeeting", "handleMeetingKicked", "handleMeetingEnded"]) {
+      const start = js.indexOf(`Meetings.prototype.${fn} = `);
+      if (start < 0) { missing.push(fn + " (absent)"); continue; }
+      const end = js.indexOf("Meetings.prototype.", start + 20);
+      const body = js.slice(start, end > 0 ? end : js.length);
+      if (!body.includes("this.resetMeetingState()")) missing.push(fn + " (sans reset central)");
+    }
+    if (missing.length) throw new Error("reset central non appelé: " + missing.join(", "));
+    // Les phases clés sont posées aux points d'entrée
+    for (const [fn, marker] of [
+      ["createMeeting", "MEETING_PHASES.CREATE"],
+      ["handleMeetingWaiting", "MEETING_PHASES.WAITING"],
+      ["showMeetingScreen", "MEETING_PHASES.LIVE"],
+      ["handleMeetingPendingApproval", "MEETING_PHASES.APPROVAL"],
+    ]) {
+      const start = js.indexOf(`Meetings.prototype.${fn} = `);
+      const end = js.indexOf("Meetings.prototype.", start + 20);
+      const body = js.slice(start, end > 0 ? end : js.length);
+      if (!body.includes(marker)) throw new Error(`phase ${marker} absente de ${fn}`);
+    }
+    passed++;
+    console.log("✅ Test 11 passé: phases machine à états + reset centralisé dans les 3 consommateurs\n");
+  } catch (error) {
+    console.error(`❌ Test 11 échoué: ${error.message}\n`);
+    failed++;
+  }
+
+  // Test 12: musique d'attente anti-blocage — binaire jamais retransmis en WS
+  try {
+    console.log("Test 12: musique d'attente — payload WS léger (URLs), pas de dataUrl en diffusion");
+    const fs12 = require("fs");
+    const nodePath12 = require("path");
+    const srv = fs12.readFileSync(nodePath12.join(__dirname, "..", "server", "serveur.js"), "utf8");
+    const cl = fs12.readFileSync(nodePath12.join(__dirname, "..", "www", "js", "Meetings.js"), "utf8");
+    // Le serveur doit décoder en Buffer une fois et diffuser des URLs
+    if (!srv.includes("decodeWaitingMusicTracks")) throw new Error("décodage serveur manquant");
+    if (!srv.includes("buildWaitingMusicPayload")) throw new Error("payload léger manquant");
+    if (!srv.includes("/waiting-music/:idx")) throw new Error("route de flux manquante");
+    if (!srv.includes("waitingMusicTokenCache")) throw new Error("token d'accès manquant");
+    // La diffusion WS ne doit plus interfacer dataUrl dans les sends aux clients
+    const sendLines = srv.split("\n").filter((l) => /ws\.send\(JSON\.stringify/.test(l) && /dataUrl/.test(l));
+    if (sendLines.length) throw new Error(`dataUrl encore diffusé aux clients (${sendLines.length} sends)`);
+    // Le client doit normaliser le nouveau format url
+    if (!cl.includes("HTTP_SERVER_URL")) throw new Error("résolution d'URL absolue manquante côté client");
+    // L'écho hôte compare par nom (dataUrl locaux vs URLs)
+    if (!cl.includes('(t.name || "") === (current[i]?.name || "")')) {
+      throw new Error("déduplication écho hôte non adaptée aux URLs");
+    }
+    passed++;
+    console.log("✅ Test 12 passé: binaire décodé une fois, diffusion par URLs + token, écho par nom\n");
+  } catch (error) {
+    console.error(`❌ Test 12 échoué: ${error.message}\n`);
     failed++;
   }
 
