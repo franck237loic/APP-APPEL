@@ -2418,7 +2418,7 @@ const meetingManager = new MeetingManager();
 // _y compris pendant meeting-create d'un invité (symptôme "le serveur bloque
 // et la réunion ne se crée pas").
 const meetingWaitingMusic = new Map();
-const MAX_WAITING_MUSIC_TRANSFER_BYTES = 90 * 1024 * 1024;
+const MAX_WAITING_MUSIC_TRANSFER_BYTES = 100 * 1024 * 1024; // aligné sur le client (Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES)
 
 // Auth légère des flux audio : token éphémère, redistribué à chaque set/arrivée.
 const waitingMusicTokenCache = new Map(); // meetingId -> token
@@ -2720,7 +2720,7 @@ app.get("/api/meeting/:meetingId/waiting-music/:idx", (req, res) => {
 // Staging : meetingId -> { tracks: [{name, mime, buf}], updatedAt }
 const waitingMusicUploads = new Map();
 const WAITING_MUSIC_UPLOAD_TTL_MS = 30 * 60 * 1000; // abandon si non finalisé
-const WAITING_MUSIC_MAX_TRACK_BYTES = 15 * 1024 * 1024; // cohérent avec le client (10 Mo conseillé)
+const WAITING_MUSIC_MAX_TRACK_BYTES = 30 * 1024 * 1024; // aligné sur le client (30 Mo / morceau)
 function pruneWaitingMusicUploads() {
   const now = Date.now();
   for (const [key, entry] of waitingMusicUploads) {
@@ -2771,7 +2771,7 @@ app.post(
       const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       if (!buf.length) return res.status(400).json({ error: "Corps audio vide" });
       if (buf.length > WAITING_MUSIC_MAX_TRACK_BYTES) {
-        return res.status(413).json({ error: "Morceau trop volumineux (max 15 Mo)" });
+        return res.status(413).json({ error: "Morceau trop volumineux (max 30 Mo)" });
       }
       const entry = waitingMusicUploads.get(meetingId) || { tracks: [], updatedAt: Date.now() };
       const replaceIdx = parseInt(req.query.replaceIdx, 10);
@@ -2786,7 +2786,7 @@ app.post(
       const total = entry.tracks.reduce((sum, t) => sum + t.buf.length, 0);
       if (total > MAX_WAITING_MUSIC_TRANSFER_BYTES) {
         waitingMusicUploads.delete(meetingId);
-        return res.status(413).json({ error: "Playlist trop volumineuse (max 90 Mo au total)" });
+        return res.status(413).json({ error: "Playlist trop volumineuse (max 100 Mo au total)" });
       }
       waitingMusicUploads.set(meetingId, entry);
       console.log(`[MEETING] Musique d'attente : morceau téléversé (${name}, ${buf.length} o, total ${Math.round(total / 1024)} Kio)`);
@@ -4258,7 +4258,7 @@ wss.on("connection", (ws) => {
               // rejeté). On ignore la playlist et on prévient l'hôte.
               decodedWaitingMusic = null;
               waitingMusicSkipped = e.message === "too-large"
-                ? "Musique d'attente ignorée : liste trop volumineuse (max 90 Mo au total)"
+                ? "Musique d'attente ignorée : liste trop volumineuse (max 100 Mo au total)"
                 : "Musique d'attente ignorée : un des morceaux est invalide";
               console.warn(`[MEETING] ${waitingMusicSkipped}`);
             }

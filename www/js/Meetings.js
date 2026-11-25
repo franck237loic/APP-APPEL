@@ -665,8 +665,8 @@ Meetings.prototype.toggleWaitingMusicLocally = function() {
 
 // Sélection des musiques par l'hôte : validation type / taille / décodage,
 // ajout à la playlist, lecture locale et diffusion aux participants.
-Meetings.WAITING_MUSIC_MAX_PER_FILE_BYTES = 10 * 1024 * 1024; // 10 Mo / morceau
-Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES = 30 * 1024 * 1024;    // 30 Mo total
+Meetings.WAITING_MUSIC_MAX_PER_FILE_BYTES = 30 * 1024 * 1024;  // 30 Mo / morceau (MP3 320 kbps ≈ 4 min, WAV courts)
+Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES = 100 * 1024 * 1024;    // 100 Mo total (≈ 10 MP3)
 Meetings.prototype.selectWaitingMusic = async function(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
@@ -682,7 +682,7 @@ Meetings.prototype.selectWaitingMusic = async function(fileList) {
   // 2) Validation de la taille (évite de saturer la WS et la RAM du serveur)
   for (const file of files) {
     if (file.size > Meetings.WAITING_MUSIC_MAX_PER_FILE_BYTES) {
-      this.showCallToast(`« ${file.name} » dépasse 10 Mo — non ajouté`);
+      this.showCallToast(`« ${file.name} » dépasse 30 Mo — non ajouté`);
       return;
     }
   }
@@ -690,7 +690,7 @@ Meetings.prototype.selectWaitingMusic = async function(fileList) {
     .reduce((sum, track) => sum + (track.dataUrl ? track.dataUrl.length * 0.75 : 0), 0);
   const newBytes = files.reduce((sum, file) => sum + file.size, 0);
   if (currentBytes + newBytes > Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES) {
-    this.showCallToast("Playlist trop lourde (max 30 Mo au total)");
+    this.showCallToast("Playlist trop lourde (max 100 Mo au total)");
     return;
   }
 
