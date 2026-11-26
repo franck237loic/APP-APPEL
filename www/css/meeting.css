@@ -3945,3 +3945,43 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 #meeting-waiting-view .waiting-room-actions {
   flex-shrink: 0 !important;
 }
+/* ============================================================
+   SALLE D'ATTENTE v7 — SCROLL GLOBAL GARANTI (TÉLÉPHONE)
+   Problème : sur téléphone, quand la salle grossit, le contenu
+   dépasse l'écran et les boutons du bas (Micro / Caméra /
+   musique / Quitter) sont coupés SANS scroll possible.
+   Causes : .app-container impose overflow:hidden et la hauteur
+   100dvh peut être ignorée par les WebView anciennes.
+   Correctif : le shell devient LE conteneur de défilement —
+   tout ce qui dépasse devient accessible en glissant, les
+   boutons ne sont plus jamais inaccessibles. Le panneau
+   participants garde son scroll interne (grille bornée).
+   ============================================================ */
+#meeting-waiting-view .waiting-room-shell {
+  height: 100% !important;   /* repli universel (toutes WebView) */
+  height: 100dvh !important; /* moderne si supporté */
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  justify-content: flex-start !important;
+}
+#meeting-waiting-view .waiting-room-content {
+  flex: 1 0 auto !important; /* grandit avec le contenu ; le shell scrolle */
+  overflow-y: visible !important;
+}
+/* Panneau participants : hauteur bornée, scroll interne de la grille
+   conservé ; réduit un peu sur téléphone pour laisser voir les boutons */
+#meeting-waiting-view .waiting-room-participants {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  max-height: min(48vh, 440px) !important;
+}
+@media (max-width: 600px) {
+  .view-container[class*="meeting-"] .waiting-room-participants {
+    min-height: clamp(200px, 38vh, 999px) !important;
+    max-height: 46vh !important;
+  }
+}
+@media (max-height: 560px) {
+  #meeting-waiting-view .waiting-room-participants { max-height: 50vh !important; }
+}
