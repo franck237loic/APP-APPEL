@@ -197,6 +197,7 @@ Meetings.prototype._uploadWaitingMusicFiles = async function(meetingId, files) {
         throw new Error(errText.error || `HTTP ${response.status}`);
       }
       console.log(`✅ [MEETING] Musique ${i + 1}/${files.length} « ${file.name} » téléversée`);
+      this.showCallToast(`📤 Musique ${i + 1}/${files.length} : « ${file.name} » envoyée`);
     } catch (error) {
       console.warn(`[MEETING] Téléversement « ${file.name} » impossible — musique non partagée :`, error);
       this.showCallToast("Musique d'attente non partagée (échec envoi)");
@@ -214,6 +215,7 @@ Meetings.prototype._uploadWaitingMusicFiles = async function(meetingId, files) {
       throw new Error(errText.error || `HTTP ${response.status}`);
     }
     console.log(`🎧 [MEETING] Musique d'attente active pour ${files.length} morceau(x)`);
+    this.showCallToast(`🎧 Musique d'attente active pour les participants (${files.length} morceau${files.length > 1 ? "x" : ""})`);
   } catch (error) {
     console.warn("[MEETING] Finalisation musique impossible :", error);
     this.showCallToast("Musique d'attente non diffusée (finalisation échouée)");
@@ -2677,6 +2679,21 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   this.waitingMusicTrackIndex = 0;
   this.waitingMusicDataUrl = waitingMusicTracks[0]?.dataUrl || null;
   this.waitingMusicTitle = waitingMusicTracks.map((track) => track.name).join(" • ");
+  this.waitingMusicLocallyEnabled = true;
+  this.waitingMusicLocallyPaused = false;
+  this.waitingMusicStoppedForMeeting = false;
+
+  // APERÇU LOCAL IMMÉDIAT : l'hôte doit ENTENDRE que la musique choisie
+  // fonctionne (sinon un fichier illisible ou un échec d'envoi passerait
+  // inaperçu). Le clic sur « Créer » compte comme geste utilisateur, donc
+  // l'autoplay est autorisé par la WebView.
+  this.playWaitingMusicLocally(0).then(() => {
+    if (this.waitingMusicBlocked) {
+      this.showCallToast("⚠️ Musique enregistrée, mais lecture bloquée — elle démarrera en salle d'attente");
+    } else {
+      this.showCallToast(`🎧 Aperçu : « ${waitingMusicTracks[0]?.name || "musique"} » joue en local`);
+    }
+  });
 
   // ANTI-SATURATION WS : les dataUrls de la musique ne passent PLUS dans le
   // message meeting-create (un message de dizaines de Mo faisait mourir le
