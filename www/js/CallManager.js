@@ -3182,6 +3182,13 @@ button, [role="button"] { cursor: pointer; }
         }
         break;
 
+      case "meeting-pending-requests":
+        // Rattrapage : toutes les demandes stockées pendant l'absence de l'hôte
+        if (window.callManager && window.callManager.handleMeetingPendingRequestsList) {
+          window.callManager.handleMeetingPendingRequestsList(data);
+        }
+        break;
+
       case "meeting-list":
         this.handleMeetingList(data);
         break;

@@ -3985,3 +3985,106 @@ body.meeting-ui-active .meeting-participants-panel .participant-action-btn {
 @media (max-height: 560px) {
   #meeting-waiting-view .waiting-room-participants { max-height: 50vh !important; }
 }
+
+/* ============================================================
+   DEMANDES D'ACCÈS — badge flottant + liste déroulante (hôte)
+   Visible sur tous les écrans hôte tant qu'il y a des demandes
+   en attente ; ouvre une liste avec Accepter / Refuser.
+   ============================================================ */
+#pending-requests-badge {
+  position: fixed;
+  top: max(60px, calc(env(safe-area-inset-top, 0px) + 54px));
+  right: 12px;
+  z-index: 4500;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border: none;
+  border-radius: 999px;
+  background: #00a884;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 6px 18px rgba(0,0,0,.35);
+  cursor: pointer;
+}
+#pending-requests-badge .pending-badge-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #fff;
+  color: #00a884;
+  font-size: 12px;
+}
+#pending-requests-panel {
+  position: fixed;
+  top: calc(max(60px, calc(env(safe-area-inset-top, 0px) + 54px)) + 46px);
+  right: 12px;
+  z-index: 4501;
+  width: min(320px, calc(100vw - 24px));
+  max-height: 55vh;
+  overflow-y: auto;
+  background: #1f2c33;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.45);
+  display: none;
+}
+#pending-requests-panel.active { display: block; }
+#pending-requests-panel .pending-requests-head {
+  position: sticky;
+  top: 0;
+  padding: 10px 12px;
+  background: #1f2c33;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+#pending-requests-panel .pending-request-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+}
+#pending-requests-panel .pending-request-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#pending-requests-panel .pending-request-name {
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#pending-requests-panel .pending-request-title {
+  color: #8696a0;
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#pending-requests-panel .pending-request-actions { display: flex; gap: 6px; flex-shrink: 0; }
+#pending-requests-panel .pending-request-accept,
+#pending-requests-panel .pending-request-deny {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+#pending-requests-panel .pending-request-accept { background: #00a884; }
+#pending-requests-panel .pending-request-deny { background: #ef5350; }

@@ -121,6 +121,10 @@ Meetings.prototype.resetMeetingState = function(opts) {
   if (window.MeetingSfu?.leave) {
     try { window.MeetingSfu.leave(); } catch (e) { console.warn("resetMeetingState sfu:", e); }
   }
+  // Demandes d'accès en attente : purge liste + badge/panneau flottant
+  this.meetingPendingRequests = [];
+  this._renderPendingApprovalRequestsUI();
+  this.closePendingRequestDialog?.();
   this._setMeetingPhase(Meetings.MEETING_PHASES.IDLE);
 };
 
@@ -1260,9 +1264,122 @@ Meetings.prototype.showMeetingApprovalWaitingView = function(data) {
 
 Meetings.prototype.handleMeetingPendingRequest = function(data) {
   console.log("📅 [MEETING] Demande d'accès reçue:", data);
+  // Ajouter à la liste déroulante des demandes en attente (badge + panneau)
+  this._addPendingApprovalRequest({
+    meetingId: data.meetingId,
+    userId: data.userId,
+    displayName: data.displayName || data.userId,
+    title: data.title || "",
+  });
   this.showCallToast(`${window.escapeHtml(data.displayName || data.userId || "Participant")} demande à rejoindre`);
   // Toujours afficher le dialogue, même si l'hôte est déjà dans la réunion
   this.showPendingRequestDialog(data);
+};
+
+/**
+ * Rattrapage serveur : liste complète des demandes stockées pendant
+ * l'absence de l'hôte (pas encore démarré, app fermée, reconnexion).
+ * data = { meetingId, title, requests: [{userId, displayName, requestedAt}] }
+ */
+Meetings.prototype.handleMeetingPendingRequestsList = function(data) {
+  console.log("📅 [MEETING] Rattrapage demandes en attente:", (data.requests || []).length);
+  const requests = Array.isArray(data.requests) ? data.requests : [];
+  requests.forEach((req) => {
+    this._addPendingApprovalRequest({
+      meetingId: data.meetingId,
+      userId: req.userId,
+      displayName: req.displayName || req.userId,
+      title: data.title || "",
+    });
+  });
+  if (requests.length) {
+    this.showCallToast(`📋 ${requests.length} demande(s) d'accès en attente — appuie sur le badge`);
+  }
+  this._renderPendingApprovalRequestsUI();
+};
+
+/** Ajoute une demande à la liste (sans doublon) + met à jour le badge. */
+Meetings.prototype._addPendingApprovalRequest = function(request) {
+  if (!request || !request.userId || !request.meetingId) return;
+  this.meetingPendingRequests = this.meetingPendingRequests || [];
+  if (this.meetingPendingRequests.some((r) => r.userId === request.userId && r.meetingId === request.meetingId)) {
+    return; // déjà listée
+  }
+  this.meetingPendingRequests.push(request);
+  this._renderPendingApprovalRequestsUI();
+};
+
+/** Retire une demande de la liste (acceptée / refusée) + met à jour le badge. */
+Meetings.prototype._removePendingApprovalRequest = function(meetingId, userId) {
+  this.meetingPendingRequests = (this.meetingPendingRequests || [])
+    .filter((r) => !(r.userId === userId && r.meetingId === meetingId));
+  this._renderPendingApprovalRequestsUI();
+};
+
+/**
+ * UI LISTE DÉROULANTE : badge flottant "N demandes" + panneau listant
+ * chaque demande avec Accepter / Refuser. Fonctionne sur TOUS les écrans
+ * hôte (réunion créée, salle d'attente, réunion live) sans toucher aux
+ * templates — élément injecté dans <body>.
+ */
+Meetings.prototype._renderPendingApprovalRequestsUI = function() {
+  const requests = this.meetingPendingRequests || [];
+  let badge = document.getElementById("pending-requests-badge");
+
+  if (!requests.length) {
+    if (badge) badge.remove();
+    const panel = document.getElementById("pending-requests-panel");
+    if (panel) panel.remove();
+    return;
+  }
+
+  if (!badge) {
+    badge = document.createElement("button");
+    badge.id = "pending-requests-badge";
+    badge.type = "button";
+    badge.addEventListener("click", () => this.togglePendingRequestsPanel());
+    document.body.appendChild(badge);
+  }
+  badge.innerHTML = `<i class="fa-solid fa-user-clock"></i> Demandes <span class="pending-badge-count">${requests.length}</span>`;
+
+  // Panneau : re-render complet à chaque changement
+  let panel = document.getElementById("pending-requests-panel");
+  const isOpen = !!(panel && panel.classList.contains("active"));
+  if (panel) panel.remove();
+  panel = document.createElement("div");
+  panel.id = "pending-requests-panel";
+  if (isOpen) panel.classList.add("active");
+  panel.innerHTML = `
+    <div class="pending-requests-head">Demandes d'accès en attente (${requests.length})</div>
+    ${requests.map((req) => `
+      <div class="pending-request-item" data-pr-user="${window.escapeHtml(req.userId || "")}" data-pr-meeting="${window.escapeHtml(req.meetingId || "")}">
+        <div class="pending-request-info">
+          <span class="pending-request-name">${window.escapeHtml(req.displayName || req.userId)}</span>
+          <span class="pending-request-title">${window.escapeHtml(req.title || "")}</span>
+        </div>
+        <div class="pending-request-actions">
+          <button type="button" class="pending-request-accept" data-pr-action="approve"><i class="fa-solid fa-check"></i></button>
+          <button type="button" class="pending-request-deny" data-pr-action="deny"><i class="fa-solid fa-times"></i></button>
+        </div>
+      </div>`).join("")}
+  `;
+  panel.addEventListener("click", (event) => {
+    const action = event.target.closest("[data-pr-action]")?.dataset.prAction;
+    if (!action) return;
+    const item = event.target.closest("[data-pr-user]");
+    if (!item) return;
+    const userId = item.dataset.prUser;
+    const meetingId = item.dataset.prMeeting;
+    if (action === "approve") this.approveMeetingRequest(meetingId, userId);
+    else this.rejectMeetingRequest(meetingId, userId);
+  });
+  document.body.appendChild(panel);
+};
+
+/** Ouvre / ferme la liste déroulante des demandes en attente. */
+Meetings.prototype.togglePendingRequestsPanel = function() {
+  const panel = document.getElementById("pending-requests-panel");
+  if (panel) panel.classList.toggle("active");
 };
 
 Meetings.prototype.handleMeetingKicked = function(data) {
@@ -1375,6 +1492,7 @@ Meetings.prototype.approveMeetingRequest = function(meetingId, userId) {
     meetingId,
     userId,
   });
+  this._removePendingApprovalRequest(meetingId, userId);
   this.closePendingRequestDialog();
   this.showCallToast("Demande acceptée");
 };
@@ -1385,6 +1503,7 @@ Meetings.prototype.rejectMeetingRequest = function(meetingId, userId) {
     meetingId,
     userId,
   });
+  this._removePendingApprovalRequest(meetingId, userId);
   this.closePendingRequestDialog();
   this.showCallToast("Demande refusée");
 };

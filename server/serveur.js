@@ -1535,6 +1535,7 @@ class MeetingManager {
   }
 
   async _notifyHostOfPendingRequest(meetingId, userId, hostId, title) {
+    const displayName = typeof getUserDisplayName === "function" ? getUserDisplayName(userId) : userId;
     const hostUser = users.get(hostId);
     if (hostUser?.ws && hostUser.ws.readyState === WebSocket.OPEN) {
       hostUser.ws.send(JSON.stringify({
@@ -1542,8 +1543,63 @@ class MeetingManager {
         meetingId,
         userId,
         title,
+        displayName,
       }));
       console.log(`📅 Notification de demande d'accès envoyée à l'hôte ${hostId}`);
+    }
+    // NOTIFICATION PUSH ANDROID : l'hôte n'est peut-être PAS connecté (pas
+    // encore démarré la réunion, app fermée) — sinon la demande restait
+    // invisible jusqu'à sa connexion. Best-effort, jamais bloquant.
+    try {
+      if (hostUser?.pushToken) {
+        await envoyerNotificationPush(
+          hostUser.pushToken,
+          "Demande d'accès à la réunion",
+          `${displayName} demande à rejoindre « ${title || "Réunion"} »`,
+          null,
+          null,
+          false,
+          null,
+          "meeting-pending-request",
+        );
+        console.log(`📅 Push demande d'accès envoyé à l'hôte ${hostId}`);
+      }
+    } catch (error) {
+      console.warn("⚠️ Push demande d'accès impossible :", error.message);
+    }
+  }
+
+  /**
+   * RATTRAPAGE : renvoyer à l'hôte TOUTES les demandes stockées dans
+   * Firestore (pendingRequests). L'hôte peut se connecter ou démarrer la
+   * réunion longtemps après les demandes : elles ne doivent jamais être
+   * perdues. Appelé quand l'hôte rejoint sa réunion / force-start /
+   * arrive en salle d'attente.
+   */
+  async _deliverPendingRequestsToHost(ws, meetingId) {
+    try {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      const doc = await db.collection("meetings").doc(meetingId).get();
+      if (!doc.exists) return;
+      const meetingData = doc.data();
+      if (meetingData.createdBy !== ws.userId) return; // hôte uniquement
+      const pendingRequests = Array.isArray(meetingData.pendingRequests)
+        ? meetingData.pendingRequests.filter(Boolean)
+        : [];
+      if (!pendingRequests.length) return;
+      ws.send(JSON.stringify({
+        type: "meeting-pending-requests",
+        meetingId,
+        title: meetingData.title || "Réunion",
+        requests: pendingRequests.map((req) => ({
+          userId: req.userId,
+          requestedAt: req.requestedAt || null,
+          displayName: typeof getUserDisplayName === "function" ? getUserDisplayName(req.userId) : req.userId,
+        })),
+      }));
+      console.log(`📅 Rattrapage : ${pendingRequests.length} demande(s) en attente renvoyée(s) à l'hôte`);
+    } catch (error) {
+      console.warn("⚠️ Rattrapage demandes en attente impossible :", error.message);
     }
   }
 
@@ -4626,6 +4682,12 @@ wss.on("connection", (ws) => {
             if (meetingSfu) broadcastSfuSwitch(meeting, result.meetingId, result.roomId, ws.userId);
             console.log(`[MEETING] meeting-joined envoyé à ${ws.userId} (salle ${result.roomId}${meetingSfu ? ", SFU" : ", mesh"})`);
 
+            // RATTRAPAGE : l'hôte qui entre dans sa réunion reçoit toutes les
+            // demandes d'accès stockées pendant son absence.
+            if (meeting.createdBy === ws.userId) {
+              meetingManager._deliverPendingRequestsToHost(ws, result.meetingId).catch(() => {});
+            }
+
             // ORDRE CRITIQUE : le client du demandeur est maintenant informé de
             // la salle live. On transfère seulement maintenant les utilisateurs
             // en attente vers la salle live (voir handoffWaitingUsers).
@@ -4655,6 +4717,12 @@ wss.on("connection", (ws) => {
               }),
             );
             console.log(`[MEETING] meeting-waiting envoyé à ${ws.userId} (${result.waitTimeMin}min restantes)`);
+
+            // RATTRAPAGE : l'hôte dans sa salle d'attente reçoit aussi les
+            // demandes stockées pendant son absence.
+            if (result.createdBy === ws.userId) {
+              meetingManager._deliverPendingRequestsToHost(ws, result.meetingId).catch(() => {});
+            }
           } else if (result.status === "pending_approval") {
             // En attente d'approbation de l'hôte
             ws.send(
@@ -4790,6 +4858,9 @@ wss.on("connection", (ws) => {
             }));
             if (meetingSfuForceStart) broadcastSfuSwitch(result, result.meetingId, result.roomId, ws.userId);
             console.log(`[MEETING] meeting-force-start OK: ${result.roomId} pour ${ws.userId}`);
+
+            // RATTRAPAGE : demandes stockées pendant l'absence de l'hôte.
+            meetingManager._deliverPendingRequestsToHost(ws, result.meetingId).catch(() => {});
 
             // ORDRE CRITIQUE : le client de l'hôte est maintenant informé de la
             // salle live. On transfère THEN seulement les utilisateurs en
