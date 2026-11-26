@@ -2735,6 +2735,7 @@ Meetings.prototype.cancelMeeting = async function() {
 Meetings.prototype.showMeetingCreatedView = function(data) {
   if (this.meetingCreatedView) {
     this.meetingCreatedView.classList.add("active");
+    this.updateWaitingMusicControls();
     return;
   }
 
@@ -2799,6 +2800,27 @@ Meetings.prototype.showMeetingCreatedView = function(data) {
             </button>
           </div>
 
+          <section class="waiting-music-controls" aria-label="Musique d'attente"
+                   style="background:#222d34; padding:12px; border-radius:10px; width:100%; text-align:left;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <strong style="color:white; font-size:13px;"><i class="fa-solid fa-music"></i> Musique d'attente</strong>
+              <span id="waiting-music-track-pos" style="color:#8696a0; font-size:12px;"></span>
+            </div>
+            <span id="meeting-waiting-music-title" class="waiting-music-title">Aucune musique sélectionnée</span>
+            <span id="waiting-music-status" class="waiting-music-status"></span>
+            <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+              <button id="meeting-waiting-music-toggle" data-created-action="music-toggle" type="button" disabled
+                      style="flex:1; min-height:38px; padding:0 12px; background:#00a884; border:none; border-radius:16px;
+                             color:white; font-size:13px; cursor:pointer;">Écouter la musique</button>
+              <button id="meeting-waiting-music-stop-local" data-created-action="music-stop-local" type="button" disabled
+                      title="Arrête la musique uniquement sur VOTRE écran — les participants continuent de l'entendre"
+                      style="flex:1; min-height:38px; padding:0 12px; background:#374045; border:none; border-radius:16px;
+                             color:white; font-size:13px; cursor:pointer;">
+                <i class="fa-solid fa-stop"></i> Stop (chez moi)
+              </button>
+            </div>
+          </section>
+
           <div style="width: 100%; display: flex; flex-direction: column; gap: 8px;">
             <button data-created-action="start"
                     style="width: 100%; padding: 12px; background: #00a884; border: none; border-radius: 20px;
@@ -2828,7 +2850,14 @@ Meetings.prototype.showMeetingCreatedView = function(data) {
     if (action === "copy-link") this.copyMeetingText(data.link, "Lien");
     if (action === "start") this.startMeeting(data.code);
     if (action === "share") this.shareMeetingLink(data.link);
+    if (action === "music-toggle") this.toggleWaitingMusicLocally();
+    if (action === "music-stop-local") {
+      this.stopWaitingMusicLocally();
+      this.showCallToast("⏹ Musique arrêtée chez vous — les participants l'entendent toujours");
+    }
   });
+  // Synchroniser les boutons musique avec l'état réel (morceaux présents ?)
+  this.updateWaitingMusicControls();
   this.meetingCreatedView.classList.add("active");
 };
 
