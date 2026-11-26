@@ -428,6 +428,83 @@ const testMeetingFlow = () => {
     failed++;
   }
 
+  // Test 15: SFU LiveKit — hybride (<= 6 mesh, > 6 SFU), dégradation gracieuse
+  try {
+    console.log("Test 15: SFU LiveKit — helpers serveur, bascule, adaptateur client");
+    const fs15 = require("fs");
+    const nodePath15 = require("path");
+    const root15 = nodePath15.join(__dirname, "..");
+
+    const server15 = fs15.readFileSync(nodePath15.join(root15, "server", "serveur.js"), "utf8");
+    // SDK LiveKit chargé de façon tolérante aux pannes
+    if (!/livekit-server-sdk/.test(server15) || !/require\(.livekit-server-sdk.\)/.test(server15)) {
+      throw new Error("require livekit-server-sdk absent ou non gardé");
+    }
+    if (!server15.includes("LIVEKIT_SFU_THRESHOLD")) {
+      throw new Error("seuil SFU (LIVEKIT_SFU_THRESHOLD) absent du serveur");
+    }
+    if (!server15.includes("function livekitConfigured()") || !server15.includes("function buildLiveKitToken(")) {
+      throw new Error("helpers LiveKit (livekitConfigured / buildLiveKitToken) absents");
+    }
+    if (!server15.includes("function meetingSfuInfo(") || !server15.includes("function broadcastSfuSwitch(")) {
+      throw new Error("meetingSfuInfo / broadcastSfuSwitch absents");
+    }
+    if (!server15.includes("meeting-sfu-switch")) {
+      throw new Error("signal meeting-sfu-switch absent du serveur");
+    }
+    if (!server15.includes("/api/meeting/:meetingId/sfu-token")) {
+      throw new Error("route REST sfu-token absente");
+    }
+    // sfu attaché aux émissions meeting-joined
+    if ((server15.match(/sfu:/g) || []).length < 4) {
+      throw new Error("sfu pas assez attaché aux émissions meeting-joined / meeting-host-started");
+    }
+    // Dégradation gracieuse : sans env, livekitConfigured doit retourner false
+    const configBlock15 = server15.slice(server15.indexOf("function livekitConfigured()"));
+    if (!configBlock15.slice(0, 400).includes("LIVEKIT_URL") || !configBlock15.slice(0, 400).includes("LIVEKIT_API_KEY")) {
+      throw new Error("livekitConfigured ne vérifie pas les variables d'environnement");
+    }
+
+    // Client : adaptateur MeetingSfu
+    const sfu15 = fs15.readFileSync(nodePath15.join(root15, "www", "js", "MeetingSfu.js"), "utf8");
+    if (!sfu15.includes("window.MeetingSfu") || !sfu15.includes("async function join(") || !sfu15.includes("async function leave(")) {
+      throw new Error("adaptateur MeetingSfu incomplet");
+    }
+    if (!sfu15.includes("LivekitClient")) {
+      throw new Error("adaptateur MeetingSfu doit utiliser window.LivekitClient");
+    }
+    if (!sfu15.includes("adaptiveStream") || !sfu15.includes("dynacast")) {
+      throw new Error("options Room (adaptiveStream/dynacast) absentes");
+    }
+
+    // Branchement côté Meetings.js
+    const meet15 = fs15.readFileSync(nodePath15.join(root15, "www", "js", "Meetings.js"), "utf8");
+    if (!meet15.includes("joinMeetingViaSfu") || !meet15.includes("handleMeetingSfuSwitch")) {
+      throw new Error("Meetings.js : joinMeetingViaSfu / handleMeetingSfuSwitch absents");
+    }
+    if (!meet15.includes("meetingSfuInfo")) {
+      throw new Error("Meetings.js : stockage meetingSfuInfo absent");
+    }
+
+    // CallManager : routage du signal de bascule
+    const call15 = fs15.readFileSync(nodePath15.join(root15, "www", "js", "CallManager.js"), "utf8");
+    if (!call15.includes('case "meeting-sfu-switch"')) {
+      throw new Error("CallManager : case meeting-sfu-switch absent");
+    }
+
+    // index.html : scripts chargés
+    const index15 = fs15.readFileSync(nodePath15.join(root15, "www", "index.html"), "utf8");
+    if (!index15.includes("js/vendor/livekit-client.umd.js") || !index15.includes("js/MeetingSfu.js")) {
+      throw new Error("index.html : script tags livekit-client / MeetingSfu absents");
+    }
+
+    passed++;
+    console.log("✅ Test 15 passé: SFU LiveKit hybride, dégradation gracieuse\n");
+  } catch (error) {
+    console.error(`❌ Test 15 échoué: ${error.message}\n`);
+    failed++;
+  }
+
   // Résumé
   console.log("=== Résumé ===");
   console.log(`✅ Passés: ${passed}`);

@@ -1,3 +1,19 @@
+// Chargeur .env minimal (sans dépendance) : lit ../.env si présent.
+// Sur Render, utiliser les variables d'environnement du dashboard (prioritaires).
+try {
+  const fsEnv = require("fs");
+  const pathEnv = require("path");
+  const envPath = pathEnv.join(__dirname, "..", ".env");
+  if (fsEnv.existsSync(envPath)) {
+    for (const line of fsEnv.readFileSync(envPath, "utf8").split(/\r?\n/)) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+      if (m && process.env[m[1]] === undefined) {
+        process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+      }
+    }
+  }
+} catch (e) { /* .env optionnel */ }
+
 const express = require("express");
 const http = require("http");
 const crypto = require("crypto");
@@ -1590,6 +1606,7 @@ class MeetingManager {
 
       const user = users.get(waitingUserId);
       if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+        const meetingSfu = meetingSfuInfo(meetingData, meetingId, roomId, waitingUserId);
         user.ws.send(JSON.stringify({
           type: "meeting-joined",
           meetingId,
@@ -1598,6 +1615,7 @@ class MeetingManager {
           title,
           code: meetingData.code,
           createdBy: excludeUserId,
+          ...(meetingSfu ? { sfu: meetingSfu } : {}),
         }));
         notifiedUsers[waitingUserId] = true;
       } else {
@@ -1748,9 +1766,18 @@ class MeetingManager {
 
       // 3) Filet de sécurité pour anciens clients : "l'hôte a démarré"
       if (accessPolicy !== "approval") {
+        // SFU au besoin (réunion > 6) : lire les invités prévus.
+        let sfuMeetingInfo = null;
+        try {
+          const sfuMeetingDoc = await db.collection("meetings").doc(meetingId).get();
+          sfuMeetingInfo = sfuMeetingDoc.exists ? sfuMeetingDoc.data() : null;
+        } catch (error) { /* best effort */ }
         for (const waitingUserId of waitingUsers) {
           const user = users.get(waitingUserId);
           if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+            const meetingSfuFallback = sfuMeetingInfo
+              ? meetingSfuInfo(sfuMeetingInfo, meetingId, roomId, waitingUserId)
+              : null;
             user.ws.send(JSON.stringify({
               type: "meeting-host-started",
               meetingId,
@@ -1758,6 +1785,7 @@ class MeetingManager {
               hostId: hostUserId,
               title,
               isVideo,
+              ...(meetingSfuFallback ? { sfu: meetingSfuFallback } : {}),
             }));
           }
         }
@@ -2349,6 +2377,8 @@ class MeetingManager {
             isVideo: meeting.isVideo,
             title: meeting.title,
              code: meeting.code,
+            ...(meetingSfuInfo(meeting, doc.id, meeting.roomId, userId)
+              ? { sfu: meetingSfuInfo(meeting, doc.id, meeting.roomId, userId) } : {}),
           }));
 
           // Marquer comme notifié
@@ -2489,6 +2519,128 @@ function notifyWaitingMusicStopped(meetingId, waitingUsers = [], hostId = null) 
     if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
       user.ws.send(JSON.stringify({ type: "meeting-waiting-music-stop", meetingId }));
     }
+  }
+}
+
+// =========================================================
+// SFU LIVEKIT — réunions au-delà du mesh WebRTC (6 participants)
+// Le mesh reste utilisé jusqu'à 6 participants. Au-delà (ou si la
+// réunion est créée pour plus de 6 invités), les flux passent par
+// un serveur SFU LiveKit Cloud. Sans configuration (variables
+// LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET), tout reste
+// en mesh : AUCUN changement de comportement pour l'existant.
+// =========================================================
+const LIVEKIT_SFU_THRESHOLD = 6;
+let LiveKitAccessToken = null;
+try {
+  LiveKitAccessToken = require("livekit-server-sdk").AccessToken;
+} catch (error) {
+  console.warn("[SFU] livekit-server-sdk non chargé : SFU indisponible, mesh uniquement");
+}
+function livekitConfigured() {
+  return !!(
+    LiveKitAccessToken
+    && process.env.LIVEKIT_URL
+    && process.env.LIVEKIT_API_KEY
+    && process.env.LIVEKIT_API_SECRET
+  );
+}
+function buildLiveKitToken(meetingId, identity, displayName) {
+  if (!livekitConfigured()) return null;
+  try {
+    // JWT HS256 signé avec crypto (synchrone). Le SDK v2 renvoie une Promise
+    // depuis toJwt(), incompatible avec nos appels synchrones.
+    const apiKey = process.env.LIVEKIT_API_KEY;
+    const apiSecret = process.env.LIVEKIT_API_SECRET;
+    const now = Math.floor(Date.now() / 1000);
+    const header = { alg: "HS256", typ: "JWT" };
+    const payload = {
+      iss: apiKey,
+      sub: String(identity),
+      name: String(displayName || identity).slice(0, 60),
+      jti: `${String(identity).slice(0, 40)}_${now}`,
+      nbf: now - 10,
+      exp: now + 6 * 3600,
+      video: {
+        roomJoin: true,
+        room: `meeting_${meetingId}`,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+      },
+    };
+    const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString("base64url");
+    const data = `${b64(header)}.${b64(payload)}`;
+    const signature = crypto.createHmac("sha256", apiSecret).update(data).digest("base64url");
+    return `${data}.${signature}`;
+  } catch (error) {
+    console.error("[SFU] Erreur génération token LiveKit :", error.message);
+    return null;
+  }
+}
+function livekitMeetingRoomName(meetingId) {
+  return `meeting_${meetingId}`;
+}
+/**
+ * Décide si un utilisateur doit rejoindre la réunion via SFU :
+ * - LiveKit configuré, ET
+ * - la salle live a déjà atteint le seuil mesh (6), OU la réunion est
+ *   planifiée pour plus de 6 invités (participants + hôte).
+ * Sinon retourne null : mode mesh inchangé.
+ */
+function meetingSfuInfo(meetingInfo, meetingId, roomId, userId) {
+  if (!livekitConfigured() || !meetingId || !roomId) return null;
+  const room = roomManager.rooms.get(roomId);
+  const liveCount = room ? room.participants.size : 0;
+  const invited = Array.isArray(meetingInfo?.participants) ? meetingInfo.participants.length : 0;
+  if (liveCount < LIVEKIT_SFU_THRESHOLD && invited < LIVEKIT_SFU_THRESHOLD) return null;
+  const token = buildLiveKitToken(meetingId, userId, getUserDisplayName(userId));
+  if (!token) return null;
+  return {
+    url: process.env.LIVEKIT_URL,
+    roomName: livekitMeetingRoomName(meetingId),
+    token,
+    threshold: LIVEKIT_SFU_THRESHOLD,
+  };
+}
+/**
+ * Bascule les participants DÉJÀ en mesh vers le SFU (envoi meeting-sfu-switch
+ * à chaque présent de la salle live). Le client quitte le mesh (mais pas la
+ * réunion) et se connecte à LiveKit.
+ */
+function broadcastSfuSwitch(meetingInfo, meetingId, roomId, excludeUserId = null) {
+  if (!livekitConfigured()) return;
+  try {
+    const room = roomManager.rooms.get(roomId);
+    if (!room) return;
+    const invited = Array.isArray(meetingInfo?.participants) ? meetingInfo.participants.length : 0;
+    if (room.participants.size < LIVEKIT_SFU_THRESHOLD && invited < LIVEKIT_SFU_THRESHOLD) return;
+    const targets = Array.from(room.participants.keys()).filter((id) => id && id !== excludeUserId);
+    for (const participantId of targets) {
+      const token = buildLiveKitToken(meetingId, participantId, getUserDisplayName(participantId));
+      if (!token) continue;
+      const user = users.get(participantId);
+      if (user?.ws && user.ws.readyState === WebSocket.OPEN) {
+        user.ws.send(JSON.stringify({
+          type: "meeting-sfu-switch",
+          meetingId,
+          roomId,
+          isVideo: !!meetingInfo?.isVideo,
+          title: meetingInfo?.title || "Réunion",
+          code: meetingInfo?.code || null,
+          createdBy: meetingInfo?.createdBy || null,
+          sfu: {
+            url: process.env.LIVEKIT_URL,
+            roomName: livekitMeetingRoomName(meetingId),
+            token,
+            threshold: LIVEKIT_SFU_THRESHOLD,
+          },
+        }));
+      }
+    }
+    console.log(`[SFU] Réunion ${meetingId} basculée vers LiveKit (${targets.length} présent(s) notifié(s))`);
+  } catch (error) {
+    console.error("[SFU] Erreur bascule SFU :", error.message);
   }
 }
 
@@ -2827,6 +2979,40 @@ app.post("/api/meeting/:meetingId/waiting-music-finalize", async (req, res) => {
     res.json({ ok: true, count: decoded.length });
   } catch (error) {
     console.error("❌ Erreur finalisation musique d'attente :", error);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
+});
+
+// Token SFU LiveKit à la demande : bascule tardive, reconnexion après une
+// coupure pendant une réunion SFU, ou token expiré (TTL 6 h).
+app.get("/api/meeting/:meetingId/sfu-token", async (req, res) => {
+  try {
+    const { meetingId } = req.params;
+    const userId = String(req.query.userId || "");
+    const regToken = String(req.query.token || "");
+    if (!userId || !validateAuthToken(userId, regToken)) {
+      return res.status(403).json({ error: "Authentification invalide ou expirée" });
+    }
+    if (!livekitConfigured()) {
+      return res.status(503).json({ error: "SFU non configuré sur ce serveur" });
+    }
+    const doc = await db.collection("meetings").doc(meetingId).get();
+    if (!doc.exists) return res.status(404).json({ error: "Réunion introuvable" });
+    const meeting = doc.data();
+    if (meeting.status !== "live" || !meeting.roomId) {
+      return res.status(409).json({ error: "Réunion non active" });
+    }
+    const lkToken = buildLiveKitToken(meetingId, userId, getUserDisplayName(userId));
+    if (!lkToken) return res.status(503).json({ error: "Génération du token SFU impossible" });
+    console.log(`[SFU] Token SFU délivré à ${userId} pour ${meetingId}`);
+    res.json({
+      ok: true,
+      url: process.env.LIVEKIT_URL,
+      roomName: livekitMeetingRoomName(meetingId),
+      token: lkToken,
+    });
+  } catch (error) {
+    console.error("❌ Erreur API sfu-token :", error);
     res.status(500).json({ error: "Erreur serveur" });
   }
 });
@@ -4421,7 +4607,10 @@ wss.on("connection", (ws) => {
           const result = await meetingManager.join(code, ws.userId);
 
           if (result.success) {
-            // Réunion live : retourner roomId pour enchaîner sur group-join
+            // Réunion live : retourner roomId pour enchaîner sur group-join.
+            // Au-delà du seuil mesh, `sfu` est fourni : le client joints
+            // LiveKit au lieu du mesh, et les présents sont basculés.
+            const meetingSfu = meetingSfuInfo(meeting, result.meetingId, result.roomId, ws.userId);
             ws.send(
               JSON.stringify({
                 type: "meeting-joined",
@@ -4431,9 +4620,11 @@ wss.on("connection", (ws) => {
                 title: result.title,
                 code: result.code,
                 createdBy: result.createdBy,
+                ...(meetingSfu ? { sfu: meetingSfu } : {}),
               }),
             );
-            console.log(`[MEETING] meeting-joined envoyé à ${ws.userId} (salle ${result.roomId})`);
+            if (meetingSfu) broadcastSfuSwitch(meeting, result.meetingId, result.roomId, ws.userId);
+            console.log(`[MEETING] meeting-joined envoyé à ${ws.userId} (salle ${result.roomId}${meetingSfu ? ", SFU" : ", mesh"})`);
 
             // ORDRE CRITIQUE : le client du demandeur est maintenant informé de
             // la salle live. On transfère seulement maintenant les utilisateurs
@@ -4586,6 +4777,7 @@ wss.on("connection", (ws) => {
           const result = await meetingManager.forceStart(code, ws.userId);
 
           if (result.success) {
+            const meetingSfuForceStart = meetingSfuInfo(result, result.meetingId, result.roomId, ws.userId);
             ws.send(JSON.stringify({
               type: "meeting-joined",
               meetingId: result.meetingId,
@@ -4594,7 +4786,9 @@ wss.on("connection", (ws) => {
               title: result.title,
               code: result.code,
               createdBy: result.createdBy || ws.userId,
+              ...(meetingSfuForceStart ? { sfu: meetingSfuForceStart } : {}),
             }));
+            if (meetingSfuForceStart) broadcastSfuSwitch(result, result.meetingId, result.roomId, ws.userId);
             console.log(`[MEETING] meeting-force-start OK: ${result.roomId} pour ${ws.userId}`);
 
             // ORDRE CRITIQUE : le client de l'hôte est maintenant informé de la
@@ -4737,6 +4931,7 @@ wss.on("connection", (ws) => {
             // le client WebRTC ; l'ajout côté serveur seul laisse l'invité sur
             // « Connexion… » sans aucun pair actif.
             if (result.hostNeedsJoin) {
+              const meetingSfuApprove = meetingSfuInfo(result, meetingId, result.roomId, ws.userId);
               ws.send(JSON.stringify({
                 type: "meeting-joined",
                 meetingId,
@@ -4745,6 +4940,7 @@ wss.on("connection", (ws) => {
                 title: result.title,
                 code: result.code,
                 createdBy: result.createdBy,
+                ...(meetingSfuApprove ? { sfu: meetingSfuApprove } : {}),
               }));
             }
 

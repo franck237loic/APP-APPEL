@@ -3175,6 +3175,13 @@ button, [role="button"] { cursor: pointer; }
         }
         break;
 
+      case "meeting-sfu-switch":
+        // Bascule mesh -> SFU LiveKit (handler défini dans Meetings.js)
+        if (window.callManager && window.callManager.handleMeetingSfuSwitch) {
+          window.callManager.handleMeetingSfuSwitch(data);
+        }
+        break;
+
       case "meeting-list":
         this.handleMeetingList(data);
         break;
@@ -9146,6 +9153,11 @@ showLocalStorageOnScreen = () => {
     this.stopGroupTimer();
     this.stopGroupSpeakerDetection();
     this.closeAllGroupPeers();
+
+    // SFU LiveKit : quitter la session SFU si la réunion y était connectée
+    if (window.MeetingSfu?.leave) {
+      try { window.MeetingSfu.leave(); } catch (e) { /* ignore */ }
+    }
 
     if (this.groupLocalStream) {
       this.groupLocalStream.getTracks().forEach((t) => t.stop());

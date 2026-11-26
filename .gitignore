@@ -39,3 +39,6 @@ test_group_call.js
 
 serviceAccountKey.json
 www/js/serviceAccountKey.json
+
+# Variables d'environnement locales (credentials)
+.env

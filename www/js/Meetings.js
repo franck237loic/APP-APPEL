@@ -116,6 +116,11 @@ Meetings.prototype.resetMeetingState = function(opts) {
   // Musique d'attente : purge complète (aucun son résiduel)
   this.stopWaitingMusicLocally();
   this._destroyWaitingMusicNode();
+  // SFU LiveKit : purge de la session si elle est encore connectée/no-op sinon
+  this.meetingSfuInfo = null;
+  if (window.MeetingSfu?.leave) {
+    try { window.MeetingSfu.leave(); } catch (e) { console.warn("resetMeetingState sfu:", e); }
+  }
   this._setMeetingPhase(Meetings.MEETING_PHASES.IDLE);
 };
 
@@ -350,6 +355,18 @@ Meetings.prototype.handleMeetingJoined = async function(data) {
   // Préparer le roster temporaire
   this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
 
+  // ---------- SFU (LiveKit) : réunions prévues pour plus de 6 participants ----------
+  // Le serveur fournit data.sfu = { url, roomName, token, threshold } quand la
+  // réunion doit passer par le SFU. Sinon, flux mesh habituel.
+  if (data.sfu && data.sfu.token && window.MeetingSfu) {
+    this.meetingSfuInfo = data.sfu;
+    console.log("🛰️ [MEETING] Réunion en mode SFU (LiveKit), salon:", data.sfu.roomName);
+    this.showMeetingScreen(data);
+    this.joinMeetingViaSfu(data);
+    return;
+  }
+  this.meetingSfuInfo = null;
+
   // Enchaîner sur l'appel de groupe existant
   this.groupJoinPending = true;
   clearTimeout(this.groupRequestTimer);
@@ -365,6 +382,58 @@ Meetings.prototype.handleMeetingJoined = async function(data) {
 
   // Afficher l'écran de réunion spécifique (Google Meet style)
   this.showMeetingScreen(data);
+};
+
+/**
+ * Bascule la réunion courante vers le SFU LiveKit.
+ * @param {Object} data payload de meeting-joined / meeting-sfu-switch
+ */
+Meetings.prototype.joinMeetingViaSfu = function(data) {
+  const sfu = data.sfu || this.meetingSfuInfo;
+  if (!sfu || !sfu.token || !window.MeetingSfu) {
+    console.warn("🛰️ [SFU] Infos SFU absentes — repli mesh");
+    return false;
+  }
+  window.MeetingSfu.join(sfu, {
+    localStream: this.groupLocalStream,
+    isVideo: this.groupIsVideo,
+    onFailure: () => {
+      console.warn("🛰️ [SFU] Échec — repli sur le mesh");
+      this.showCallToast("Connexion SFU impossible — bascule en mode normal");
+      // Repli mesh : envoyer le group-join si pas encore fait côté mesh.
+      if (data.roomId && this.groupRoomId === data.roomId && !this.groupJoinPending) {
+        this.groupJoinPending = true;
+        this.sendSignal({ type: "group-join", roomId: data.roomId });
+      }
+    },
+  });
+  return true;
+};
+
+/**
+ * Réception de meeting-sfu-switch : les participants déjà présents en mesh
+ * basculent tous vers le SFU sans quitter la réunion.
+ * @param {Object} data { roomId, meetingId, sfu: { url, roomName, token } }
+ */
+Meetings.prototype.handleMeetingSfuSwitch = function(data) {
+  console.log("🛰️ [SFU] Bascule mesh → SFU demandée pour", data.meetingId);
+  if (!data.sfu || !data.sfu.token || !window.MeetingSfu) {
+    console.warn("🛰️ [SFU] Bascule impossible (infos/manque SDK) — on reste en mesh");
+    return;
+  }
+  this.meetingSfuInfo = data.sfu;
+  // 1) Quitter le mesh SANS terminer la réunion : on garde l'UI, l'état
+  //    groupIsMeeting / groupRoomId et le flux local.
+  if (this.groupRoomId) {
+    this.sendSignal({ type: "group-leave", roomId: this.groupRoomId });
+  }
+  if (window.callManager && typeof window.callManager.closeAllGroupPeers === "function") {
+    try { window.callManager.closeAllGroupPeers(); } catch (e) { console.warn("closeAllGroupPeers:", e); }
+  }
+  this.groupRoster = [{ userId: this.myId, state: "JOINED" }];
+  // 2) Rejoindre le SFU avec le flux local existant.
+  this.showMeetingScreen({ roomId: data.roomId, meetingId: data.meetingId });
+  this.joinMeetingViaSfu(data);
 };
 
 Meetings.prototype.handleMeetingReconnect = async function(data) {
