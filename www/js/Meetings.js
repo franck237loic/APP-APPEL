@@ -890,6 +890,8 @@ Meetings.prototype.updateWaitingMusicControls = function() {
 
   const hostStop = document.getElementById("meeting-waiting-music-stop-all");
   if (hostStop) hostStop.disabled = !hasTracks;
+  const hostStopLocal = document.getElementById("meeting-waiting-music-stop-local");
+  if (hostStopLocal) hostStopLocal.disabled = !hasTracks || !(this.waitingMusicLocallyEnabled || this.waitingMusicLocallyPaused);
 
   const trackPos = document.getElementById("waiting-music-track-pos");
   if (trackPos && hasTracks) {
@@ -3402,7 +3404,11 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
                   <i class="fa-solid fa-play"></i> Activer la musique
                 </button>
                 <button id="meeting-waiting-music-toggle" type="button" class="waiting-music-toggle" disabled>Écouter la musique</button>
-                ${isCreator ? `<button id="meeting-waiting-music-stop-all" type="button" class="waiting-music-stop-all" disabled><i class="fa-solid fa-stop"></i> Arrêter chez tout le monde</button>` : ""}
+                ${isCreator ? `
+                  <button id="meeting-waiting-music-stop-local" type="button" class="waiting-music-stop-all" disabled title="Arrête la musique uniquement sur VOTRE écran — les participants continuent de l'entendre">
+                    <i class="fa-solid fa-stop"></i> Stop (chez moi)
+                  </button>
+                  <button id="meeting-waiting-music-stop-all" type="button" class="waiting-music-stop-all" disabled><i class="fa-solid fa-stop"></i> Arrêter chez tout le monde</button>` : ""}
               </div>
               <div class="waiting-music-volume-row" id="waiting-music-volume-row" style="display:none">
                 <i class="fa-solid fa-volume-low"></i>
@@ -3442,6 +3448,15 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
   if (musicUnlock) musicUnlock.addEventListener("click", () => this.unlockWaitingMusic());
   const stopAll = this.meetingWaitingView.querySelector("#meeting-waiting-music-stop-all");
   if (stopAll) stopAll.addEventListener("click", () => this.stopWaitingMusicForEveryone());
+  // Stop LOCAL de l'hôte : coupe la musique chez lui uniquement —
+  // les participants en salle d'attente continuent de l'entendre.
+  const stopLocal = this.meetingWaitingView.querySelector("#meeting-waiting-music-stop-local");
+  if (stopLocal) {
+    stopLocal.addEventListener("click", () => {
+      this.stopWaitingMusicLocally();
+      this.showCallToast("⏹ Musique arrêtée chez vous — les participants l'entendent toujours");
+    });
+  }
   const volume = this.meetingWaitingView.querySelector("#waiting-music-volume");
   if (volume) {
     volume.addEventListener("input", () => this.setWaitingMusicVolume(volume.value));
