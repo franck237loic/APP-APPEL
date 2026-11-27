@@ -2176,25 +2176,48 @@ class MeetingManager {
       await db.collection("meetings").doc(meetingId).update({ approvedUsers });
     }
 
+    // RÉUNION PAS ENCORE DÉMARRÉE : ne PAS lancer la réunion automatiquement.
+    // L'invité approuvé est simplement placé en salle d'attente ; il entrera
+    // dans la salle live quand l'hôte cliquera sur « Démarrer ».
+    if (meeting.status !== "live" || !meeting.roomId) {
+      const now = Date.now();
+      await this._addWaitingUser(meetingId, userId);
+      const waitingRoomId = `room_waiting_${meetingId}`;
+      if (!roomManager.rooms.has(waitingRoomId)) {
+        roomManager.rooms.set(waitingRoomId, { roomId: waitingRoomId, creatorId: null, isVideo: meeting.isVideo, isMeeting: true, isWaitingRoom: true, createdAt: now, endsAt: meeting.endsAt, participants: new Map() });
+      }
+      roomManager.leaveUserFromOtherRooms(userId, waitingRoomId);
+      roomManager.join(waitingRoomId, userId);
+      const meetingStart = meeting.scheduledAt || now;
+      const waitTimeMs = Math.max(0, meetingStart - now);
+      console.log(`📅 [MEETING] Invité ${userId} approuvé par l'hôte -> salle d'attente (réunion non démarrée)`);
+      return {
+        success: true,
+        approvedWaiting: true,
+        meetingId,
+        title: meeting.title,
+        code: meeting.code,
+        createdBy: meeting.createdBy,
+        isVideo: meeting.isVideo,
+        scheduledAt: meeting.scheduledAt,
+        serverNow: now,
+        opensAt: meetingStart,
+        startsAt: meetingStart,
+        waitingRoomId,
+        waitTimeMs,
+        waitTimeMin: Math.ceil(waitTimeMs / 60000),
+      };
+    }
+
+    // RÉUNION DÉJÀ LIVE : l'invité rejoint directement la salle.
     let roomId = meeting.roomId;
     let hostNeedsJoin = false;
-    if (meeting.status === "scheduled" || !roomId) {
-      const endsAt = meeting.endsAt || (Date.now() + (meeting.durationMin || 60) * 60 * 1000);
-      const room = roomManager.createMeetingRoom(meetingId, meeting.isVideo, endsAt);
-      roomManager.join(room.roomId, hostId); // hôte aussi si salle créée
-      roomManager.leaveUserFromOtherRooms(userId, room.roomId);
-      roomManager.join(room.roomId, userId);
-      roomId = room.roomId;
+    if (!roomManager.rooms.get(roomId)) {
+      roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
+      roomManager.join(roomId, hostId);
       hostNeedsJoin = true;
-      await db.collection("meetings").doc(meetingId).update({ status: "live", roomId });
-    } else {
-      if (!roomManager.rooms.get(roomId)) {
-        roomManager.createMeetingRoom(meetingId, meeting.isVideo, meeting.endsAt);
-        roomManager.join(roomId, hostId);
-        hostNeedsJoin = true;
-      }
-      roomManager.join(roomId, userId);
     }
+    roomManager.join(roomId, userId);
 
     return {
       success: true,
@@ -4998,6 +5021,43 @@ wss.on("connection", (ws) => {
           const result = await meetingManager.approveRequest(meetingId, userId, ws.userId);
 
           if (result.success) {
+            // CAS APPROUVÉ MAIS RÉUNION NON DÉMARRÉE : l'invité est placé en
+            // salle d'attente. On lui envoie un vrai meeting-waiting (avec la
+            // musique d'attente) et on NE démarre PAS la réunion : ni
+            // meeting-joined à l'hôte, ni meeting-approval-granted à l'invité.
+            if (result.approvedWaiting) {
+              const participantApproved = users.get(userId);
+              if (participantApproved?.ws && participantApproved.ws.readyState === WebSocket.OPEN) {
+                participantApproved.ws.send(JSON.stringify({
+                  type: "meeting-waiting",
+                  waitTimeMs: result.waitTimeMs,
+                  waitTimeMin: result.waitTimeMin,
+                  scheduledAt: result.scheduledAt,
+                  code: result.code,
+                  meetingId: result.meetingId,
+                  serverNow: result.serverNow,
+                  opensAt: result.opensAt,
+                  startsAt: result.startsAt,
+                  waitingRoomId: result.waitingRoomId,
+                  isVideo: result.isVideo,
+                  title: result.title,
+                  createdBy: result.createdBy,
+                  approvedByHost: true,
+                  // PAYLOAD LÉGER : URLs de flux, jamais le binaire (anti-blocage).
+                  waitingMusic: buildWaitingMusicPayload(result.meetingId),
+                }));
+                console.log(`[MEETING] meeting-waiting envoyé à ${userId} (approuvé, réunion non démarrée)`);
+              }
+              // Confirmer à l'hôte (sans lancer la réunion)
+              ws.send(JSON.stringify({
+                type: "meeting-approval-sent",
+                meetingId,
+                userId,
+                placedInWaitingRoom: true,
+              }));
+              return;
+            }
+
             // Si l'approbation a démarré la salle, l'hôte doit aussi rejoindre
             // le client WebRTC ; l'ajout côté serveur seul laisse l'invité sur
             // « Connexion… » sans aucun pair actif.

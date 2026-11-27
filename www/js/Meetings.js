@@ -509,6 +509,21 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
 
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
+
+  // Cas « approuvé par l'hôte alors que la réunion n'est pas encore démarrée » :
+  // on ferme l'écran de demande d'accès (le participant passe en salle d'attente,
+  // la réunion ne démarre PAS tant que l'hôte n'a pas cliqué sur « Démarrer »).
+  if (data.approvedByHost) {
+    this.meetingApprovalPending = false;
+    if (this.meetingApprovalView) {
+      this.meetingApprovalView.remove();
+      this.meetingApprovalView = null;
+    }
+    if (typeof this.showCallToast === "function") {
+      this.showCallToast("Approuvé par l'hôte — en salle d'attente");
+    }
+  }
+
   if (data.waitingRoomId && data.waitingRoomId !== this.meetingWaitingRoomId) {
     this.groupIsMeeting = true;
     this.groupIsVideo = !!data.isVideo;
