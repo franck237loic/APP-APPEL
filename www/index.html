@@ -28,8 +28,13 @@
 
   <script src="cordova.js"></script>
   <script src="js/effet.js"></script>
-  <!-- SDK LiveKit (SFU pour réunions > 6 participants) — AVANT CallManager -->
-  <script src="js/vendor/livekit-client.umd.js"></script>
+  <!-- SDK LiveKit (SFU pour réunions > 6 participants) — AVANT CallManager.
+       Chargé depuis le CDN en version FIGÉE (2.13.3 = la version validée par
+       la page de test) pour éviter qu'une mise à jour du CDN ne casse
+       MeetingSfu.js. Si le CDN est inaccessible, repli automatique sur la
+       copie locale js/vendor/livekit-client.umd.js. -->
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.13.3/dist/livekit-client.umd.min.js"
+          onerror="var s=document.createElement('script');s.src='js/vendor/livekit-client.umd.js';document.head.appendChild(s);"></script>
   <!-- Adaptateur SFU -->
   <script src="js/MeetingSfu.js"></script>
   <!-- CallManager remplace l'ancien index.js : HTML+CSS+WebRTC+UI complets -->
