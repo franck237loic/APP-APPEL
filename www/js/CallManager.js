@@ -2678,8 +2678,14 @@ button, [role="button"] { cursor: pointer; }
     const withTimeout = (url, ms) => {
       const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
       const t = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
-      return fetch(url, { method: "GET", cache: "no-cache", ...(ctrl ? { signal: ctrl.signal } : {}) })
-        .then((res) => { if (t) clearTimeout(t); return { ok: true, status: res.status }; })
+      // mode "no-cors" INDISPENSABLE dans la WebView Cordova (origine
+      // https://localhost) : sans lui, toute réponse sans en-têtes CORS
+      // (Google, Render...) renvoyait "Failed to fetch" même quand le
+      // réseau fonctionnait, d'où le faux diagnostic « aucune connexion
+      // internet ». En no-cors, la promesse réussit dès que la requête
+      // réseau aboutit (réponse opaque, statut non lisible — suffisant).
+      return fetch(url, { method: "GET", mode: "no-cors", cache: "no-cache", ...(ctrl ? { signal: ctrl.signal } : {}) })
+        .then(() => { if (t) clearTimeout(t); return { ok: true, status: "réseau OK" }; })
         .catch((err) => {
           if (t) clearTimeout(t);
           return { ok: false, error: err && err.name === "AbortError" ? `timeout ${ms} ms` : (err && (err.message || String(err))) };
