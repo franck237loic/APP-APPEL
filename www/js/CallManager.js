@@ -1874,6 +1874,7 @@ button, [role="button"] { cursor: pointer; }
     this.reconnectTimer = null;
     this._wsConnectWatchdog = null; // Garde-fou connexion bloquée en CONNECTING
     this._networkListenersInstalled = false; // Écouteurs online/offline posés ?
+    this._lastNetworkDiag = 0; // Horodatage du dernier diagnostic réseau
     this.heartbeatTimer = null;
     this.manuallyClosed = false;
     this.deviceToken = null;
@@ -2664,6 +2665,44 @@ button, [role="button"] { cursor: pointer; }
    SIGNALISATION WEBSOCKET
 ========================================================= */
 
+  // Diagnostic réseau en cas d'échec de connexion : distingue
+  // 1) "aucun accès internet" (données mobiles désactivées, APN, crédit) ;
+  // 2) "internet OK mais serveur injoignable" (DNS, blocage opérateur,
+  //    Render endormi — démarrage à froid jusqu'à ~60 s) ;
+  // 3) "serveur HTTP OK mais WebSocket bloqué" (proxy/opérateur).
+  // Limité à une exécution par minute pour ne pas spammer les logs.
+  _diagnoseNetworkFailure = async () => {
+    if (this._lastNetworkDiag && Date.now() - this._lastNetworkDiag < 60000) return;
+    this._lastNetworkDiag = Date.now();
+    console.log("🔬 [DIAG] Connexion échouée — début diagnostic réseau...");
+    const withTimeout = (url, ms) => {
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const t = ctrl ? setTimeout(() => ctrl.abort(), ms) : null;
+      return fetch(url, { method: "GET", cache: "no-cache", ...(ctrl ? { signal: ctrl.signal } : {}) })
+        .then((res) => { if (t) clearTimeout(t); return { ok: true, status: res.status }; })
+        .catch((err) => {
+          if (t) clearTimeout(t);
+          return { ok: false, error: err && err.name === "AbortError" ? `timeout ${ms} ms` : (err && (err.message || String(err))) };
+        });
+    };
+    const [internet, server] = await Promise.all([
+      withTimeout("https://www.google.com/generate_204", 8000),
+      withTimeout(CallManager.HTTP_SERVER_URL, 20000),
+    ]);
+    console.log("🔬 [DIAG] Internet général (google generate_204) :", JSON.stringify(internet));
+    console.log("🔬 [DIAG] Serveur Render (HTTP) :", JSON.stringify(server));
+    if (!internet.ok) {
+      console.warn("🔬 [DIAG] CONCLUSION : aucune connexion internet — vérifie les données mobiles / APN / crédit Orange");
+      this.updateStatus("Pas d'internet — vérifie tes données mobiles");
+    } else if (!server.ok) {
+      console.warn("🔬 [DIAG] CONCLUSION : internet OK mais " + CallManager.HTTP_SERVER_URL + " injoignable — DNS/blocage opérateur ou Render endormi (démarrage à froid ~60 s, les tentatives continuent)");
+      this.updateStatus("Serveur injoignable — nouvelle tentative...");
+    } else {
+      console.warn("🔬 [DIAG] CONCLUSION : le serveur répond en HTTP — seul le WebSocket est bloqué (proxy ou filtre opérateur)");
+      this.updateStatus("Connexion WebSocket bloquée — nouvelle tentative...");
+    }
+  };
+
   // Écouteurs de changement de réseau (Cordova + navigateur). Quand on passe
   // du WiFi aux données mobiles (ou l'inverse), l'ancienne connexion TCP meurt
   // souvent en silence : sans ces écouteurs, l'application restait déconnectée
@@ -2771,6 +2810,10 @@ button, [role="button"] { cursor: pointer; }
 
     const wsOptions = {
       url: CallManager.SIGNALING_SERVER_URL,
+      // ReadTimeout OkHttp : sans lui, un handshake qui pend (réseau mobile
+      // lent, DNS bloqué) restait suspendu indéfiniment jusqu'au garde-fou.
+      // 15 s => échec rapide puis relance automatique.
+      timeout: 15000,
       // Ping/pong au niveau protocole (OkHttp/SocketRocket) pour détecter une
       // connexion morte même quand aucune frame de fermeture n'est reçue —
       // en plus du ping/pong applicatif JSON déjà géré par handleSignalMessage.
@@ -2836,6 +2879,7 @@ button, [role="button"] { cursor: pointer; }
           clearTimeout(this.groupRequestTimer);
           if (!this.manuallyClosed) {
             this.scheduleReconnect();
+            this._diagnoseNetworkFailure().catch(() => {});
           }
           break;
       }
@@ -2868,13 +2912,14 @@ button, [role="button"] { cursor: pointer; }
 
     // failureCallback : échec de la connexion initiale
     const onFailure = (error) => {
-      console.error("❌ Erreur création WebSocket :", error);
+      console.error("❌ Erreur création WebSocket :", error, JSON.stringify(error || {}));
       if (this._wsConnectWatchdog) { clearTimeout(this._wsConnectWatchdog); this._wsConnectWatchdog = null; }
       this.stopHeartbeat();
       this.wsId = null;
       this.wsReadyState = WebSocket.CLOSED;
       if (!this.manuallyClosed) {
         this.scheduleReconnect();
+        this._diagnoseNetworkFailure().catch(() => {});
       }
       if (typeof onSettle === "function") onSettle();
     };
