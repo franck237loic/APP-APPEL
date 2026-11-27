@@ -1626,8 +1626,12 @@ class MeetingManager {
     for (const waitingUserId of waitingUsers) {
       if (excludeUserId && waitingUserId === excludeUserId) continue;
 
-      // Mode approbation : ne PAS auto-joindre — demander l'accord de l'hôte
-      if (needsApproval) {
+      // Mode approbation : les invités NON approuvés ne sont PAS auto-join —
+      // on demande l'accord de l'hôte. Ceux DÉJÀ approuvés (ex: acceptés avant
+      // le démarrage pendant qu'ils patientaient en salle d'attente) rejoignent
+      // directement la salle live, sans nouvelle demande ni notification.
+      const approvedUsersNow = Array.isArray(meetingData.approvedUsers) ? meetingData.approvedUsers.filter(Boolean) : [];
+      if (needsApproval && !approvedUsersNow.includes(waitingUserId)) {
         await this._addPendingRequest(meetingId, waitingUserId);
         await this._notifyHostOfPendingRequest(meetingId, waitingUserId, meetingData.createdBy || excludeUserId, title);
         const user = users.get(waitingUserId);
