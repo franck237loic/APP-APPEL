@@ -13,6 +13,10 @@ class Meetings extends CallManager {}
 window.escapeHtml = function(value) {
   return String(value == null ? "" : value).replace(/[&<>\"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char]));
 };
+/**
+ * confirmMeetingAction — Dialogue de confirmation générique (Promise) pour les actions importantes des réunions.
+ * renvoie true si l'utilisateur confirme.
+ */
 Meetings.prototype.confirmMeetingAction = function(title, message) {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -26,6 +30,9 @@ Meetings.prototype.confirmMeetingAction = function(title, message) {
     document.addEventListener("keydown", onKey); document.body.appendChild(overlay); buttons[1].focus();
   });
 };
+/**
+ * copyMeetingText — Copie un texte (code, lien...) dans le presse-papiers et affiche un toast de confirmation.
+ */
 Meetings.prototype.copyMeetingText = async function(value, label) {
   try { await navigator.clipboard.writeText(String(value)); this.showCallToast(`${label} copié`); }
   catch (_) {
@@ -128,6 +135,9 @@ Meetings.prototype.resetMeetingState = function(opts) {
   this._setMeetingPhase(Meetings.MEETING_PHASES.IDLE);
 };
 
+/**
+ * normalizeMeetingCode — Uniformise un code de réunion (majuscules, tirets tous les 3) pour que B2H-TSP-EK7 et b2htspek7 soient traités pareil.
+ */
 Meetings.prototype.normalizeMeetingCode = function(code) {
   if (!code && code !== 0) return "";
   const cleaned = String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -141,6 +151,10 @@ Meetings.prototype.normalizeMeetingCode = function(code) {
   return cleaned;
 };
 
+/**
+ * handleMeetingCreated — Réception de meeting-creation-ok.
+ * stocke la réunion créée et affiche la vue « Réunion créée » (code, lien, contrôles musique, bouton démarrer).
+ */
 Meetings.prototype.handleMeetingCreated = function(data) {
   console.log("📅 [MEETING] meeting-created reçu (meetingId:", data.meetingId, ", code:", data.code, ", requestId:", data.requestId || "-", ")");
   this.meetingCreateSubmitting = false;
@@ -179,6 +193,9 @@ Meetings.prototype.handleMeetingCreated = function(data) {
 // Téléverse des FICHIERS bruts (File objects) après la création d'une réunion.
 // Détaché de _uploadWaitingMusicPlaylist car ici on n'a que des File, pas de
 // dataUrls. Échec non bloquant : la réunion existe déjà.
+/**
+ * _uploadWaitingMusicFiles — Transforme les fichiers audio choisis par l'hôte en dataURL (lecteur FileReader) et les envoie au serveur pour diffusion en salle d'attente.
+ */
 Meetings.prototype._uploadWaitingMusicFiles = async function(meetingId, files) {
   const base = (CallManager.HTTP_SERVER_URL || "").replace(/\/$/, "");
   for (let i = 0; i < files.length; i++) {
@@ -228,6 +245,9 @@ Meetings.prototype._uploadWaitingMusicFiles = async function(meetingId, files) {
 
 // Rejoue la demande de création perdue à cause d'une coupure WebSocket survenue
 // juste après l'envoi (appelé automatiquement après la réinscription au serveur).
+/**
+ * _retryPendingMeetingCreate — Rejoue une création de réunion qui a échoué à cause d'une coupure WebSocket (réessai automatique après reconnexion).
+ */
 Meetings.prototype._retryPendingMeetingCreate = function() {
   const pending = this._pendingMeetingCreate;
   if (!pending) return;
@@ -266,6 +286,10 @@ Meetings.prototype._retryPendingMeetingCreate = function() {
   // Le timeout de 20 s déjà armé par createMeeting() reste valable.
 };
 
+/**
+ * handleMeetingLiveReady — Réception de meeting-live-ready.
+ * la salle live est prête côté serveur, on peut faire entrer les participants.
+ */
 Meetings.prototype.handleMeetingLiveReady = function(data) {
   console.log("📅 [MEETING] Réunion maintenant live:", data);
   // Plus besoin de rejoindre automatiquement - le créateur rejoint comme les autres
@@ -274,6 +298,9 @@ Meetings.prototype.handleMeetingLiveReady = function(data) {
 
 // Apporte aux 3 points d'acquisition média les périphériques choisis dans
 // l'écran de prévisualisation (sinon comportement par défaut).
+/**
+ * _mediaDeviceOptionsForMeeting — Prépare les options getUserMedia pour une réunion (audio + vidéo ou non) en tenant compte du type de réunion.
+ */
 Meetings.prototype._mediaDeviceOptionsForMeeting = function() {
   const adapter = window.meetingMediaAdapter;
   if (!adapter) return {};
@@ -286,6 +313,9 @@ Meetings.prototype._mediaDeviceOptionsForMeeting = function() {
 // Réapplique les choix micro/caméra faits en prévisualisation (ou en salle
 // d'attente) à la salle live de la réunion. Condense la logique historique
 // de handleMeetingJoined pour être partagée avec la salle d'attente.
+/**
+ * _applyPendingMeetingMediaPreferences — Applique au flux réel les choix micro/caméra faits pendant la prévisualisation (ex: caméra déjà coupée à l'entrée).
+ */
 Meetings.prototype._applyPendingMeetingMediaPreferences = function() {
   const mediaPreferences = this.pendingMeetingMediaPreferences;
   if (!mediaPreferences) return;
@@ -308,6 +338,10 @@ Meetings.prototype._applyPendingMeetingMediaPreferences = function() {
   this.pendingMeetingMediaPreferences = null;
 };
 
+/**
+ * handleMeetingJoined — CŒUR CLIENT — réception de meeting-joined.
+ * configure la salle live (groupRoomId...), joint le groupe WebRTC, affiche l'écran de réunion, et bascule sur le SFU si le champ sfu est présent.
+ */
 Meetings.prototype.handleMeetingJoined = async function(data) {
   console.log("📅 [MEETING] Réunion jointe, salle live:", data.roomId);
   this.stopWaitingMusicLocally();
@@ -442,6 +476,10 @@ Meetings.prototype.handleMeetingSfuSwitch = function(data) {
   this.joinMeetingViaSfu(data);
 };
 
+/**
+ * handleMeetingReconnect — Réception de meeting-reconnect.
+ * reprise après une coupure — on ré-entre dans la salle live sans refaire tout le processus.
+ */
 Meetings.prototype.handleMeetingReconnect = async function(data) {
   console.log("📅 [MEETING] Reconnexion à la réunion demandée:", data.roomId);
   this.showCallToast("Reconnexion à la réunion en cours...");
@@ -497,6 +535,9 @@ Meetings.prototype.handleMeetingReconnect = async function(data) {
   this.showMeetingScreen(data);
 };
 
+/**
+ * handleMeetingWaiting — Réception de meeting-waiting : réunion pas encore ouverte (ou invité approuvé avant le démarrage) → affiche la salle d'attente avec compte à rebours + musique. Si approvedByHost : ferme l'écran de demande d'accès (la réunion ne démarre PAS pour autant).
+ */
 Meetings.prototype.handleMeetingWaiting = async function(data) {
   console.log("📅 [MEETING] Réunion en attente, temps restant:", data.waitTimeMin, "min");
   this._setMeetingPhase(Meetings.MEETING_PHASES.WAITING);
@@ -562,6 +603,9 @@ Meetings.prototype.handleMeetingWaiting = async function(data) {
 // - gestion de l'autoplay refusé (bouton "Activer la musique", pas de faux état)
 // - synchronisation approximative via syncAt (horodatage serveur) + clockOffset
 // - libération complète des ressources audio à l'arrêt
+/**
+ * receiveWaitingMusic — Reçoit la playlist de musique d'attente de l'hôte (dataURL ou URLs) et démarre la lecture locale synchronisée (syncAt + clockOffset).
+ */
 Meetings.prototype.receiveWaitingMusic = function(music) {
   // DEUX FORMATS ACCEPTÉS :
   // - ancien : tracks[].dataUrl (data:audio/...;base64) — ne circule plus
@@ -604,6 +648,9 @@ Meetings.prototype.receiveWaitingMusic = function(music) {
   this.playWaitingMusicLocally(this.waitingMusicPendingSeekSec);
 };
 
+/**
+ * _ensureWaitingMusicAudio — Crée l'unique élément <audio> de la musique d'attente s'il n'existe pas encore (un seul nœud, jamais de doublon).
+ */
 Meetings.prototype._ensureWaitingMusicAudio = function() {
   if (this.waitingMusicAudio) return this.waitingMusicAudio;
   const audio = new Audio();
@@ -614,6 +661,9 @@ Meetings.prototype._ensureWaitingMusicAudio = function() {
 };
 
 // Lecture locale. `seekSec` optionnel : position de départ (synchronisation).
+/**
+ * playWaitingMusicLocally — Démarre/reprend la lecture locale du morceau courant. Gère le refus d'autoplay (bouton « Activer la musique ») et la synchronisation serveur.
+ */
 Meetings.prototype.playWaitingMusicLocally = async function(seekSec = 0) {
   const tracks = this.waitingMusicTracks || [];
   if (!tracks.length) return;
@@ -673,6 +723,9 @@ Meetings.prototype.playWaitingMusicLocally = async function(seekSec = 0) {
 };
 
 // Avance d'un morceau (boucle de playlist). `auto` = fin ou erreur du morceau.
+/**
+ * _advanceWaitingTrack — Passe automatiquement au morceau suivant (et boucle la playlist) à la fin d'un morceau, puis replanifie la progression.
+ */
 Meetings.prototype._advanceWaitingTrack = function(auto = false) {
   const tracks = this.waitingMusicTracks || [];
   if (!tracks.length) return;
@@ -689,6 +742,9 @@ Meetings.prototype._advanceWaitingTrack = function(auto = false) {
   });
 };
 
+/**
+ * pauseWaitingMusicLocally — Met en PAUSE la lecture locale — contrôle 100 % local, n'affecte pas les autres participants.
+ */
 Meetings.prototype.pauseWaitingMusicLocally = function() {
   this.waitingMusicLocallyPaused = true;
   if (this.waitingMusicAudio) {
@@ -699,6 +755,9 @@ Meetings.prototype.pauseWaitingMusicLocally = function() {
 };
 
 // Détruit complètement le nœud audio et libère ses ressources.
+/**
+ * _destroyWaitingMusicNode — Libère complètement le nœud audio (src vide, listeners retirés, référence nulle) pour éviter toute fuite mémoire.
+ */
 Meetings.prototype._destroyWaitingMusicNode = function() {
   if (this.waitingMusicAudio) {
     try {
@@ -710,6 +769,10 @@ Meetings.prototype._destroyWaitingMusicNode = function() {
   }
 };
 
+/**
+ * stopWaitingMusicLocally — Arrête la musique localement.
+ * soit l'hôte l'a stoppée pour tous, soit je quitte la salle d'attente.
+ */
 Meetings.prototype.stopWaitingMusicLocally = function() {
   if (this.waitingMusicAudio) {
     try {
@@ -723,6 +786,9 @@ Meetings.prototype.stopWaitingMusicLocally = function() {
   this.updateWaitingMusicControls();
 };
 
+/**
+ * setWaitingMusicVolume — Règle le volume local de la musique d'attente (curseur des contrôles).
+ */
 Meetings.prototype.setWaitingMusicVolume = function(volume) {
   const v = Math.min(1, Math.max(0, Number(volume)));
   if (isNaN(v)) return;
@@ -732,6 +798,10 @@ Meetings.prototype.setWaitingMusicVolume = function(volume) {
 };
 
 // L'utilisateur accepte la lecture depuis un geste (anti-autoplay)
+/**
+ * unlockWaitingMusic — Contourne le blocage autoplay du navigateur.
+ * (re)démarre la lecture après une interaction utilisateur explicite.
+ */
 Meetings.prototype.unlockWaitingMusic = function() {
   this.waitingMusicBlocked = false;
   this.waitingMusicLocallyEnabled = true;
@@ -740,6 +810,10 @@ Meetings.prototype.unlockWaitingMusic = function() {
 };
 
 // Toggle local : lecture ↔ pause (couper CHEZ MOI n'arrête pas chez les autres)
+/**
+ * toggleWaitingMusicLocally — Bouton play/pause local de la musique d'attente.
+ * bascule entre lecture et pause.
+ */
 Meetings.prototype.toggleWaitingMusicLocally = function() {
   if (this.waitingMusicBlocked) {
     // Autoplay refusé : le tap sur le bouton est le geste utilisateur attendu
@@ -757,6 +831,9 @@ Meetings.prototype.toggleWaitingMusicLocally = function() {
 // ajout à la playlist, lecture locale et diffusion aux participants.
 Meetings.WAITING_MUSIC_MAX_PER_FILE_BYTES = 30 * 1024 * 1024;  // 30 Mo / morceau (MP3 320 kbps ≈ 4 min, WAV courts)
 Meetings.WAITING_MUSIC_MAX_TOTAL_BYTES = 100 * 1024 * 1024;    // 100 Mo total (≈ 10 MP3)
+/**
+ * selectWaitingMusic — (Hôte) ouvre le sélecteur de fichiers audio, vérifie type et taille, puis lance l'upload et la diffusion en salle d'attente.
+ */
 Meetings.prototype.selectWaitingMusic = async function(fileList) {
   const files = Array.from(fileList || []);
   if (!files.length) return;
@@ -844,6 +921,10 @@ Meetings.prototype.selectWaitingMusic = async function(fileList) {
 };
 
 // Message serveur : playlist à jour (set) ou arrêt collectif (stop)
+/**
+ * handleWaitingMusicMessage — Aiguille les messages de musique reçus du serveur.
+ * meeting-waiting-music-set (nouvelle playlist) ou -stop (arrêt).
+ */
 Meetings.prototype.handleWaitingMusicMessage = function(data) {
   if (data.meetingId && this.meetingPendingMeetingId && data.meetingId !== this.meetingPendingMeetingId) return;
   if (data.type === "meeting-waiting-music-set") {
@@ -867,6 +948,9 @@ Meetings.prototype.handleWaitingMusicMessage = function(data) {
   }
 };
 
+/**
+ * _updateWaitingMusicProgress — Met à jour la barre de progression et le temps affiché du morceau en cours de lecture.
+ */
 Meetings.prototype._updateWaitingMusicProgress = function() {
   const audio = this.waitingMusicAudio;
   if (!audio) return;
@@ -886,6 +970,9 @@ Meetings.prototype._updateWaitingMusicProgress = function() {
   if (total) total.textContent = fmt(audio.duration);
 };
 
+/**
+ * updateWaitingMusicControls — Rafraîchit l'état des contrôles musique (bouton play/pause, index du morceau, volume) selon l'état réel du lecteur.
+ */
 Meetings.prototype.updateWaitingMusicControls = function() {
   const title = document.getElementById("meeting-waiting-music-title");
   if (title) title.textContent = this.waitingMusicTitle || "Aucune musique sélectionnée";
@@ -941,6 +1028,10 @@ Meetings.prototype.updateWaitingMusicControls = function() {
 
 // Rend la playlist dans le(s) conteneur(s) présents à l'écran (hôte uniquement
 // en édition, participants en lecture seule).
+/**
+ * renderWaitingMusicPlaylist — Dessine la playlist dans l'UI.
+ * liste des morceaux avec réordonnancement (drag) et suppression (côté hôte).
+ */
 Meetings.prototype.renderWaitingMusicPlaylist = function() {
   const list = document.getElementById("waiting-music-playlist");
   if (!list) return;
@@ -965,6 +1056,9 @@ Meetings.prototype.renderWaitingMusicPlaylist = function() {
     </li>`).join("");
 };
 
+/**
+ * _bindWaitingMusicPlaylist — Relie les événements de la playlist (clics, drag & drop, suppression) aux handlers correspondants.
+ */
 Meetings.prototype._bindWaitingMusicPlaylist = function(list) {
   if (!list || list.dataset.bound) return;
   list.dataset.bound = "1";
@@ -989,6 +1083,9 @@ Meetings.prototype._bindWaitingMusicPlaylist = function(list) {
 };
 
 // Réordonner (hôte) : déplacer le morceau et diffuser la nouvelle playlist
+/**
+ * moveWaitingTrack — (Hôte) déplace un morceau dans l'ordre de la playlist, puis rebroadcast la nouvelle playlist à tous.
+ */
 Meetings.prototype.moveWaitingTrack = function(index, direction) {
   const tracks = this.waitingMusicTracks;
   if (!Array.isArray(tracks) || !tracks.length) return;
@@ -1003,6 +1100,9 @@ Meetings.prototype.moveWaitingTrack = function(index, direction) {
   this.updateWaitingMusicControls();
 };
 
+/**
+ * removeWaitingTrack — (Hôte) retire un morceau de la playlist, puis rebroadcast la playlist mise à jour.
+ */
 Meetings.prototype.removeWaitingTrack = function(index) {
   const tracks = this.waitingMusicTracks;
   if (!Array.isArray(tracks) || !tracks.length) return;
@@ -1034,6 +1134,9 @@ Meetings.prototype.removeWaitingTrack = function(index) {
 // NOUVEAU : passe par HTTP (binaire brut) au lieu de messages WS géants qui
 // saturaient le socket. Repli legacy : si le serveur ne connaît pas encore les
 // routes d'upload (ancien déploiement), on renvoie l'ancien message WS.
+/**
+ * _broadcastWaitingMusicPlaylist — Envoie au serveur la playlist mise à jour (format courant) pour qu'il la retransmette aux participants en salle d'attente.
+ */
 Meetings.prototype._broadcastWaitingMusicPlaylist = function() {
   if (!this.waitingMusicTracks?.length) return;
   if (this.meetingPendingMeetingId) {
@@ -1045,6 +1148,9 @@ Meetings.prototype._broadcastWaitingMusicPlaylist = function() {
 };
 
 // Canal historique (dataUrls en WS) — uniquement en repli.
+/**
+ * _broadcastWaitingMusicPlaylistLegacy — Variante historique du broadcast de playlist — conservée pour la compatibilité avec d'anciens clients.
+ */
 Meetings.prototype._broadcastWaitingMusicPlaylistLegacy = function() {
   if (!this.waitingMusicTracks?.length) return;
   const approxBytes = this.waitingMusicTracks.reduce((s, t) => s + (t.dataUrl || "").length, 0);
@@ -1063,6 +1169,9 @@ Meetings.prototype._broadcastWaitingMusicPlaylistLegacy = function() {
 };
 
 // dataURL -> ArrayBuffer (pour l'upload binaire HTTP).
+/**
+ * _dataUrlToBytes — Convertit une dataURL (base64) en tableau d'octets — utilisé pour l'upload léger de la playlist.
+ */
 Meetings.prototype._dataUrlToBytes = async function(dataUrl) {
   const response = await fetch(dataUrl);
   return response.arrayBuffer();
@@ -1071,6 +1180,9 @@ Meetings.prototype._dataUrlToBytes = async function(dataUrl) {
 // Téléverse la playlist courante (dataUrls locaux) vers le serveur en HTTP,
 // puis la finalise : le serveur la diffuse en payload léger aux visiteurs.
 // Ne JAMAIS jeter d'erreur bloquante : la musique est un confort, pas vital.
+/**
+ * _uploadWaitingMusicPlaylist — Upload la playlist finale (octets) au serveur via le message meeting-waiting-music-set.
+ */
 Meetings.prototype._uploadWaitingMusicPlaylist = async function(meetingId) {
   const tracks = (this.waitingMusicTracks || []).filter((t) => t && t.dataUrl);
   if (!meetingId || !tracks.length) return;
@@ -1119,6 +1231,9 @@ Meetings.prototype._uploadWaitingMusicPlaylist = async function(meetingId) {
 };
 
 // Arrête la musique chez tout le monde (hôte) — y compris chez l'hôte lui-même.
+/**
+ * stopWaitingMusicForEveryone — (Hôte) arrête la musique d'attente pour TOUS les participants + purge la playlist côté serveur.
+ */
 Meetings.prototype.stopWaitingMusicForEveryone = function() {
   this.sendSignal({ type: "meeting-waiting-music-stop", meetingId: this.meetingPendingMeetingId });
   // Effet immédiat local (le serveur renvoie aussi le message, mais soyons
@@ -1127,6 +1242,9 @@ Meetings.prototype.stopWaitingMusicForEveryone = function() {
 };
 
 // Purge locale finale : playlist effacée + ressources libérées.
+/**
+ * _broadcastWaitingMusicStop — Envoie au serveur l'ordre d'arrêt de la musique (meeting-waiting-music-stop) pour diffusion à tous.
+ */
 Meetings.prototype._broadcastWaitingMusicStop = function() {
   this.waitingMusicStoppedForMeeting = true;
   this.waitingMusicDataUrl = null;
@@ -1139,6 +1257,10 @@ Meetings.prototype._broadcastWaitingMusicStop = function() {
   this.updateWaitingMusicControls();
 };
 
+/**
+ * handleMeetingHostStarted — Réception de meeting-host-started.
+ * filet de sécurité (anciens clients) — l'hôte a démarré, on rejoint la salle live.
+ */
 Meetings.prototype.handleMeetingHostStarted = function(data) {
   console.log("📅 [MEETING] L'hôte a démarré la réunion:", data.hostId);
   this.showCallToast("L'hôte a démarré la réunion");
@@ -1175,6 +1297,10 @@ Meetings.prototype.handleMeetingHostStarted = function(data) {
   }
 };
 
+/**
+ * handleMeetingError — Réception de meeting-error.
+ * affiche l'erreur à l'utilisateur et réinitialise proprement l'état réunion.
+ */
 Meetings.prototype.handleMeetingError = function(data) {
   console.error("📅 [MEETING] Erreur:", data.reason);
   this.meetingCreateSubmitting = false;
@@ -1189,6 +1315,10 @@ Meetings.prototype.handleMeetingError = function(data) {
   this.closeMeetingCreatedView();
 };
 
+/**
+ * handleMeetingApprovalGranted — Réception de meeting-approval-granted.
+ * l'hôte a ACCEPTÉ (réunion déjà live) → on entre directement dans la salle.
+ */
 Meetings.prototype.handleMeetingApprovalGranted = async function(data) {
   console.log("📅 [MEETING] Accès accordé:", data);
   this.meetingApprovalPending = false;
@@ -1209,6 +1339,10 @@ Meetings.prototype.handleMeetingApprovalGranted = async function(data) {
   });
 };
 
+/**
+ * handleMeetingApprovalDenied — Réception de meeting-approval-denied.
+ * l'hôte a REFUSÉ la demande → message + retour à l'état initial.
+ */
 Meetings.prototype.handleMeetingApprovalDenied = function(data) {
   console.log("📅 [MEETING] Accès refusé:", data);
   this.meetingApprovalPending = false;
@@ -1217,6 +1351,10 @@ Meetings.prototype.handleMeetingApprovalDenied = function(data) {
   this.closeMeetingWaitingView();
 };
 
+/**
+ * handleMeetingPendingApproval — Réception de meeting-pending-approval.
+ * la demande est partie, on attend l'arbitrage de l'hôte → écran d'attente d'approbation.
+ */
 Meetings.prototype.handleMeetingPendingApproval = function(data) {
   console.log("📅 [MEETING] En attente d'approbation:", data);
   this._setMeetingPhase(Meetings.MEETING_PHASES.APPROVAL);
@@ -1277,6 +1415,10 @@ Meetings.prototype.showMeetingApprovalWaitingView = function(data) {
   this.meetingApprovalView = document.getElementById("meeting-approval-view");
 };
 
+/**
+ * handleMeetingPendingRequest — (Hôte) réception d'une NOUVELLE demande d'accès.
+ * notification sonore/push + ajout à la liste déroulante des demandes.
+ */
 Meetings.prototype.handleMeetingPendingRequest = function(data) {
   console.log("📅 [MEETING] Demande d'accès reçue:", data);
   // Ajouter à la liste déroulante des demandes en attente (badge + panneau)
@@ -1397,6 +1539,10 @@ Meetings.prototype.togglePendingRequestsPanel = function() {
   if (panel) panel.classList.toggle("active");
 };
 
+/**
+ * handleMeetingKicked — Réception de meeting-kicked.
+ * j'ai été expulsé de la réunion → message explicite + réinitialisation complète.
+ */
 Meetings.prototype.handleMeetingKicked = function(data) {
   console.log("📅 [MEETING] Expulsé de la réunion:", data);
   this.showCallToast(data.reason || "Vous avez été retiré de la réunion");
@@ -1447,6 +1593,9 @@ Meetings.prototype.endGroupCall = function(message) {
   this.pendingMeetingMediaPreferences = null;
 };
 
+/**
+ * showPendingRequestDialog — (Ancien) boîte de dialogue modale montrant une demande d'accès à l'hôte — remplacée par le panneau de demandes.
+ */
 Meetings.prototype.showPendingRequestDialog = function(data) {
   // Toujours recréer avec les bonnes données (nouvelle demande)
   if (this.pendingRequestDialog) {
@@ -1489,6 +1638,9 @@ Meetings.prototype.showPendingRequestDialog = function(data) {
   setTimeout(() => dialog.classList.add("active"), 10);
 };
 
+/**
+ * closePendingRequestDialog — Ferme la boîte de dialogue de demande d'accès.
+ */
 Meetings.prototype.closePendingRequestDialog = function() {
   if (this.pendingRequestDialog) {
     this.pendingRequestDialog.classList.remove("active");
@@ -1501,6 +1653,10 @@ Meetings.prototype.closePendingRequestDialog = function() {
   }
 };
 
+/**
+ * approveMeetingRequest — (Hôte) ACCEPTE une demande d'accès.
+ * envoie meeting-approve au serveur (qui placera l'invité en salle d'attente ou dans la salle live).
+ */
 Meetings.prototype.approveMeetingRequest = function(meetingId, userId) {
   this.sendSignal({
     type: "meeting-approve",
@@ -1512,6 +1668,10 @@ Meetings.prototype.approveMeetingRequest = function(meetingId, userId) {
   this.showCallToast("Demande acceptée");
 };
 
+/**
+ * rejectMeetingRequest — (Hôte) REFUSE une demande d'accès.
+ * envoie meeting-reject au serveur.
+ */
 Meetings.prototype.rejectMeetingRequest = function(meetingId, userId) {
   this.sendSignal({
     type: "meeting-reject",
@@ -1523,6 +1683,10 @@ Meetings.prototype.rejectMeetingRequest = function(meetingId, userId) {
   this.showCallToast("Demande refusée");
 };
 
+/**
+ * handleMeetingParticipantJoined — Réception participant-joined.
+ * un participant est entré dans la salle → mise à jour du roster et du compteur.
+ */
 Meetings.prototype.handleMeetingParticipantJoined = function(data) {
   console.log("📅 [MEETING] Participant rejoint:", data);
   if (window.meetingParticipants) {
@@ -1532,6 +1696,10 @@ Meetings.prototype.handleMeetingParticipantJoined = function(data) {
   this.updateMeetingParticipantCount();
 };
 
+/**
+ * handleMeetingParticipantLeft — Réception participant-left.
+ * un participant est parti → mise à jour du roster et du compteur.
+ */
 Meetings.prototype.handleMeetingParticipantLeft = function(data) {
   console.log("📅 [MEETING] Parti:", data);
   if (window.meetingParticipants) {
@@ -1541,6 +1709,10 @@ Meetings.prototype.handleMeetingParticipantLeft = function(data) {
   this.updateMeetingParticipantCount();
 };
 
+/**
+ * handleMeetingParticipantState — Réception participant-state.
+ * un participant a changé d'état (micro coupé, main levée...) → mise à jour de sa tuile.
+ */
 Meetings.prototype.handleMeetingParticipantState = function(data) {
   console.log("📅 [MEETING] État participant:", data);
   if (!data || !data.userId) return;
@@ -1556,6 +1728,9 @@ Meetings.prototype.handleMeetingParticipantState = function(data) {
   }
 };
 
+/**
+ * broadcastParticipantState — Diffuse MON état local (micro, caméra, main levée) aux autres participants pour qu'ils mettent à jour ma tuile.
+ */
 Meetings.prototype.broadcastParticipantState = function(state) {
   if (!this.groupRoomId || !this.myId) return;
 
@@ -1567,6 +1742,10 @@ Meetings.prototype.broadcastParticipantState = function(state) {
   });
 };
 
+/**
+ * toggleMeetingMic — Bouton MICRO en réunion.
+ * coupe/active le micro local et diffuse le nouvel état aux autres.
+ */
 Meetings.prototype.toggleMeetingMic = function() {
   const btn = document.getElementById("meeting-mic-btn");
   if (!btn) return;
@@ -1591,6 +1770,10 @@ Meetings.prototype.toggleMeetingMic = function() {
   this.broadcastParticipantState({ micEnabled: !muted });
 };
 
+/**
+ * toggleMeetingCam — Bouton CAMÉRA en réunion.
+ * allume/éteint la caméra locale et diffuse le nouvel état aux autres.
+ */
 Meetings.prototype.toggleMeetingCam = async function() {
   const btn = document.getElementById("meeting-cam-btn");
   if (!btn) return;
@@ -1614,6 +1797,10 @@ Meetings.prototype.toggleMeetingCam = async function() {
   this.broadcastParticipantState({ camEnabled: !camOff });
 };
 
+/**
+ * leaveMeeting — Quitte la réunion.
+ * nettoyage complet (flux, SFU, timers, écrans) + signalement de départ au serveur.
+ */
 Meetings.prototype.leaveMeeting = function() {
   // Purge musique d'attente (aucun son ne doit continuer en arrière-plan)
   this.stopWaitingMusicLocally();
@@ -1642,6 +1829,9 @@ Meetings.prototype.leaveMeeting = function() {
   this.resetMeetingState();
 };
 
+/**
+ * endMeetingForEveryone — (Hôte) TERMINE la réunion pour tous les participants (meeting-end).
+ */
 Meetings.prototype.endMeetingForEveryone = async function() {
   if (!(await this.confirmMeetingAction("Terminer la R\u00e9union", "Voulez-vous terminer la r\u00e9union pour tous les participants ?"))) {
     return;
@@ -1657,6 +1847,10 @@ Meetings.prototype.endMeetingForEveryone = async function() {
   this.leaveMeeting();
 };
 
+/**
+ * handleMeetingChatMessage — Réception d'un message de chat de réunion.
+ * l'affiche dans la zone de chat.
+ */
 Meetings.prototype.handleMeetingChatMessage = function(data) {
   console.log("📅 [MEETING] Message chat reçu:", data);
   if (window.meetingChat) {
@@ -1810,6 +2004,9 @@ Meetings.prototype.startMeetingTimer = function() {
   }, 1000);
 };
 
+/**
+ * maybeStartMeetingTimer — Démarre le chronomètre SEULEMENT s'il n'est pas déjà lancé (anti-doublon).
+ */
 Meetings.prototype.maybeStartMeetingTimer = function() {
   if (!this.groupIsMeeting || this.meetingTimerInterval) return;
   const others = (this.groupRoster || []).filter(
@@ -1878,6 +2075,10 @@ Meetings.prototype.toggleMeetingHand = function() {
   }
 };
 
+/**
+ * handleMeetingHandRaised — Réception main levée d'un participant.
+ * affiche l'indicateur sur sa tuile.
+ */
 Meetings.prototype.handleMeetingHandRaised = function(data) {
   if (!data || !data.userId) return;
   if (data.userId === this.myId) return;
@@ -1896,6 +2097,10 @@ Meetings.prototype.handleMeetingHandRaised = function(data) {
   }
 };
 
+/**
+ * handleMeetingHandLowered — Réception main baissée.
+ * retire l'indicateur de sa tuile.
+ */
 Meetings.prototype.handleMeetingHandLowered = function(data) {
   if (!data || !data.userId) return;
   const tile = this.groupTiles && this.groupTiles.get(data.userId);
@@ -1916,6 +2121,9 @@ Meetings.prototype.showMeetingReactions = function() {
   picker.style.display = visible ? "none" : "flex";
 };
 
+/**
+ * sendMeetingReaction — Envoie la réaction choisie (emoji) au serveur pour diffusion à tous.
+ */
 Meetings.prototype.sendMeetingReaction = function(emoji) {
   if (!this.groupRoomId || !emoji) return;
   this.sendSignal({
@@ -1930,11 +2138,18 @@ Meetings.prototype.sendMeetingReaction = function(emoji) {
   if (picker) picker.style.display = "none";
 };
 
+/**
+ * handleMeetingReaction — Réception d'une réaction d'un participant.
+ * déclenche l'animation flottante.
+ */
 Meetings.prototype.handleMeetingReaction = function(data) {
   if (!data) return;
   this.showFloatingReaction(data.userId, data.reaction);
 };
 
+/**
+ * showFloatingReaction — Anime un emoji flottant qui monte sur l'écran de réunion puis disparaît.
+ */
 Meetings.prototype.showFloatingReaction = function(userId, emoji) {
   const overlay = document.getElementById("meeting-reaction-overlay");
   if (!overlay || !emoji) return;
@@ -2055,6 +2270,9 @@ Meetings.prototype.leaveMeetingWithConfirm = async function() {
   }
 };
 
+/**
+ * updateMeetingParticipantCount — Met à jour le compteur de participants affiché dans l'écran de réunion.
+ */
 Meetings.prototype.updateMeetingParticipantCount = function() {
   const el = document.getElementById("participant-count");
   if (!el) return;
@@ -2086,17 +2304,28 @@ window.showMeetingChat = function() {
   }
 };
 
+/**
+ * handleMeetingCancelled — Réception meeting-cancelled.
+ * la réunion a été annulée par l'hôte → message + reset.
+ */
 Meetings.prototype.handleMeetingCancelled = function(data) {
   console.log("📅 [MEETING] Réunion annulée:", data.meetingId);
   this.showCallToast("Réunion annulée");
   this.closeMeetingCreatedView();
 };
 
+/**
+ * handleMeetingList — Réception de la liste des réunions envoyée par le serveur (raccourci vers le rendu).
+ */
 Meetings.prototype.handleMeetingList = function(data) {
   console.log("📅 [MEETING] Liste reçue:", data.upcoming.length, "à venir,", data.past.length, "passées");
   this.showMeetingListView(data);
 };
 
+/**
+ * handleMeetingEnded — Réception meeting-ended.
+ * la réunion est terminée pour tous → écran de fin + nettoyage.
+ */
 Meetings.prototype.handleMeetingEnded = function(data) {
   console.log("📅 [MEETING] Réunion terminée:", data.meetingId, "raison:", data.reason);
   this.showCallToast(data.reason || "La réunion est terminée");
@@ -2112,6 +2341,9 @@ Meetings.prototype.handleMeetingEnded = function(data) {
 
 // ===== UI LISTE DES RÉUNIONS =====
 
+/**
+ * showMeetingListView — Affiche la vue listant mes réunions planifiées (cartes avec code, heure, statut).
+ */
 Meetings.prototype.showMeetingListView = function(data) {
   if (this.meetingListView) {
     this.meetingListView.classList.add("active");
@@ -2148,6 +2380,9 @@ Meetings.prototype.showMeetingListView = function(data) {
   this._renderMeetingList(data);
 };
 
+/**
+ * _renderMeetingList — Dessine les cartes de la liste des réunions à partir des données reçues du serveur.
+ */
 Meetings.prototype._renderMeetingList = function(data) {
   const content = document.getElementById("meeting-list-content");
   if (!content) return;
@@ -2256,6 +2491,9 @@ Meetings.prototype._renderMeetingList = function(data) {
   };
 };
 
+/**
+ * closeMeetingListView — Ferme la vue liste des réunions.
+ */
 Meetings.prototype.closeMeetingListView = function() {
   if (this.meetingListView) {
     this.meetingListView.classList.remove("active");
@@ -2268,16 +2506,25 @@ Meetings.prototype.closeMeetingListView = function() {
   }
 };
 
+/**
+ * createMeetingFromList — Ouvre le formulaire de création de réunion depuis la vue liste.
+ */
 Meetings.prototype.createMeetingFromList = function() {
   this.closeMeetingListView();
   this.showMeetingCreateView();
 };
 
+/**
+ * startMeetingFromList — Démarre une réunion planifiée directement depuis la vue liste.
+ */
 Meetings.prototype.startMeetingFromList = function(code) {
   this.closeMeetingListView();
   this.startMeeting(code);
 };
 
+/**
+ * openMeetingDetails — Ouvre les détails d'une réunion de la liste (code, participants, options).
+ */
 Meetings.prototype.openMeetingDetails = function(meetingId) {
   // Ouvrir l'écran de modification
   this.showMeetingCreateView(meetingId);
@@ -2285,6 +2532,10 @@ Meetings.prototype.openMeetingDetails = function(meetingId) {
 
 // ===== MÉTHODES DE RÉUNION =====
 
+/**
+ * createMeeting — CRÉE une réunion.
+ * rassemble tous les paramètres du formulaire (instantané/planifiée, accès direct/approbation, durée, musique d'attente) et envoie meeting-create.
+ */
 Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isVideo, participants, description = "", accessPolicy = "direct", waitingMusicTracks = []) {
   console.log("📅 [MEETING] createMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
 
@@ -2420,6 +2671,10 @@ Meetings.prototype.createMeeting = function(title, scheduledAt, durationMin, isV
   console.log("📅 [MEETING] Demande de création de réunion envoyée avec politique:", accessPolicy);
 };
 
+/**
+ * joinMeeting — REJOINT une réunion par code.
+ * envoie meeting-join et route la réponse (joined / waiting / pending_approval / error).
+ */
 Meetings.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] joinMeeting appelé - wsReadyState:", this.wsReadyState, "wsId:", this.wsId);
 
@@ -2472,6 +2727,9 @@ Meetings.prototype.joinMeeting = function(code) {
   console.log("📅 [MEETING] Demande de rejoindre réunion envoyée pour code:", this.meetingPendingCode);
 };
 
+/**
+ * listMeetings — Demande au serveur la liste de mes réunions (meeting-list).
+ */
 Meetings.prototype.listMeetings = function() {
   const isConnected = this.wsReadyState === WebSocket.OPEN || (this.ws && this.ws.readyState === WebSocket.OPEN);
   if (!isConnected) {
@@ -2488,6 +2746,9 @@ Meetings.prototype.listMeetings = function() {
 
 // ===== UI RÉUNIONS =====
 
+/**
+ * showMeetingCreateView — Affiche le formulaire de création/planification de réunion (type, mode, politique d'accès, musique...).
+ */
 Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   this.editingMeetingId = editMeetingId;
 
@@ -2647,6 +2908,9 @@ Meetings.prototype.showMeetingCreateView = function(editMeetingId = null) {
   }
 };
 
+/**
+ * loadMeetingForEdit — Pré-remplit le formulaire de création pour MODIFIER une réunion existante.
+ */
 Meetings.prototype.loadMeetingForEdit = async function(meetingId) {
   try {
     if (window.meetingService) {
@@ -2671,6 +2935,9 @@ Meetings.prototype.loadMeetingForEdit = async function(meetingId) {
   }
 };
 
+/**
+ * closeMeetingCreateView — Ferme le formulaire de création de réunion.
+ */
 Meetings.prototype.closeMeetingCreateView = function() {
   if (this.meetingCreateView) {
     this.meetingCreateView.classList.remove("active");
@@ -2683,6 +2950,10 @@ Meetings.prototype.closeMeetingCreateView = function() {
   }
 };
 
+/**
+ * selectMeetingType — Choix du TYPE de réunion dans le formulaire.
+ * vidéo ou audio seul.
+ */
 Meetings.prototype.selectMeetingType = function(type) {
   const audioBtn = document.getElementById("meeting-type-audio");
   const videoBtn = document.getElementById("meeting-type-video");
@@ -2696,6 +2967,10 @@ Meetings.prototype.selectMeetingType = function(type) {
   }
 };
 
+/**
+ * selectMeetingMode — Choix du MODE.
+ * réunion instantanée ou planifiée à une heure.
+ */
 Meetings.prototype.selectMeetingMode = function(mode) {
   const scheduledBtn = document.getElementById("meeting-mode-scheduled");
   const instantBtn = document.getElementById("meeting-mode-instant");
@@ -2712,6 +2987,10 @@ Meetings.prototype.selectMeetingMode = function(mode) {
   }
 };
 
+/**
+ * selectAccessPolicy — Choix de la POLITIQUE D'ACCÈS.
+ * entrée directe ou approbation obligatoire par l'hôte.
+ */
 Meetings.prototype.selectAccessPolicy = function(policy) {
   const directBtn = document.getElementById("access-direct");
   const approvalBtn = document.getElementById("access-approval");
@@ -2725,6 +3004,10 @@ Meetings.prototype.selectAccessPolicy = function(policy) {
   }
 };
 
+/**
+ * confirmCreateMeeting — Valide le formulaire de création.
+ * contrôles de saisie puis envoi réel (meeting-create) + affichage de la vue « créée ».
+ */
 Meetings.prototype.confirmCreateMeeting = async function() {
   if (this.meetingCreateSubmitting) return;
   const title = document.getElementById("meeting-title").value.trim();
@@ -2840,6 +3123,9 @@ Meetings.prototype.confirmCreateMeeting = async function() {
   this.createMeeting(title, datetime, duration, isVideo, [], description, accessPolicy, []);
 };
 
+/**
+ * cancelMeeting — (Hôte) annule une réunion planifiée (meeting-cancel) — notifie les invités et ferme la salle si ouverte.
+ */
 Meetings.prototype.cancelMeeting = async function() {
   if (!this.editingMeetingId) return;
 
@@ -2866,6 +3152,10 @@ Meetings.prototype.cancelMeeting = async function() {
   }
 };
 
+/**
+ * showMeetingCreatedView — Affiche la vue « Réunion créée ».
+ * code, lien partageable, contrôles musique d'attente, boutons Démarrer/Stop.
+ */
 Meetings.prototype.showMeetingCreatedView = function(data) {
   if (this.meetingCreatedView) {
     this.meetingCreatedView.classList.add("active");
@@ -2995,6 +3285,9 @@ Meetings.prototype.showMeetingCreatedView = function(data) {
   this.meetingCreatedView.classList.add("active");
 };
 
+/**
+ * closeMeetingCreatedView — Ferme la vue « Réunion créée ».
+ */
 Meetings.prototype.closeMeetingCreatedView = function() {
   if (this.meetingCreatedView) {
     this.meetingCreatedView.classList.remove("active");
@@ -3007,6 +3300,9 @@ Meetings.prototype.closeMeetingCreatedView = function() {
   }
 };
 
+/**
+ * copyMeetingCode — Copie le code de la réunion dans le presse-papiers + toast.
+ */
 Meetings.prototype.copyMeetingCode = function(code) {
   if (!code) {
     this.showCallToast("Code indisponible");
@@ -3022,6 +3318,9 @@ Meetings.prototype.copyMeetingCode = function(code) {
   }
 };
 
+/**
+ * shareMeetingLink — Partage le lien d'invitation de la réunion (navigator.share si dispo, sinon copie).
+ */
 Meetings.prototype.shareMeetingLink = function(link) {
   if (navigator.share) {
     navigator.share({
@@ -3040,6 +3339,9 @@ Meetings.prototype.shareMeetingLink = function(link) {
 };
 
 // ===== RÉUNION INSTANTANÉE (équivalent de "Nouvelle réunion" dans Google Meet) =====
+/**
+ * startInstantMeeting — Démarre immédiatement une réunion instantanée (création + démarrage en un geste).
+ */
 Meetings.prototype.startInstantMeeting = function() {
   if (this.instantMeetingPending) return; // anti double-clic
   this.instantMeetingPending = true;
@@ -3056,11 +3358,17 @@ Meetings.prototype.startInstantMeeting = function() {
   );
 };
 
+/**
+ * startMeetingFromCreated — (Hôte) démarre la réunion depuis la vue « créée ».
+ */
 Meetings.prototype.startMeetingFromCreated = function(code) {
   this.closeMeetingCreatedView();
   this.startMeeting(code);
 };
 
+/**
+ * startMeeting — (Hôte) démarre la réunion planifiée AVANT l'heure (forceStart, recalcul de la durée) ou à l'heure.
+ */
 Meetings.prototype.startMeeting = function(code) {
   console.log("📅 [MEETING] startMeeting appelé pour code:", code);
 
@@ -3091,6 +3399,9 @@ Meetings.prototype.startMeeting = function(code) {
   console.log("📅 [MEETING] Demande de démarrage forcé pour:", cleanCode);
 };
 
+/**
+ * showMeetingJoinView — Affiche l'écran de saisie du code pour rejoindre une réunion.
+ */
 Meetings.prototype.showMeetingJoinView = function(prefillCode) {
   if (this.meetingJoinView) {
     this.meetingJoinView.classList.add("active");
@@ -3152,6 +3463,9 @@ Meetings.prototype.showMeetingJoinView = function(prefillCode) {
   }, 100);
 };
 
+/**
+ * closeMeetingJoinView — Ferme l'écran de saisie du code.
+ */
 Meetings.prototype.closeMeetingJoinView = function() {
   if (this.meetingJoinView) {
     this.meetingJoinView.classList.remove("active");
@@ -3166,6 +3480,10 @@ Meetings.prototype.closeMeetingJoinView = function() {
 
 // ===== ÉCRAN DE PRÉVISUALISATION (NOUVEAU) =====
 
+/**
+ * showMeetingPreviewView — Affiche l'APERÇU caméra/micro avant d'entrer.
+ * choix des périphériques, micro/caméra activés ou non au départ.
+ */
 Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo) {
   this._setMeetingPhase(Meetings.MEETING_PHASES.PREVIEW);
   if (this.meetingPreviewView) {
@@ -3283,6 +3601,9 @@ Meetings.prototype.showMeetingPreviewView = async function(code, meetingIsVideo)
 
 };
 
+/**
+ * closeMeetingPreviewView — Ferme l'aperçu caméra/micro et libère son flux.
+ */
 Meetings.prototype.closeMeetingPreviewView = function() {
   this.stopPreview();
   document.body.classList.remove("meeting-ui-active");
@@ -3298,6 +3619,9 @@ Meetings.prototype.closeMeetingPreviewView = function() {
   }
 };
 
+/**
+ * loadPreviewDevices — Liste les caméras et micros disponibles (enumerateDevices) pour les menus de l'aperçu.
+ */
 Meetings.prototype.loadPreviewDevices = async function() {
   try {
     const devices = await meetingMediaAdapter.getDevices();
@@ -3331,6 +3655,9 @@ Meetings.prototype.loadPreviewDevices = async function() {
   }
 };
 
+/**
+ * startPreview — Démarre le flux caméra/micro de l'aperçu (getUserMedia) et l'affiche dans la vignette.
+ */
 Meetings.prototype.startPreview = async function() {
   try {
     this.stopPreview();
@@ -3377,6 +3704,9 @@ Meetings.prototype.startPreview = async function() {
   }
 };
 
+/**
+ * stopPreview — Stoppe le flux de l'aperçu (pistes arrêtées, vignette vidée).
+ */
 Meetings.prototype.stopPreview = function() {
   if (this.previewStream) {
     this.previewStream.getTracks().forEach(track => track.stop());
@@ -3385,6 +3715,10 @@ Meetings.prototype.stopPreview = function() {
   meetingMediaAdapter.stopPreview();
 };
 
+/**
+ * togglePreviewMic — Bouton micro de l'aperçu.
+ * active/coupe le micro AVANT d'entrer.
+ */
 Meetings.prototype.togglePreviewMic = function() {
   this.previewMicEnabled = !this.previewMicEnabled;
 
@@ -3405,6 +3739,10 @@ Meetings.prototype.togglePreviewMic = function() {
   if (this.previewMicEnabled && audioTracks.length === 0) this.startPreview();
 };
 
+/**
+ * togglePreviewCam — Bouton caméra de l'aperçu.
+ * allume/éteint la caméra AVANT d'entrer.
+ */
 Meetings.prototype.togglePreviewCam = function() {
   this.previewCamEnabled = !this.previewCamEnabled;
 
@@ -3431,16 +3769,26 @@ Meetings.prototype.togglePreviewCam = function() {
   if (this.previewCamEnabled && videoTracks.length === 0) this.startPreview();
 };
 
+/**
+ * selectCamera — Change la caméra utilisée pour l'aperçu (redémarre le flux avec le nouvel deviceId).
+ */
 Meetings.prototype.selectCamera = function(deviceId) {
   meetingMediaAdapter.selectCamera(deviceId);
   this.startPreview();
 };
 
+/**
+ * selectMicrophone — Change le micro utilisé pour l'aperçu.
+ */
 Meetings.prototype.selectMicrophone = function(deviceId) {
   meetingMediaAdapter.selectMicrophone(deviceId);
   this.startPreview();
 };
 
+/**
+ * confirmJoinMeetingFromPreview — Depuis l'aperçu.
+ * confirme l'entrée en gardant les choix micro/caméra (pour application au flux réel).
+ */
 Meetings.prototype.confirmJoinMeetingFromPreview = async function(code) {
   const btn = document.getElementById("join-meeting-btn");
   btn.disabled = true;
@@ -3464,6 +3812,10 @@ Meetings.prototype.confirmJoinMeetingFromPreview = async function(code) {
   }
 };
 
+/**
+ * confirmJoinMeeting — Confirme l'entrée dans la réunion.
+ * passe de l'aperçu au joinMeeting réel.
+ */
 Meetings.prototype.confirmJoinMeeting = function() {
   const rawCode = document.getElementById("meeting-code-input").value;
   const code = this.normalizeMeetingCode(rawCode);
@@ -3475,6 +3827,10 @@ Meetings.prototype.confirmJoinMeeting = function() {
   this.showMeetingPreviewView(code);
 };
 
+/**
+ * showMeetingWaitingView — Affiche la SALLE D'ATTENTE.
+ * compte à rebours avant ouverture, liste des participants en attente (vidéo entre eux), contrôles musique, boutons micro/caméra.
+ */
 Meetings.prototype.showMeetingWaitingView = function(data) {
   this.meetingPendingCode = data.code;
   this.meetingPendingMeetingId = data.meetingId;
@@ -3680,6 +4036,9 @@ Meetings.prototype.showMeetingWaitingView = function(data) {
 };
 
 // Indicateur de connexion dans la salle d'attente
+/**
+ * _updateWaitingRoomStatus — Met à jour le texte de statut affiché en salle d'attente (ex: « EN ATTENTE · 4 »).
+ */
 Meetings.prototype._updateWaitingRoomStatus = function() {
   const dot = document.querySelector("#waiting-room-conn");
   const text = document.getElementById("waiting-room-conn-text");
@@ -3690,6 +4049,9 @@ Meetings.prototype._updateWaitingRoomStatus = function() {
 };
 
 // Compteur de participants de la salle d'attente (lorsque la liste est visible)
+/**
+ * _updateWaitingRoomParticipantCount — Met à jour le compteur de participants présents en salle d'attente.
+ */
 Meetings.prototype._updateWaitingRoomParticipantCount = function() {
   const el = document.getElementById("waiting-participant-count");
   if (!el) return;
@@ -3697,6 +4059,9 @@ Meetings.prototype._updateWaitingRoomParticipantCount = function() {
   el.textContent = String(waitingCount || 1);
 };
 
+/**
+ * _updateMeetingCountdown — Met à jour le compte à rebours avant l'ouverture de la réunion (tick chaque seconde, calcule avec clockOffset serveur).
+ */
 Meetings.prototype._updateMeetingCountdown = function(data) {
   if (this.meetingTimer) {
     clearInterval(this.meetingTimer);
@@ -3748,6 +4113,10 @@ Meetings.prototype._updateMeetingCountdown = function(data) {
   this.meetingTimer = setInterval(update, 1000);
 };
 
+/**
+ * closeMeetingWaitingView — Ferme la salle d'attente.
+ * purge la musique d'attente, arrête le flux si besoin, retire le DOM.
+ */
 Meetings.prototype.closeMeetingWaitingView = function() {
   this.stopWaitingMusicLocally();
   // Libérer complètement les ressources audio : aucun son ne doit persister
@@ -3799,6 +4168,9 @@ Meetings.prototype.closeMeetingWaitingView = function() {
   }
 };
 
+/**
+ * extractMeetingCodeFromURL — Extrait un code de réunion d'une URL ou d'un deep link (callapp://join/CODE ou https://.../join/CODE).
+ */
 Meetings.prototype.extractMeetingCodeFromURL = function() {
   try {
     let urlStr = window.location.href;
@@ -3844,6 +4216,10 @@ Meetings.prototype.extractMeetingCodeFromURL = function() {
   }
 };
 
+/**
+ * handleDeepLink — Traite un deep link reçu (lancement par lien d'invitation).
+ * extrait le code et ouvre le bon écran (rejoindre / aperçu).
+ */
 Meetings.prototype.handleDeepLink = function() {
   const code = this.extractMeetingCodeFromURL();
   if (code) {
