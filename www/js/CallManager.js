@@ -1872,6 +1872,8 @@ button, [role="button"] { cursor: pointer; }
     this.ws = null; // WebSocket natif pour le navigateur (fallback)
     this.wsReadyState = WebSocket.CLOSED;
     this.reconnectTimer = null;
+    this._wsConnectWatchdog = null; // Garde-fou connexion bloquée en CONNECTING
+    this._networkListenersInstalled = false; // Écouteurs online/offline posés ?
     this.heartbeatTimer = null;
     this.manuallyClosed = false;
     this.deviceToken = null;
@@ -2662,7 +2664,47 @@ button, [role="button"] { cursor: pointer; }
    SIGNALISATION WEBSOCKET
 ========================================================= */
 
+  // Écouteurs de changement de réseau (Cordova + navigateur). Quand on passe
+  // du WiFi aux données mobiles (ou l'inverse), l'ancienne connexion TCP meurt
+  // souvent en silence : sans ces écouteurs, l'application restait déconnectée
+  // jusqu'au prochain cycle de reconnexion, voire pour toujours.
+  setupNetworkListeners = () => {
+    if (this._networkListenersInstalled) return;
+    this._networkListenersInstalled = true;
+
+    const onBackOnline = () => {
+      console.log("📡 Réseau disponible à nouveau — reconnexion immédiate");
+      this.reconnectAttempts = 0;
+      // Tuer l'ancienne socket si elle traîne : après un changement de réseau
+      // elle est mort en silence et bloque une nouvelle tentative.
+      if (this.wsId != null) {
+        try {
+          CordovaWebsocketPlugin.wsClose(this.wsId, 4000, "Network change");
+        } catch (e) {}
+        this.wsId = null;
+      }
+      if (this.wsReadyState !== WebSocket.OPEN) {
+        this.wsReadyState = WebSocket.CLOSED;
+        clearTimeout(this.reconnectTimer);
+        this.connectWebSocket();
+      }
+    };
+    const onOffline = () => {
+      console.log("📡 Réseau perdu — mise en attente de reconnexion");
+      this.updateStatus("Réseau indisponible");
+    };
+
+    // Cordova (Android/iOS) : événements réseau natifs du plugin
+    document.addEventListener("online", onBackOnline, false);
+    document.addEventListener("offline", onOffline, false);
+    // Navigateur : événements standard de la WebView
+    window.addEventListener("online", onBackOnline);
+    window.addEventListener("offline", onOffline);
+  };
+
   connectWebSocket = async () => {
+    this.setupNetworkListeners();
+
     if (
       this.wsReadyState === WebSocket.OPEN ||
       this.wsReadyState === WebSocket.CONNECTING
@@ -2680,9 +2722,18 @@ button, [role="button"] { cursor: pointer; }
     console.log("  - cordova.plugins:", !!cordova?.plugins);
     console.log("  - cordova.plugins.CordovaWebsocketPlugin:", !!cordova?.plugins?.CordovaWebsocketPlugin);
 
+    // Ping HTTP de diagnostic : ne doit JAMAIS bloquer la connexion WebSocket.
+    // Sur données mobiles (ex: Orange) ou quand Render est endormi (démarrage
+    // à froid ~30-60 s), ce fetch sans délai pouvait suspendre indéfiniment
+    // connectWebSocket avant même de tenter le WebSocket. On le lance donc en
+    // parallèle avec un timeout de 8 s, sans attendre son résultat.
     try {
-      await fetch(CallManager.HTTP_SERVER_URL, { method: "GET", cache: "no-cache" });
-      console.log("✅ HTTP Ping réussi");
+      const pingController = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const pingTimeout = pingController ? setTimeout(() => pingController.abort(), 8000) : null;
+      fetch(CallManager.HTTP_SERVER_URL, { method: "GET", cache: "no-cache", ...(pingController ? { signal: pingController.signal } : {}) })
+        .then(() => console.log("✅ HTTP Ping réussi"))
+        .catch((err) => console.warn("⚠️ HTTP Ping échoué :", err && err.name === "AbortError" ? "timeout 8 s" : err))
+        .finally(() => { if (pingTimeout) clearTimeout(pingTimeout); });
     } catch (err) {
       console.warn("⚠️ HTTP Ping échoué :", err);
     }
@@ -2739,6 +2790,7 @@ button, [role="button"] { cursor: pointer; }
             "🔌 WebSocket fermé :",
             recvEvent.reason || recvEvent.exception || recvEvent.code,
           );
+          if (this._wsConnectWatchdog) { clearTimeout(this._wsConnectWatchdog); this._wsConnectWatchdog = null; }
           this.stopHeartbeat();
           this.wsId = null;
           this.wsReadyState = WebSocket.CLOSED;
@@ -2765,6 +2817,7 @@ button, [role="button"] { cursor: pointer; }
             "❌ Erreur WebSocket :",
             recvEvent.exception || recvEvent.reason,
           );
+          if (this._wsConnectWatchdog) { clearTimeout(this._wsConnectWatchdog); this._wsConnectWatchdog = null; }
           this.updateStatus("Erreur réseau WebSocket");
           this.stopHeartbeat();
           this.wsId = null;
@@ -2791,6 +2844,7 @@ button, [role="button"] { cursor: pointer; }
     // successCallback : connexion établie
     const onSuccess = (success) => {
       console.log("✅ WebSocket Connecté");
+      if (this._wsConnectWatchdog) { clearTimeout(this._wsConnectWatchdog); this._wsConnectWatchdog = null; }
       this.wsId = success.webSocketId;
       // Le transport natif était bien connecté, mais son état restait
       // CONNECTING : les écrans de réunion refusaient alors d'envoyer leurs messages.
@@ -2815,6 +2869,7 @@ button, [role="button"] { cursor: pointer; }
     // failureCallback : échec de la connexion initiale
     const onFailure = (error) => {
       console.error("❌ Erreur création WebSocket :", error);
+      if (this._wsConnectWatchdog) { clearTimeout(this._wsConnectWatchdog); this._wsConnectWatchdog = null; }
       this.stopHeartbeat();
       this.wsId = null;
       this.wsReadyState = WebSocket.CLOSED;
@@ -2829,6 +2884,27 @@ button, [role="button"] { cursor: pointer; }
     } catch (error) {
       onFailure(error);
     }
+
+    // Garde-fou : si le plugin ne rappelle ni onSuccess, ni onFailure, ni
+    // onClose (typique après un changement de réseau WiFi <-> données mobiles
+    // où l'ancienne connexion TCP meurt en silence), l'état restait CONNECTING
+    // et connectWebSocket refusait toute nouvelle tentative -> plus jamais
+    // connecté. Au bout de 25 s sans réponse, on force la fermeture et on
+    // relance une tentative.
+    if (this._wsConnectWatchdog) clearTimeout(this._wsConnectWatchdog);
+    this._wsConnectWatchdog = setTimeout(() => {
+      this._wsConnectWatchdog = null;
+      if (this.wsReadyState !== WebSocket.CONNECTING) return;
+      console.warn("⏱️ WebSocket toujours CONNECTING après 25 s — connexion considérée morte, nouvelle tentative");
+      if (this.wsId != null) {
+        try {
+          CordovaWebsocketPlugin.wsClose(this.wsId, 4000, "Watchdog");
+        } catch (e) {}
+        this.wsId = null;
+      }
+      this.wsReadyState = WebSocket.CLOSED;
+      if (!this.manuallyClosed) this.scheduleReconnect();
+    }, 25000);
   };
 
   // WebSocket natif pour le navigateur (fallback)
